@@ -1,0 +1,23 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "taiwan-brawl-api",
+	"main": "src/index.js",
+	"compatibility_date": "2026-03-11",
+	"observability": {
+		"enabled": true
+	},
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "taiwan_brawl_db",
+			"database_id": "9a7e86fe-44a9-40aa-8a09-a436db818c87",
+			"remote": true
+		}
+	],
+	"kv_namespaces": [
+		{
+			"binding": "STATIC_ASSETS",
+			"id": "cfea84655a1f4b298bb92466317201b2"
+		}
+	]
+}
