@@ -8,7 +8,31 @@ set -euo pipefail
 WRANGLER_VERSION="4.72.0"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-FRONTEND_DIR="${SCRIPT_DIR}/../front"
+resolve_frontend_dir() {
+  if [[ -n "${FRONTEND_DIR:-}" ]]; then
+    printf '%s\n' "${FRONTEND_DIR}"
+    return 0
+  fi
+
+  local candidates=(
+    "${SCRIPT_DIR}/../taiwan_brawl_front"
+    "${SCRIPT_DIR}/../front"
+  )
+
+  local candidate
+  for candidate in "${candidates[@]}"; do
+    if [[ -f "${candidate}/pubspec.yaml" ]]; then
+      printf '%s\n' "${candidate}"
+      return 0
+    fi
+  done
+
+  echo "Unable to locate Flutter frontend directory." >&2
+  echo "Set FRONTEND_DIR or place the app at ../taiwan_brawl_front or ../front" >&2
+  exit 1
+}
+
+FRONTEND_DIR="$(resolve_frontend_dir)"
 PUBSPEC="${FRONTEND_DIR}/pubspec.yaml"
 BACKEND_DIR="${SCRIPT_DIR}"
 ASSETS_PATH="${BACKEND_DIR}/assets.json"
@@ -36,6 +60,7 @@ fi
 echo "======================================"
 echo "Taiwan Brawl Auto Deployment"
 echo "Version: ${VERSION} (Build #${BUILD_NUMBER})"
+echo "Frontend: ${FRONTEND_DIR}"
 echo "======================================"
 echo
 

@@ -4,7 +4,28 @@ import { fileURLToPath } from 'node:url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const buildDir = path.join(__dirname, '..', 'front', 'build', 'web');
+
+function resolveFrontendDir() {
+  const override = process.env.FRONTEND_DIR;
+  const candidates = [
+    override,
+    path.join(__dirname, '..', 'taiwan_brawl_front'),
+    path.join(__dirname, '..', 'front')
+  ].filter(Boolean);
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(path.join(candidate, 'pubspec.yaml'))) {
+      return candidate;
+    }
+  }
+
+  console.error('Unable to locate Flutter frontend directory.');
+  console.error('Set FRONTEND_DIR or place the app at ../taiwan_brawl_front or ../front.');
+  process.exit(1);
+}
+
+const frontendDir = resolveFrontendDir();
+const buildDir = path.join(frontendDir, 'build', 'web');
 const outputPath = path.join(__dirname, 'assets.json');
 
 function getFiles(dir, prefix = '') {
@@ -34,4 +55,4 @@ if (!fs.existsSync(buildDir)) {
 
 const files = getFiles(buildDir);
 fs.writeFileSync(outputPath, JSON.stringify(files, null, 2));
-console.log(`Generated assets.json with ${files.length} files`);
+console.log(`Generated assets.json with ${files.length} files from ${frontendDir}`);
