@@ -8,8 +8,8 @@ export async function handleUpdateLocale(request, env) {
   }
   const body = await request.json().catch(() => null);
   const locale = body?.locale;
-  // 可支援 zh-Hant, en
-  const validLocales = ['zh-Hant', 'en'];
+  // 可支援 zh-Hant, en, ja
+  const validLocales = ['zh-Hant', 'en', 'ja'];
   if (!validLocales.includes(locale)) {
     return jsonResponse({ error: 'Invalid locale' }, 400, request);
   }
