@@ -9,7 +9,8 @@ import {
   handleGetCurrentUser,
   handleUpdateCurrentUser,
   handleUpdateThemeMode,
-  handleUpdateUiPreferences
+  handleUpdateUiPreferences,
+  handleUpdateLocale
 } from './users.js';
 import { corsHeaders, jsonResponse } from './utils.js';
 import { getAssetFromKV } from '@cloudflare/kv-asset-handler';
@@ -33,7 +34,8 @@ const routes = {
   PUT: {
     '/api/users/me': handleUpdateCurrentUser,
     '/api/users/theme-mode': handleUpdateThemeMode,
-    '/api/users/ui-preferences': handleUpdateUiPreferences
+    '/api/users/ui-preferences': handleUpdateUiPreferences,
+    '/api/users/locale': handleUpdateLocale
   }
 };
 

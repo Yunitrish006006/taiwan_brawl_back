@@ -53,7 +53,7 @@ export async function getCurrentUser(request, env) {
   }
 
   return env.DB.prepare(
-    `SELECT id, name, email, role, bio, theme_mode, font_size_scale
+    `SELECT id, name, email, role, bio, theme_mode, font_size_scale, locale
      FROM users
      WHERE id = ?`
   )

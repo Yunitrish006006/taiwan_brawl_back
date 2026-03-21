@@ -1,4 +1,23 @@
+
 import { getCurrentUser, jsonResponse } from './utils.js';
+
+export async function handleUpdateLocale(request, env) {
+  const user = await getCurrentUser(request, env);
+  if (!user) {
+    return jsonResponse({ error: 'Not logged in' }, 401, request);
+  }
+  const body = await request.json().catch(() => null);
+  const locale = body?.locale;
+  // 可支援 zh-Hant, en
+  const validLocales = ['zh-Hant', 'en'];
+  if (!validLocales.includes(locale)) {
+    return jsonResponse({ error: 'Invalid locale' }, 400, request);
+  }
+  await env.DB.prepare('UPDATE users SET locale = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+    .bind(locale, user.id)
+    .run();
+  return jsonResponse({ ok: true }, 200, request);
+}
 
 export async function handleGetCurrentUser(request, env) {
   const user = await getCurrentUser(request, env);
