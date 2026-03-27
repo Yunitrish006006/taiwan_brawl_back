@@ -1,9 +1,7 @@
 import {
   handleGoogleLogin,
-  handleLogin,
   handleLogout,
-  handleMe,
-  handleRegister
+  handleMe
 } from './auth.js';
 import {
   handleGetCurrentUser,
@@ -26,9 +24,7 @@ const routes = {
     '/api/users/me': handleGetCurrentUser
   },
   POST: {
-    '/api/login': handleLogin,
     '/api/logout': handleLogout,
-    '/api/register': handleRegister,
     '/api/google-login': handleGoogleLogin
   },
   PUT: {

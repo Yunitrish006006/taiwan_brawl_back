@@ -17,60 +17,37 @@ async function createSession(userId, env) {
   return sessionId;
 }
 
-async function fetchGoogleTokenInfo(idToken) {
-  const res = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(idToken)}`);
-  if (!res.ok) {
+function decodeBase64Url(value) {
+  let normalized = value.replace(/-/g, '+').replace(/_/g, '/');
+  while (normalized.length % 4) {
+    normalized += '=';
+  }
+
+  const binary = atob(normalized);
+  const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+  return new TextDecoder().decode(bytes);
+}
+
+function decodeGoogleIdToken(idToken) {
+  const tokenParts = idToken.split('.');
+  if (tokenParts.length !== 3) {
     return null;
   }
-  return res.json();
-}
 
-export async function handleLogin(request, env) {
-  const body = await request.json().catch(() => null);
-  if (!body?.email || !body?.password) {
-    return jsonResponse({ error: 'Missing email or password' }, 400, request);
-  }
-
-  const user = await env.DB.prepare(
-    `SELECT id, name, email, password, role, bio, theme_mode, font_size_scale
-     FROM users WHERE email = ?`
-  )
-    .bind(body.email)
-    .first();
-
-  if (!user || user.password !== body.password) {
-    return jsonResponse({ error: 'Invalid credentials' }, 401, request);
-  }
-
-  const sessionId = await createSession(user.id, env);
-  return new Response(JSON.stringify({ ok: true, session_id: sessionId, user: { ...user, password: undefined } }), {
-    status: 200,
-    headers: {
-      ...corsHeaders(request),
-      'Content-Type': 'application/json',
-      'Set-Cookie': setCookie('session_id', sessionId, 30 * 24 * 3600)
+  try {
+    const payload = JSON.parse(decodeBase64Url(tokenParts[1]));
+    if (!payload?.sub || !payload?.email || payload.email_verified === false) {
+      return null;
     }
-  });
-}
 
-export async function handleRegister(request, env) {
-  const body = await request.json().catch(() => null);
-  if (!body?.name || !body?.email || !body?.password) {
-    return jsonResponse({ error: 'Missing fields' }, 400, request);
+    return {
+      sub: payload.sub,
+      email: payload.email,
+      name: payload.name
+    };
+  } catch (_) {
+    return null;
   }
-
-  const exists = await env.DB.prepare('SELECT id FROM users WHERE email = ?')
-    .bind(body.email)
-    .first();
-  if (exists) {
-    return jsonResponse({ error: 'Email already exists' }, 409, request);
-  }
-
-  await env.DB.prepare('INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, ?)')
-    .bind(body.name, body.email, body.password, 'user')
-    .run();
-
-  return jsonResponse({ ok: true }, 201, request);
 }
 
 export async function handleGoogleLogin(request, env) {
@@ -79,37 +56,57 @@ export async function handleGoogleLogin(request, env) {
     return jsonResponse({ error: 'Missing id_token' }, 400, request);
   }
 
-  const tokenInfo = await fetchGoogleTokenInfo(body.id_token);
-  if (!tokenInfo?.sub || !tokenInfo?.email) {
+  const googleUser = decodeGoogleIdToken(body.id_token);
+  if (!googleUser) {
     return jsonResponse({ error: 'Invalid Google token' }, 401, request);
   }
 
   let user = await env.DB.prepare(
-    `SELECT id, name, email, role, bio, theme_mode, font_size_scale
+    `SELECT id, name, email, google_sub, role, bio, theme_mode, font_size_scale, locale
      FROM users WHERE email = ?`
   )
-    .bind(tokenInfo.email)
+    .bind(googleUser.email)
     .first();
 
   if (!user) {
-    const defaultName = tokenInfo.name || tokenInfo.email.split('@')[0];
+    const defaultName = googleUser.name || googleUser.email.split('@')[0];
     await env.DB.prepare(
       `INSERT INTO users (name, email, password, google_sub, role)
        VALUES (?, ?, ?, ?, 'user')`
     )
-      .bind(defaultName, tokenInfo.email, crypto.randomUUID(), tokenInfo.sub)
+      .bind(defaultName, googleUser.email, crypto.randomUUID(), googleUser.sub)
       .run();
 
     user = await env.DB.prepare(
-      `SELECT id, name, email, role, bio, theme_mode, font_size_scale
+      `SELECT id, name, email, google_sub, role, bio, theme_mode, font_size_scale, locale
        FROM users WHERE email = ?`
     )
-      .bind(tokenInfo.email)
+      .bind(googleUser.email)
       .first();
+  } else if (!user.google_sub) {
+    await env.DB.prepare('UPDATE users SET google_sub = ? WHERE id = ?')
+      .bind(googleUser.sub, user.id)
+      .run();
+    user.google_sub = googleUser.sub;
+  } else if (user.google_sub !== googleUser.sub) {
+    return jsonResponse({ error: 'Google account mismatch' }, 401, request);
   }
 
   const sessionId = await createSession(user.id, env);
-  return new Response(JSON.stringify({ ok: true, session_id: sessionId, user }), {
+  return new Response(JSON.stringify({
+    ok: true,
+    session_id: sessionId,
+    user: {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      bio: user.bio,
+      theme_mode: user.theme_mode,
+      font_size_scale: user.font_size_scale,
+      locale: user.locale
+    }
+  }), {
     status: 200,
     headers: {
       ...corsHeaders(request),
