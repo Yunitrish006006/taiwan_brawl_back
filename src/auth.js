@@ -76,14 +76,13 @@ export async function handleGoogleLogin(request, env) {
     const defaultName = googleUser.name || googleUser.email.split('@')[0];
     await env.DB.prepare(
       `INSERT INTO users (
-        name, email, password, google_sub, role, avatar_url, google_avatar_url,
+        name, email, google_sub, role, avatar_url, google_avatar_url,
         avatar_source, last_active_at
-      ) VALUES (?, ?, ?, ?, 'player', ?, ?, 'google', CURRENT_TIMESTAMP)`
+      ) VALUES (?, ?, ?, 'player', ?, ?, 'google', CURRENT_TIMESTAMP)`
     )
       .bind(
         defaultName,
         googleUser.email,
-        crypto.randomUUID(),
         googleUser.sub,
         googleUser.picture,
         googleUser.picture
