@@ -8,11 +8,12 @@ function serializeCard(row) {
     type: row.type,
     hp: Number(row.hp),
     damage: Number(row.damage),
-    attackRange: Number(row.attack_range),
-    moveSpeed: Number(row.move_speed),
+    attackRange: Math.round(Number(row.attack_range)),
+    bodyRadius: Math.round(Number(row.body_radius || 0)),
+    moveSpeed: Math.round(Number(row.move_speed)),
     attackSpeed: Number(row.attack_speed),
     spawnCount: Number(row.spawn_count),
-    spellRadius: Number(row.spell_radius),
+    spellRadius: Math.round(Number(row.spell_radius)),
     spellDamage: Number(row.spell_damage),
     targetRule: row.target_rule,
     effectKind: row.effect_kind || 'none',
@@ -34,11 +35,12 @@ function normalizeCardPayload(payload) {
     type,
     hp: Number(payload?.hp ?? 0),
     damage: Number(payload?.damage ?? 0),
-    attackRange: Number(payload?.attackRange ?? 0),
-    moveSpeed: Number(payload?.moveSpeed ?? 0),
+    attackRange: Math.round(Number(payload?.attackRange ?? 0)),
+    bodyRadius: Math.round(Number(payload?.bodyRadius ?? 0)),
+    moveSpeed: Math.round(Number(payload?.moveSpeed ?? 0)),
     attackSpeed: Number(payload?.attackSpeed ?? 0),
     spawnCount: Number(payload?.spawnCount ?? 1),
-    spellRadius: Number(payload?.spellRadius ?? 0),
+    spellRadius: Math.round(Number(payload?.spellRadius ?? 0)),
     spellDamage: Number(payload?.spellDamage ?? 0),
     targetRule,
     effectKind,
@@ -76,8 +78,8 @@ async function insertStarterCards(env) {
       `INSERT OR IGNORE INTO cards (
         id, name, elixir_cost, type, hp, damage, attack_range, move_speed,
         attack_speed, spawn_count, spell_radius, spell_damage, target_rule,
-        effect_kind, effect_value
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        effect_kind, effect_value, body_radius
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).bind(
       card.id,
       card.name,
@@ -93,7 +95,8 @@ async function insertStarterCards(env) {
       card.spellDamage,
       card.targetRule,
       card.effectKind,
-      card.effectValue
+      card.effectValue,
+      card.bodyRadius
     ).run();
   }
 }
@@ -110,7 +113,7 @@ export async function listCards(env) {
   const rows = await env.DB.prepare(
     `SELECT id, name, elixir_cost, type, hp, damage, attack_range, move_speed,
             attack_speed, spawn_count, spell_radius, spell_damage, target_rule,
-            effect_kind, effect_value
+            effect_kind, effect_value, body_radius
      FROM cards
      ORDER BY elixir_cost ASC, name ASC`
   ).all();
@@ -125,8 +128,8 @@ export async function upsertCard(env, payload) {
     `INSERT INTO cards (
       id, name, elixir_cost, type, hp, damage, attack_range, move_speed,
       attack_speed, spawn_count, spell_radius, spell_damage, target_rule,
-      effect_kind, effect_value
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      effect_kind, effect_value, body_radius
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       name = excluded.name,
       elixir_cost = excluded.elixir_cost,
@@ -141,7 +144,8 @@ export async function upsertCard(env, payload) {
       spell_damage = excluded.spell_damage,
       target_rule = excluded.target_rule,
       effect_kind = excluded.effect_kind,
-      effect_value = excluded.effect_value`
+      effect_value = excluded.effect_value,
+      body_radius = excluded.body_radius`
   )
     .bind(
       card.id,
@@ -158,14 +162,15 @@ export async function upsertCard(env, payload) {
       card.spellDamage,
       card.targetRule,
       card.effectKind,
-      card.effectValue
+      card.effectValue,
+      card.bodyRadius
     )
     .run();
 
   const row = await env.DB.prepare(
     `SELECT id, name, elixir_cost, type, hp, damage, attack_range, move_speed,
             attack_speed, spawn_count, spell_radius, spell_damage, target_rule,
-            effect_kind, effect_value
+            effect_kind, effect_value, body_radius
      FROM cards
      WHERE id = ?`
   )

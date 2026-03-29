@@ -37,6 +37,11 @@ async function handleHealth(request) {
   return jsonResponse({ ok: true, message: 'taiwan brawl api alive' }, 200, request);
 }
 
+function normalizeSimulationMode(value) {
+  const mode = String(value ?? 'server').trim().toLowerCase();
+  return mode === 'host' ? 'host' : 'server';
+}
+
 function randomRoomCode() {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   return Array.from({ length: 6 }, () => {
@@ -204,6 +209,14 @@ async function handleCreateRoom(request, env) {
     return error;
   }
   const vsBot = Boolean(body?.vsBot);
+  const simulationMode = normalizeSimulationMode(body?.simulationMode);
+  if (simulationMode === 'host' && !vsBot) {
+    return jsonResponse(
+      { error: 'Host simulation is currently available for bot matches only' },
+      400,
+      request
+    );
+  }
 
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const code = randomRoomCode();
@@ -217,7 +230,8 @@ async function handleCreateRoom(request, env) {
           user: { id: user.id, name: user.name },
           deck,
           vsBot,
-          botDeck: deck
+          botDeck: deck,
+          simulationMode
         })
       })
     );
@@ -285,6 +299,29 @@ async function handleRematchRoom(request, env, code) {
     stub,
     '/internal/rematch',
     { userId: user.id },
+    request,
+    user
+  );
+}
+
+async function handleHostFinishRoom(request, env, code) {
+  const user = await requireUser(request, env);
+  if (!user) {
+    return jsonResponse({ error: 'Not logged in' }, 401, request);
+  }
+
+  const body = await request.json().catch(() => null);
+  const stub = getRoomStub(env, code);
+  return proxyRoomJson(
+    stub,
+    '/internal/host-finish',
+    {
+      userId: user.id,
+      winnerSide: body?.winnerSide ?? null,
+      reason: body?.reason ?? 'time_up',
+      leftTowerHp: body?.leftTowerHp,
+      rightTowerHp: body?.rightTowerHp
+    },
     request,
     user
   );
@@ -452,7 +489,7 @@ async function handleRoomWebSocket(request, env, code) {
 
 function matchRoomRoute(pathname) {
   const match = pathname.match(
-    /^\/api\/rooms\/([A-Z0-9]{6})\/(join|ready|rematch|state|ws|invite)$/
+    /^\/api\/rooms\/([A-Z0-9]{6})\/(join|ready|rematch|state|ws|invite|host-finish)$/
   );
   if (!match) {
     return null;
@@ -619,6 +656,9 @@ async function handleApiRequest(request, env, url) {
     }
     if (request.method === 'POST' && roomRoute.action === 'rematch') {
       return handleRematchRoom(request, env, roomRoute.code);
+    }
+    if (request.method === 'POST' && roomRoute.action === 'host-finish') {
+      return handleHostFinishRoom(request, env, roomRoute.code);
     }
     if (request.method === 'GET' && roomRoute.action === 'state') {
       return handleRoomState(request, env, roomRoute.code);
