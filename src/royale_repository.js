@@ -1,9 +1,105 @@
 import { defaultDeckCardIds, starterCards } from './royale_cards.js';
 
+function normalizeLocaleKey(locale) {
+  const normalized = String(locale ?? '').trim();
+  if (!normalized) {
+    return '';
+  }
+
+  const lowered = normalized.replaceAll('_', '-').toLowerCase();
+  if (lowered === 'zh-hant') {
+    return 'zh-Hant';
+  }
+  if (lowered === 'en') {
+    return 'en';
+  }
+  if (lowered === 'ja') {
+    return 'ja';
+  }
+  return normalized;
+}
+
+function parseNameI18n(value) {
+  if (!value) {
+    return {};
+  }
+
+  let source = value;
+  if (typeof source === 'string') {
+    try {
+      source = JSON.parse(source);
+    } catch (_) {
+      return {};
+    }
+  }
+
+  if (!source || typeof source !== 'object' || Array.isArray(source)) {
+    return {};
+  }
+
+  const normalized = {};
+  for (const [locale, text] of Object.entries(source)) {
+    const key = normalizeLocaleKey(locale);
+    const valueText = String(text ?? '').trim();
+    if (key && valueText) {
+      normalized[key] = valueText;
+    }
+  }
+  return normalized;
+}
+
+function firstAvailableName(nameI18n, fallbackName = '') {
+  return (
+    nameI18n['zh-Hant'] ||
+    nameI18n.en ||
+    nameI18n.ja ||
+    String(fallbackName ?? '').trim()
+  );
+}
+
+function localizedName(nameI18n, locale, fallbackName = '') {
+  const key = normalizeLocaleKey(locale);
+  return (
+    nameI18n[key] ||
+    nameI18n.en ||
+    firstAvailableName(nameI18n, fallbackName)
+  );
+}
+
 function serializeCard(row) {
+  const nameI18n = parseNameI18n(row.name_i18n);
+  const fallbackName = String(row.name ?? '').trim();
   return {
     id: row.id,
-    name: row.name,
+    name: firstAvailableName(nameI18n, fallbackName),
+    nameI18n,
+    nameZhHant: localizedName(
+      {
+        'zh-Hant': row.name_zh_hant || nameI18n['zh-Hant'],
+        en: nameI18n.en,
+        ja: nameI18n.ja
+      },
+      'zh-Hant',
+      fallbackName
+    ),
+    nameEn: localizedName(
+      {
+        en: row.name_en || nameI18n.en,
+        'zh-Hant': nameI18n['zh-Hant'],
+        ja: nameI18n.ja
+      },
+      'en',
+      fallbackName
+    ),
+    nameJa: localizedName(
+      {
+        ja: row.name_ja || nameI18n.ja,
+        en: nameI18n.en,
+        'zh-Hant': nameI18n['zh-Hant']
+      },
+      'ja',
+      fallbackName
+    ),
     elixirCost: Number(row.elixir_cost),
     type: row.type,
     hp: Number(row.hp),
@@ -23,7 +119,20 @@ function serializeCard(row) {
 
 function normalizeCardPayload(payload) {
   const id = String(payload?.id ?? '').trim();
-  const name = String(payload?.name ?? '').trim();
+  const nameI18n = parseNameI18n(payload?.nameI18n);
+  const legacyName = String(payload?.name ?? '').trim();
+  const nameZhHant = String(
+    payload?.nameZhHant ?? nameI18n['zh-Hant'] ?? legacyName
+  ).trim();
+  const nameEn = String(payload?.nameEn ?? nameI18n.en ?? '').trim();
+  const nameJa = String(payload?.nameJa ?? nameI18n.ja ?? '').trim();
+  const mergedNameI18n = parseNameI18n({
+    ...nameI18n,
+    'zh-Hant': nameZhHant,
+    en: nameEn,
+    ja: nameJa
+  });
+  const name = firstAvailableName(mergedNameI18n, legacyName);
   const type = String(payload?.type ?? '').trim();
   const targetRule = String(payload?.targetRule ?? '').trim();
   const effectKind = String(payload?.effectKind ?? 'none').trim() || 'none';
@@ -31,6 +140,10 @@ function normalizeCardPayload(payload) {
   const card = {
     id,
     name,
+    nameI18n: mergedNameI18n,
+    nameZhHant,
+    nameEn,
+    nameJa,
     elixirCost: Number(payload?.elixirCost ?? 0),
     type,
     hp: Number(payload?.hp ?? 0),
@@ -54,7 +167,7 @@ function normalizeCardPayload(payload) {
     throw new Error('Card id must be alphanumeric or underscore');
   }
   if (!card.name) {
-    throw new Error('Card name is required');
+    throw new Error('At least one localized card name is required');
   }
   if (!card.type) {
     throw new Error('Card type is required');
@@ -78,8 +191,9 @@ async function insertStarterCards(env) {
       `INSERT OR IGNORE INTO cards (
         id, name, elixir_cost, type, hp, damage, attack_range, move_speed,
         attack_speed, spawn_count, spell_radius, spell_damage, target_rule,
-        effect_kind, effect_value, body_radius
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        effect_kind, effect_value, body_radius, name_zh_hant, name_en, name_ja,
+        name_i18n
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).bind(
       card.id,
       card.name,
@@ -96,7 +210,15 @@ async function insertStarterCards(env) {
       card.targetRule,
       card.effectKind,
       card.effectValue,
-      card.bodyRadius
+      card.bodyRadius,
+      card.nameZhHant,
+      card.nameEn,
+      card.nameJa,
+      JSON.stringify(card.nameI18n ?? {
+        'zh-Hant': card.nameZhHant,
+        en: card.nameEn,
+        ja: card.nameJa
+      })
     ).run();
   }
 }
@@ -113,7 +235,8 @@ export async function listCards(env) {
   const rows = await env.DB.prepare(
     `SELECT id, name, elixir_cost, type, hp, damage, attack_range, move_speed,
             attack_speed, spawn_count, spell_radius, spell_damage, target_rule,
-            effect_kind, effect_value, body_radius
+            effect_kind, effect_value, body_radius, name_zh_hant, name_en, name_ja,
+            name_i18n
      FROM cards
      ORDER BY elixir_cost ASC, name ASC`
   ).all();
@@ -128,8 +251,9 @@ export async function upsertCard(env, payload) {
     `INSERT INTO cards (
       id, name, elixir_cost, type, hp, damage, attack_range, move_speed,
       attack_speed, spawn_count, spell_radius, spell_damage, target_rule,
-      effect_kind, effect_value, body_radius
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      effect_kind, effect_value, body_radius, name_zh_hant, name_en, name_ja,
+      name_i18n
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       name = excluded.name,
       elixir_cost = excluded.elixir_cost,
@@ -145,7 +269,11 @@ export async function upsertCard(env, payload) {
       target_rule = excluded.target_rule,
       effect_kind = excluded.effect_kind,
       effect_value = excluded.effect_value,
-      body_radius = excluded.body_radius`
+      body_radius = excluded.body_radius,
+      name_zh_hant = excluded.name_zh_hant,
+      name_en = excluded.name_en,
+      name_ja = excluded.name_ja,
+      name_i18n = excluded.name_i18n`
   )
     .bind(
       card.id,
@@ -163,14 +291,19 @@ export async function upsertCard(env, payload) {
       card.targetRule,
       card.effectKind,
       card.effectValue,
-      card.bodyRadius
+      card.bodyRadius,
+      card.nameZhHant,
+      card.nameEn,
+      card.nameJa,
+      JSON.stringify(card.nameI18n)
     )
     .run();
 
   const row = await env.DB.prepare(
     `SELECT id, name, elixir_cost, type, hp, damage, attack_range, move_speed,
             attack_speed, spawn_count, spell_radius, spell_damage, target_rule,
-            effect_kind, effect_value, body_radius
+            effect_kind, effect_value, body_radius, name_zh_hant, name_en, name_ja,
+            name_i18n
      FROM cards
      WHERE id = ?`
   )

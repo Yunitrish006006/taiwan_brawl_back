@@ -1,8 +1,19 @@
 function baseCard(card) {
+  const nameZhHant = card.nameZhHant ?? card.name ?? '';
+  const nameEn = card.nameEn ?? card.name ?? '';
+  const nameJa = card.nameJa ?? card.name ?? '';
   return {
     bodyRadius: 18,
     effectKind: 'none',
     effectValue: 0,
+    nameZhHant,
+    nameEn,
+    nameJa,
+    nameI18n: {
+      'zh-Hant': nameZhHant,
+      en: nameEn,
+      ja: nameJa,
+    },
     ...card
   };
 }
@@ -11,6 +22,9 @@ export const starterCards = [
   baseCard({
     id: 'swordsman',
     name: '劍士',
+    nameZhHant: '劍士',
+    nameEn: 'Swordsman',
+    nameJa: '剣士',
     elixirCost: 3,
     type: 'melee',
     hp: 420,
@@ -27,6 +41,9 @@ export const starterCards = [
   baseCard({
     id: 'guardian',
     name: '護衛',
+    nameZhHant: '護衛',
+    nameEn: 'Guardian',
+    nameJa: 'ガーディアン',
     elixirCost: 2,
     type: 'melee',
     hp: 320,
@@ -43,6 +60,9 @@ export const starterCards = [
   baseCard({
     id: 'knight',
     name: '騎士',
+    nameZhHant: '騎士',
+    nameEn: 'Knight',
+    nameJa: 'ナイト',
     elixirCost: 4,
     type: 'tank',
     hp: 980,
@@ -59,6 +79,9 @@ export const starterCards = [
   baseCard({
     id: 'giant',
     name: '巨人',
+    nameZhHant: '巨人',
+    nameEn: 'Giant',
+    nameJa: 'ジャイアント',
     elixirCost: 5,
     type: 'tank',
     hp: 1680,
@@ -75,6 +98,9 @@ export const starterCards = [
   baseCard({
     id: 'archer',
     name: '弓手',
+    nameZhHant: '弓手',
+    nameEn: 'Archer',
+    nameJa: 'アーチャー',
     elixirCost: 3,
     type: 'ranged',
     hp: 260,
@@ -91,6 +117,9 @@ export const starterCards = [
   baseCard({
     id: 'musketeer',
     name: '火槍手',
+    nameZhHant: '火槍手',
+    nameEn: 'Musketeer',
+    nameJa: 'マスケット銃士',
     elixirCost: 4,
     type: 'ranged',
     hp: 380,
@@ -107,6 +136,9 @@ export const starterCards = [
   baseCard({
     id: 'bomber',
     name: '投彈兵',
+    nameZhHant: '投彈兵',
+    nameEn: 'Bomber',
+    nameJa: 'ボマー',
     elixirCost: 3,
     type: 'ranged',
     hp: 240,
@@ -123,6 +155,9 @@ export const starterCards = [
   baseCard({
     id: 'wolf_pack',
     name: '狼群',
+    nameZhHant: '狼群',
+    nameEn: 'Wolf Pack',
+    nameJa: 'ウルフパック',
     elixirCost: 3,
     type: 'swarm',
     hp: 120,
@@ -139,6 +174,9 @@ export const starterCards = [
   baseCard({
     id: 'goblin_team',
     name: '哥布林小隊',
+    nameZhHant: '哥布林小隊',
+    nameEn: 'Goblin Team',
+    nameJa: 'ゴブリンチーム',
     elixirCost: 2,
     type: 'swarm',
     hp: 95,
@@ -155,6 +193,9 @@ export const starterCards = [
   baseCard({
     id: 'fireball',
     name: '火球',
+    nameZhHant: '火球',
+    nameEn: 'Fireball',
+    nameJa: 'ファイアボール',
     elixirCost: 4,
     type: 'spell',
     hp: 0,
@@ -171,6 +212,9 @@ export const starterCards = [
   baseCard({
     id: 'zap',
     name: '電擊',
+    nameZhHant: '電擊',
+    nameEn: 'Zap',
+    nameJa: 'ザップ',
     elixirCost: 2,
     type: 'spell',
     hp: 0,
@@ -187,6 +231,9 @@ export const starterCards = [
   baseCard({
     id: 'healer',
     name: '祭司',
+    nameZhHant: '祭司',
+    nameEn: 'Healer',
+    nameJa: 'ヒーラー',
     elixirCost: 3,
     type: 'ranged',
     hp: 300,
@@ -203,6 +250,9 @@ export const starterCards = [
   {
     id: 'iron_blade',
     name: '鋼刃',
+    nameZhHant: '鋼刃',
+    nameEn: 'Iron Blade',
+    nameJa: '鋼の刃',
     elixirCost: 2,
     type: 'equipment',
     hp: 0,
@@ -221,6 +271,9 @@ export const starterCards = [
   {
     id: 'swift_boots',
     name: '疾行靴',
+    nameZhHant: '疾行靴',
+    nameEn: 'Swift Boots',
+    nameJa: '俊足の靴',
     elixirCost: 2,
     type: 'equipment',
     hp: 0,
@@ -239,6 +292,9 @@ export const starterCards = [
   {
     id: 'guardian_armor',
     name: '守衛甲',
+    nameZhHant: '守衛甲',
+    nameEn: 'Guardian Armor',
+    nameJa: '守護の鎧',
     elixirCost: 3,
     type: 'equipment',
     hp: 0,
