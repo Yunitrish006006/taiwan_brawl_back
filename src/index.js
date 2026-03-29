@@ -2,6 +2,18 @@ import { getAssetFromKV } from '@cloudflare/kv-asset-handler';
 
 import { handleGoogleLogin, handleLogout, handleMe } from './auth.js';
 import {
+  blockUser,
+  cancelFriendRequest,
+  getFriendsOverview,
+  removeFriend,
+  respondToFriendRequest,
+  respondToRoomInvite,
+  searchUserById,
+  sendFriendRequest,
+  sendRoomInvite,
+  unblockUser
+} from './friends_repository.js';
+import {
   getDeckForUser,
   listCards,
   listDecksForUser,
@@ -39,6 +51,14 @@ async function requireUser(request, env) {
     return null;
   }
   return user;
+}
+
+async function withBadRequest(request, handler) {
+  try {
+    return await handler();
+  } catch (error) {
+    return jsonResponse({ error: error.message || 'Request failed' }, 400, request);
+  }
 }
 
 async function proxyRoomJson(stub, path, payload, request, user) {
@@ -211,6 +231,125 @@ async function handleRoomState(request, env, code) {
   return jsonResponse(data, upstream.status, request);
 }
 
+async function handleFriendsOverview(request, env) {
+  const user = await requireUser(request, env);
+  if (!user) {
+    return jsonResponse({ error: 'Not logged in' }, 401, request);
+  }
+
+  const overview = await getFriendsOverview(user.id, env);
+  return jsonResponse({ ok: true, ...overview }, 200, request);
+}
+
+async function handleFriendSearch(request, env, url) {
+  return withBadRequest(request, async () => {
+    const user = await requireUser(request, env);
+    if (!user) {
+      return jsonResponse({ error: 'Not logged in' }, 401, request);
+    }
+
+    const result = await searchUserById(user.id, url.searchParams.get('id'), env);
+    return jsonResponse({ ok: true, result }, 200, request);
+  });
+}
+
+async function handleSendFriendRequest(request, env) {
+  return withBadRequest(request, async () => {
+    const user = await requireUser(request, env);
+    if (!user) {
+      return jsonResponse({ error: 'Not logged in' }, 401, request);
+    }
+
+    const body = await request.json().catch(() => null);
+    const result = await sendFriendRequest(user.id, body?.targetUserId, env);
+    return jsonResponse({ ok: true, ...result }, 200, request);
+  });
+}
+
+async function handleFriendRequestAction(request, env, requestId, action) {
+  return withBadRequest(request, async () => {
+    const user = await requireUser(request, env);
+    if (!user) {
+      return jsonResponse({ error: 'Not logged in' }, 401, request);
+    }
+
+    if (action === 'cancel') {
+      const result = await cancelFriendRequest(user.id, requestId, env);
+      return jsonResponse(result, 200, request);
+    }
+
+    const result = await respondToFriendRequest(user.id, requestId, action, env);
+    return jsonResponse(result, 200, request);
+  });
+}
+
+async function handleRemoveFriend(request, env, targetUserId) {
+  return withBadRequest(request, async () => {
+    const user = await requireUser(request, env);
+    if (!user) {
+      return jsonResponse({ error: 'Not logged in' }, 401, request);
+    }
+
+    const result = await removeFriend(user.id, targetUserId, env);
+    return jsonResponse(result, 200, request);
+  });
+}
+
+async function handleBlockUser(request, env) {
+  return withBadRequest(request, async () => {
+    const user = await requireUser(request, env);
+    if (!user) {
+      return jsonResponse({ error: 'Not logged in' }, 401, request);
+    }
+
+    const body = await request.json().catch(() => null);
+    const result = await blockUser(user.id, body?.targetUserId, env);
+    return jsonResponse(result, 200, request);
+  });
+}
+
+async function handleUnblockUser(request, env, targetUserId) {
+  return withBadRequest(request, async () => {
+    const user = await requireUser(request, env);
+    if (!user) {
+      return jsonResponse({ error: 'Not logged in' }, 401, request);
+    }
+
+    const result = await unblockUser(user.id, targetUserId, env);
+    return jsonResponse(result, 200, request);
+  });
+}
+
+async function handleSendRoomInvite(request, env, roomCode) {
+  return withBadRequest(request, async () => {
+    const user = await requireUser(request, env);
+    if (!user) {
+      return jsonResponse({ error: 'Not logged in' }, 401, request);
+    }
+
+    const body = await request.json().catch(() => null);
+    const result = await sendRoomInvite(
+      user.id,
+      body?.inviteeUserId,
+      roomCode,
+      env
+    );
+    return jsonResponse(result, 200, request);
+  });
+}
+
+async function handleRoomInviteAction(request, env, inviteId, action) {
+  return withBadRequest(request, async () => {
+    const user = await requireUser(request, env);
+    if (!user) {
+      return jsonResponse({ error: 'Not logged in' }, 401, request);
+    }
+
+    const result = await respondToRoomInvite(user.id, inviteId, action, env);
+    return jsonResponse(result, 200, request);
+  });
+}
+
 async function handleRoomWebSocket(request, env, code) {
   const user = await requireUser(request, env);
   if (!user) {
@@ -236,7 +375,7 @@ async function handleRoomWebSocket(request, env, code) {
 
 function matchRoomRoute(pathname) {
   const match = pathname.match(
-    /^\/api\/rooms\/([A-Z0-9]{6})\/(join|ready|rematch|state|ws)$/
+    /^\/api\/rooms\/([A-Z0-9]{6})\/(join|ready|rematch|state|ws|invite)$/
   );
   if (!match) {
     return null;
@@ -244,6 +383,46 @@ function matchRoomRoute(pathname) {
 
   return {
     code: match[1],
+    action: match[2]
+  };
+}
+
+function matchFriendRequestRoute(pathname) {
+  const match = pathname.match(
+    /^\/api\/friends\/requests\/(\d+)\/(accept|reject|cancel)$/
+  );
+  if (!match) {
+    return null;
+  }
+  return {
+    requestId: Number(match[1]),
+    action: match[2]
+  };
+}
+
+function matchFriendRoute(pathname) {
+  const match = pathname.match(/^\/api\/friends\/(\d+)$/);
+  if (!match) {
+    return null;
+  }
+  return Number(match[1]);
+}
+
+function matchBlockedUserRoute(pathname) {
+  const match = pathname.match(/^\/api\/friends\/block\/(\d+)$/);
+  if (!match) {
+    return null;
+  }
+  return Number(match[1]);
+}
+
+function matchRoomInviteRoute(pathname) {
+  const match = pathname.match(/^\/api\/room-invites\/(\d+)\/(accept|reject)$/);
+  if (!match) {
+    return null;
+  }
+  return {
+    inviteId: Number(match[1]),
     action: match[2]
   };
 }
@@ -288,6 +467,48 @@ async function handleApiRequest(request, env, url) {
   if (request.method === 'POST' && url.pathname === '/api/rooms') {
     return handleCreateRoom(request, env);
   }
+  if (request.method === 'GET' && url.pathname === '/api/friends/overview') {
+    return handleFriendsOverview(request, env);
+  }
+  if (request.method === 'GET' && url.pathname === '/api/friends/search') {
+    return handleFriendSearch(request, env, url);
+  }
+  if (request.method === 'POST' && url.pathname === '/api/friends/requests') {
+    return handleSendFriendRequest(request, env);
+  }
+  if (request.method === 'POST' && url.pathname === '/api/friends/block') {
+    return handleBlockUser(request, env);
+  }
+
+  const friendRequestRoute = matchFriendRequestRoute(url.pathname);
+  if (friendRequestRoute && request.method === 'POST') {
+    return handleFriendRequestAction(
+      request,
+      env,
+      friendRequestRoute.requestId,
+      friendRequestRoute.action
+    );
+  }
+
+  const friendUserId = matchFriendRoute(url.pathname);
+  if (friendUserId && request.method === 'DELETE') {
+    return handleRemoveFriend(request, env, friendUserId);
+  }
+
+  const blockedUserId = matchBlockedUserRoute(url.pathname);
+  if (blockedUserId && request.method === 'DELETE') {
+    return handleUnblockUser(request, env, blockedUserId);
+  }
+
+  const roomInviteRoute = matchRoomInviteRoute(url.pathname);
+  if (roomInviteRoute && request.method === 'POST') {
+    return handleRoomInviteAction(
+      request,
+      env,
+      roomInviteRoute.inviteId,
+      roomInviteRoute.action
+    );
+  }
 
   const roomRoute = matchRoomRoute(url.pathname);
   if (roomRoute) {
@@ -305,6 +526,9 @@ async function handleApiRequest(request, env, url) {
     }
     if (request.method === 'GET' && roomRoute.action === 'ws') {
       return handleRoomWebSocket(request, env, roomRoute.code);
+    }
+    if (request.method === 'POST' && roomRoute.action === 'invite') {
+      return handleSendRoomInvite(request, env, roomRoute.code);
     }
   }
 

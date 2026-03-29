@@ -52,8 +52,15 @@ export async function getCurrentUser(request, env) {
     return null;
   }
 
+  await env.DB.prepare(
+    'UPDATE users SET last_active_at = CURRENT_TIMESTAMP WHERE id = ?'
+  )
+    .bind(session.user_id)
+    .run();
+
   return env.DB.prepare(
-    `SELECT id, name, email, role, bio, theme_mode, font_size_scale, locale
+    `SELECT id, name, email, role, bio, avatar_url, last_active_at,
+            theme_mode, font_size_scale, locale
      FROM users
      WHERE id = ?`
   )

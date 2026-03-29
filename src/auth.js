@@ -43,7 +43,8 @@ function decodeGoogleIdToken(idToken) {
     return {
       sub: payload.sub,
       email: payload.email,
-      name: payload.name
+      name: payload.name,
+      picture: payload.picture || null
     };
   } catch (_) {
     return null;
@@ -62,7 +63,8 @@ export async function handleGoogleLogin(request, env) {
   }
 
   let user = await env.DB.prepare(
-    `SELECT id, name, email, google_sub, role, bio, theme_mode, font_size_scale, locale
+    `SELECT id, name, email, google_sub, role, bio, avatar_url, last_active_at,
+            theme_mode, font_size_scale, locale
      FROM users WHERE email = ?`
   )
     .bind(googleUser.email)
@@ -71,14 +73,22 @@ export async function handleGoogleLogin(request, env) {
   if (!user) {
     const defaultName = googleUser.name || googleUser.email.split('@')[0];
     await env.DB.prepare(
-      `INSERT INTO users (name, email, password, google_sub, role)
-       VALUES (?, ?, ?, ?, 'user')`
+      `INSERT INTO users (
+        name, email, password, google_sub, role, avatar_url, last_active_at
+      ) VALUES (?, ?, ?, ?, 'user', ?, CURRENT_TIMESTAMP)`
     )
-      .bind(defaultName, googleUser.email, crypto.randomUUID(), googleUser.sub)
+      .bind(
+        defaultName,
+        googleUser.email,
+        crypto.randomUUID(),
+        googleUser.sub,
+        googleUser.picture
+      )
       .run();
 
     user = await env.DB.prepare(
-      `SELECT id, name, email, google_sub, role, bio, theme_mode, font_size_scale, locale
+      `SELECT id, name, email, google_sub, role, bio, avatar_url, last_active_at,
+              theme_mode, font_size_scale, locale
        FROM users WHERE email = ?`
     )
       .bind(googleUser.email)
@@ -92,6 +102,22 @@ export async function handleGoogleLogin(request, env) {
     return jsonResponse({ error: 'Google account mismatch' }, 401, request);
   }
 
+  await env.DB.prepare(
+    `UPDATE users
+     SET avatar_url = ?, last_active_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+     WHERE id = ?`
+  )
+    .bind(googleUser.picture, user.id)
+    .run();
+
+  user = await env.DB.prepare(
+    `SELECT id, name, email, google_sub, role, bio, avatar_url, last_active_at,
+            theme_mode, font_size_scale, locale
+     FROM users WHERE id = ?`
+  )
+    .bind(user.id)
+    .first();
+
   const sessionId = await createSession(user.id, env);
   return new Response(JSON.stringify({
     ok: true,
@@ -102,6 +128,8 @@ export async function handleGoogleLogin(request, env) {
       email: user.email,
       role: user.role,
       bio: user.bio,
+      avatar_url: user.avatar_url,
+      last_active_at: user.last_active_at,
       theme_mode: user.theme_mode,
       font_size_scale: user.font_size_scale,
       locale: user.locale
