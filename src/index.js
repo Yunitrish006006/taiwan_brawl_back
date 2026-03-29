@@ -129,6 +129,7 @@ async function handleCreateRoom(request, env) {
   if (error) {
     return error;
   }
+  const vsBot = Boolean(body?.vsBot);
 
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const code = randomRoomCode();
@@ -140,7 +141,9 @@ async function handleCreateRoom(request, env) {
         body: JSON.stringify({
           code,
           user: { id: user.id, name: user.name },
-          deck
+          deck,
+          vsBot,
+          botDeck: deck
         })
       })
     );

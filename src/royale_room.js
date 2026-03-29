@@ -14,6 +14,8 @@ const PERSIST_INTERVAL_MS = 1000;
 const MAX_COMBO_CARDS = 3;
 const LATERAL_MIN = 0.12;
 const LATERAL_MAX = 0.88;
+const BOT_MIN_THINK_MS = 700;
+const BOT_MAX_THINK_MS = 1500;
 
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
@@ -100,6 +102,7 @@ function createBattleState(playersBySide) {
             elixir: 5,
             hand: queue.splice(0, 4),
             queue,
+            botThinkMs: player.isBot ? BOT_MIN_THINK_MS : 0,
             towerHp: TOWER_HP,
             maxTowerHp: TOWER_HP
           }
@@ -118,10 +121,17 @@ function createPlayer(side, payload) {
     deckName: payload.deck.name,
     deckCardIds: payload.deck.cards.map((card) => card.id),
     deckCards: payload.deck.cards,
-    ready: false,
-    connected: false,
+    ready: Boolean(payload.user.isBot),
+    connected: Boolean(payload.user.isBot),
+    isBot: Boolean(payload.user.isBot),
     lastDisconnectedAt: null
   };
+}
+
+function randomBotThinkMs() {
+  return Math.floor(
+    BOT_MIN_THINK_MS + Math.random() * (BOT_MAX_THINK_MS - BOT_MIN_THINK_MS)
+  );
 }
 
 export class RoyaleRoom {
@@ -213,6 +223,7 @@ export class RoyaleRoom {
           side: player.side,
           deckId: player.deckId,
           deckName: player.deckName,
+          isBot: Boolean(player.isBot),
           ready: player.ready,
           connected: player.connected,
           towerHp: battleState?.towerHp ?? TOWER_HP,
@@ -282,6 +293,17 @@ export class RoyaleRoom {
       },
       battle: null
     };
+
+    if (payload.vsBot) {
+      this.room.players.right = createPlayer('right', {
+        user: {
+          id: 0,
+          name: '基礎機器人',
+          isBot: true
+        },
+        deck: payload.botDeck || payload.deck
+      });
+    }
     await this.persist(true);
 
     return json({ ok: true, room: this.viewerSnapshot(payload.user.id) });
@@ -465,7 +487,102 @@ export class RoyaleRoom {
     this.room.status = 'lobby';
     this.room.battle = null;
     for (const player of Object.values(this.room.players)) {
-      player.ready = false;
+      player.ready = Boolean(player.isBot);
+      player.connected = Boolean(player.isBot) || player.connected;
+    }
+  }
+
+  buildBotPayload(side, battlePlayer, comboCards) {
+    const enemyUnits = this.room.battle.units.filter(
+      (unit) => unit.side !== side && unit.hp > 0
+    );
+    const averageEnemyLateral = enemyUnits.length
+      ? enemyUnits.reduce((sum, unit) => sum + unit.lateralPosition, 0) /
+        enemyUnits.length
+      : 0.5;
+    const progress = sanitizeLanePosition(
+      side,
+      side === 'left' ? 0.26 + Math.random() * 0.08 : 0.66 + Math.random() * 0.08
+    );
+    const lateralPosition = sanitizeLateralPosition(
+      averageEnemyLateral + (Math.random() - 0.5) * 0.14
+    );
+    const dropY = side === 'left' ? 1 - progress : progress;
+
+    return {
+      cardIds: comboCards.map((card) => card.id),
+      lanePosition: progress,
+      dropX: lateralPosition,
+      dropY
+    };
+  }
+
+  chooseBotCombo(player, battlePlayer) {
+    const handCards = battlePlayer.hand
+      .map((cardId) => player.deckCards.find((card) => card.id === cardId))
+      .filter(Boolean);
+    const affordable = handCards.filter(
+      (card) => Number(card.elixirCost || 0) <= battlePlayer.elixir + 1e-6
+    );
+    if (affordable.length === 0) {
+      return [];
+    }
+
+    const playableUnits = affordable.filter(
+      (card) => card.type !== 'equipment' && card.type !== 'spell'
+    );
+    const playableSpells = affordable.filter((card) => card.type === 'spell');
+    const playableEquipment = affordable.filter((card) => card.type === 'equipment');
+
+    let primaryCard = null;
+    if (playableUnits.length > 0) {
+      primaryCard = playableUnits[Math.floor(Math.random() * playableUnits.length)];
+    } else if (playableSpells.length > 0) {
+      primaryCard = playableSpells[Math.floor(Math.random() * playableSpells.length)];
+    }
+
+    if (!primaryCard) {
+      return [];
+    }
+
+    const comboCards = [primaryCard];
+    if (
+      primaryCard.type !== 'spell' &&
+      playableEquipment.length > 0 &&
+      Math.random() < 0.4
+    ) {
+      const candidate = playableEquipment.find(
+        (card) =>
+          Number(card.elixirCost || 0) + Number(primaryCard.elixirCost || 0) <=
+          battlePlayer.elixir + 1e-6
+      );
+      if (candidate) {
+        comboCards.push(candidate);
+      }
+    }
+
+    return comboCards;
+  }
+
+  async runBotTurns() {
+    for (const [side, player] of Object.entries(this.room.players)) {
+      if (!player.isBot) {
+        continue;
+      }
+
+      const battlePlayer = this.room.battle.players[side];
+      battlePlayer.botThinkMs = Math.max(0, Number(battlePlayer.botThinkMs || 0) - TICK_MS);
+      if (battlePlayer.botThinkMs > 0) {
+        continue;
+      }
+
+      const comboCards = this.chooseBotCombo(player, battlePlayer);
+      battlePlayer.botThinkMs = randomBotThinkMs();
+      if (comboCards.length === 0) {
+        continue;
+      }
+
+      await this.handlePlayCombo(player.userId, this.buildBotPayload(side, battlePlayer, comboCards));
     }
   }
 
@@ -788,6 +905,8 @@ export class RoyaleRoom {
       );
     }
 
+    await this.runBotTurns();
+
     for (const unit of this.room.battle.units) {
       if (unit.hp <= 0) {
         continue;
@@ -865,7 +984,7 @@ export class RoyaleRoom {
 
     const leftPlayer = this.room.players.left;
     const rightPlayer = this.room.players.right;
-    if (leftPlayer && rightPlayer) {
+    if (leftPlayer && rightPlayer && !leftPlayer.isBot && !rightPlayer.isBot) {
       await recordMatchHistory(this.env, {
         roomCode: this.room.code,
         playerOneUserId: leftPlayer.userId,
