@@ -177,6 +177,22 @@ async function handleReadyRoom(request, env, code) {
   );
 }
 
+async function handleRematchRoom(request, env, code) {
+  const user = await requireUser(request, env);
+  if (!user) {
+    return jsonResponse({ error: 'Not logged in' }, 401, request);
+  }
+
+  const stub = getRoomStub(env, code);
+  return proxyRoomJson(
+    stub,
+    '/internal/rematch',
+    { userId: user.id },
+    request,
+    user
+  );
+}
+
 async function handleRoomState(request, env, code) {
   const user = await requireUser(request, env);
   if (!user) {
@@ -219,7 +235,9 @@ async function handleRoomWebSocket(request, env, code) {
 }
 
 function matchRoomRoute(pathname) {
-  const match = pathname.match(/^\/api\/rooms\/([A-Z0-9]{6})\/(join|ready|state|ws)$/);
+  const match = pathname.match(
+    /^\/api\/rooms\/([A-Z0-9]{6})\/(join|ready|rematch|state|ws)$/
+  );
   if (!match) {
     return null;
   }
@@ -278,6 +296,9 @@ async function handleApiRequest(request, env, url) {
     }
     if (request.method === 'POST' && roomRoute.action === 'ready') {
       return handleReadyRoom(request, env, roomRoute.code);
+    }
+    if (request.method === 'POST' && roomRoute.action === 'rematch') {
+      return handleRematchRoom(request, env, roomRoute.code);
     }
     if (request.method === 'GET' && roomRoute.action === 'state') {
       return handleRoomState(request, env, roomRoute.code);

@@ -12,6 +12,8 @@ const TOWER_HP = 3000;
 const DISCONNECT_GRACE_MS = 15000;
 const PERSIST_INTERVAL_MS = 1000;
 const MAX_COMBO_CARDS = 3;
+const LATERAL_MIN = 0.12;
+const LATERAL_MAX = 0.88;
 
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
@@ -42,6 +44,40 @@ function sanitizeLanePosition(side, value) {
     return (min + max) / 2;
   }
   return clamp(value, min, max);
+}
+
+function sanitizeLateralPosition(value) {
+  if (!Number.isFinite(value)) {
+    return 0.5;
+  }
+  return clamp(value, LATERAL_MIN, LATERAL_MAX);
+}
+
+function toWorldProgress(side, viewY) {
+  const normalizedY = clamp(viewY, 0, 1);
+  return side === 'left' ? 1 - normalizedY : normalizedY;
+}
+
+function normalizeDropPoint(side, payload) {
+  const hasExactPoint =
+    Number.isFinite(Number(payload?.dropX)) &&
+    Number.isFinite(Number(payload?.dropY));
+
+  if (!hasExactPoint) {
+    return {
+      progress: sanitizeLanePosition(side, Number(payload?.lanePosition)),
+      lateralPosition: 0.5
+    };
+  }
+
+  return {
+    progress: sanitizeLanePosition(side, toWorldProgress(side, Number(payload.dropY))),
+    lateralPosition: sanitizeLateralPosition(Number(payload.dropX))
+  };
+}
+
+function distanceBetweenPoints(aProgress, aLateral, bProgress, bLateral) {
+  return Math.hypot(aProgress - bProgress, aLateral - bLateral);
 }
 
 function nowMs() {
@@ -137,6 +173,9 @@ export class RoyaleRoom {
     if (request.method === 'POST' && url.pathname === '/internal/ready') {
       return this.handleReady(request);
     }
+    if (request.method === 'POST' && url.pathname === '/internal/rematch') {
+      return this.handleRematch(request);
+    }
     if (request.method === 'GET' && url.pathname === '/internal/state') {
       return this.handleState(request);
     }
@@ -196,8 +235,8 @@ export class RoyaleRoom {
               name: unit.name,
               side: unit.side,
               type: unit.type,
-              x: Number(unit.x.toFixed(4)),
-              yOffset: unit.yOffset,
+              progress: Number(unit.progress.toFixed(4)),
+              lateralPosition: Number(unit.lateralPosition.toFixed(4)),
               hp: Math.max(0, Math.round(unit.hp)),
               maxHp: unit.maxHp,
               effects: unit.effects ?? []
@@ -276,6 +315,10 @@ export class RoyaleRoom {
       return json({ error: 'Player not found' }, 404);
     }
 
+    if (!this.room || this.room.status === 'finished') {
+      return json({ error: 'Match has ended, start a rematch first' }, 409);
+    }
+
     player.ready = true;
     await this.persist(true);
     await this.broadcast('room_state');
@@ -288,6 +331,25 @@ export class RoyaleRoom {
       await this.broadcast('battle_started');
     }
 
+    return json({ ok: true, room: this.viewerSnapshot(payload.userId) });
+  }
+
+  async handleRematch(request) {
+    const payload = await request.json();
+    const player = this.findPlayerByUserId(payload.userId);
+    if (!player) {
+      return json({ error: 'Player not found' }, 404);
+    }
+    if (!this.room) {
+      return json({ error: 'Room not found' }, 404);
+    }
+    if (this.room.status !== 'finished') {
+      return json({ error: 'Rematch is only available after the battle ends' }, 409);
+    }
+
+    this.resetRoomToLobby();
+    await this.persist(true);
+    await this.broadcast('room_state');
     return json({ ok: true, room: this.viewerSnapshot(payload.userId) });
   }
 
@@ -366,7 +428,9 @@ export class RoyaleRoom {
     if (payload?.type === 'play_card') {
       await this.handlePlayCombo(userId, {
         cardIds: [payload.cardId],
-        lanePosition: payload.lanePosition
+        lanePosition: payload.lanePosition,
+        dropX: payload.dropX,
+        dropY: payload.dropY
       });
       return;
     }
@@ -394,6 +458,15 @@ export class RoyaleRoom {
     this.room.battle = createBattleState(this.room.players);
     this.ensureTicking();
     void this.persist(true);
+  }
+
+  resetRoomToLobby() {
+    this.stopTicking();
+    this.room.status = 'lobby';
+    this.room.battle = null;
+    for (const player of Object.values(this.room.players)) {
+      player.ready = false;
+    }
   }
 
   ensureTicking() {
@@ -535,10 +608,7 @@ export class RoyaleRoom {
       return;
     }
 
-    const lanePosition = sanitizeLanePosition(
-      player.side,
-      Number(payload.lanePosition)
-    );
+    const dropPoint = normalizeDropPoint(player.side, payload);
     const equipmentEffects = this.equipmentEffects(comboCards);
 
     battlePlayer.elixir = clamp(
@@ -550,9 +620,9 @@ export class RoyaleRoom {
 
     for (const card of comboCards) {
       if (card.type === 'spell') {
-        this.resolveSpell(player.side, card, lanePosition);
+        this.resolveSpell(player.side, card, dropPoint);
       } else if (card.type !== 'equipment') {
-        this.spawnUnits(player.side, card, lanePosition, equipmentEffects);
+        this.spawnUnits(player.side, card, dropPoint, equipmentEffects);
       }
     }
 
@@ -561,7 +631,8 @@ export class RoyaleRoom {
         type: 'combo_cast',
         side: player.side,
         cardIds: comboCards.map((card) => card.id),
-        lanePosition,
+        progress: dropPoint.progress,
+        lateralPosition: dropPoint.lateralPosition,
         equipment: equipmentEffects.map((effect) => effect.name)
       }
     });
@@ -569,7 +640,7 @@ export class RoyaleRoom {
     await this.persist();
   }
 
-  resolveSpell(side, card, lanePosition) {
+  resolveSpell(side, card, dropPoint) {
     const enemySide = side === 'left' ? 'right' : 'left';
     const enemyBattleState = this.room.battle.players[enemySide];
 
@@ -577,18 +648,33 @@ export class RoyaleRoom {
       if (unit.side === side) {
         continue;
       }
-      if (Math.abs(unit.x - lanePosition) <= card.spellRadius) {
+      if (
+        distanceBetweenPoints(
+          unit.progress,
+          unit.lateralPosition,
+          dropPoint.progress,
+          dropPoint.lateralPosition
+        ) <= card.spellRadius
+      ) {
         unit.hp -= card.spellDamage;
       }
     }
 
-    const towerX = enemySide === 'left' ? LEFT_TOWER_X : RIGHT_TOWER_X;
-    if (Math.abs(towerX - lanePosition) <= card.spellRadius + 0.05) {
+    const towerProgress = enemySide === 'left' ? LEFT_TOWER_X : RIGHT_TOWER_X;
+    if (
+      distanceBetweenPoints(
+        towerProgress,
+        0.5,
+        dropPoint.progress,
+        dropPoint.lateralPosition
+      ) <=
+      card.spellRadius + 0.05
+    ) {
       enemyBattleState.towerHp = Math.max(0, enemyBattleState.towerHp - card.spellDamage);
     }
   }
 
-  spawnUnits(side, card, lanePosition, equipmentEffects = []) {
+  spawnUnits(side, card, dropPoint, equipmentEffects = []) {
     const count = Math.max(1, card.spawnCount);
     const spacing = count === 1 ? 0 : 0.03;
     const stats = this.applyEquipmentEffects(card, equipmentEffects);
@@ -600,8 +686,8 @@ export class RoyaleRoom {
         name: card.name,
         type: card.type,
         side,
-        x: clamp(lanePosition + offset, 0.08, 0.92),
-        yOffset: Number((index - (count - 1) / 2).toFixed(2)),
+        progress: dropPoint.progress,
+        lateralPosition: sanitizeLateralPosition(dropPoint.lateralPosition + offset),
         hp: stats.hp,
         maxHp: stats.hp,
         damage: stats.damage,
@@ -622,11 +708,17 @@ export class RoyaleRoom {
   selectTarget(unit) {
     const direction = sideDirection(unit.side);
     const enemySide = this.getEnemySide(unit.side);
-    const towerX = enemySide === 'left' ? LEFT_TOWER_X : RIGHT_TOWER_X;
-    const towerDistance = (towerX - unit.x) * direction;
+    const towerProgress = enemySide === 'left' ? LEFT_TOWER_X : RIGHT_TOWER_X;
+    const towerForwardDistance = (towerProgress - unit.progress) * direction;
+    const towerDistance = distanceBetweenPoints(
+      unit.progress,
+      unit.lateralPosition,
+      towerProgress,
+      0.5
+    );
 
     if (unit.targetRule === 'tower') {
-      if (towerDistance >= 0 && towerDistance <= unit.attackRange + 0.04) {
+      if (towerForwardDistance >= 0 && towerDistance <= unit.attackRange + 0.04) {
         return {
           kind: 'tower',
           target: enemySide,
@@ -641,9 +733,15 @@ export class RoyaleRoom {
       .map((entry) => ({
         kind: 'unit',
         target: entry,
-        distance: (entry.x - unit.x) * direction
+        forwardDistance: (entry.progress - unit.progress) * direction,
+        distance: distanceBetweenPoints(
+          unit.progress,
+          unit.lateralPosition,
+          entry.progress,
+          entry.lateralPosition
+        )
       }))
-      .filter((entry) => entry.distance >= 0);
+      .filter((entry) => entry.forwardDistance >= -0.02);
 
     enemyUnits.sort((a, b) => a.distance - b.distance);
     const enemyUnit = enemyUnits[0];
@@ -651,7 +749,7 @@ export class RoyaleRoom {
       return enemyUnit;
     }
 
-    if (towerDistance >= 0 && towerDistance <= unit.attackRange + 0.04) {
+    if (towerForwardDistance >= 0 && towerDistance <= unit.attackRange + 0.04) {
       return {
         kind: 'tower',
         target: enemySide,
@@ -659,7 +757,7 @@ export class RoyaleRoom {
       };
     }
 
-    return enemyUnit && enemyUnit.distance < 0.12 ? enemyUnit : null;
+    return enemyUnit && enemyUnit.forwardDistance < 0.12 ? enemyUnit : null;
   }
 
   performAttack(unit, target) {
@@ -703,10 +801,17 @@ export class RoyaleRoom {
           unit.cooldown = unit.attackSpeed;
         }
       } else {
-        unit.x = clamp(
-          unit.x + sideDirection(unit.side) * unit.moveSpeed * dt,
+        unit.progress = clamp(
+          unit.progress + sideDirection(unit.side) * unit.moveSpeed * dt,
           0.08,
           0.92
+        );
+        const desiredLateral =
+          target?.kind === 'unit' ? target.target.lateralPosition : 0.5;
+        const lateralDelta = desiredLateral - unit.lateralPosition;
+        const lateralStep = unit.moveSpeed * 0.45 * dt;
+        unit.lateralPosition = sanitizeLateralPosition(
+          unit.lateralPosition + clamp(lateralDelta, -lateralStep, lateralStep)
         );
       }
     }

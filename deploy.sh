@@ -5,7 +5,7 @@ set -euo pipefail
 # export VERSION="0.1.0"
 # export BUILD_NUMBER="1"
 
-WRANGLER_VERSION="4.72.0"
+WRANGLER_VERSION="4.78.0"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 resolve_frontend_dir() {
