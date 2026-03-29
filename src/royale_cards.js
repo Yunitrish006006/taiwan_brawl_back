@@ -1,5 +1,13 @@
+function baseCard(card) {
+  return {
+    effectKind: 'none',
+    effectValue: 0,
+    ...card
+  };
+}
+
 export const starterCards = [
-  {
+  baseCard({
     id: 'swordsman',
     name: '劍士',
     elixirCost: 3,
@@ -13,8 +21,8 @@ export const starterCards = [
     spellRadius: 0,
     spellDamage: 0,
     targetRule: 'ground'
-  },
-  {
+  }),
+  baseCard({
     id: 'guardian',
     name: '護衛',
     elixirCost: 2,
@@ -28,8 +36,8 @@ export const starterCards = [
     spellRadius: 0,
     spellDamage: 0,
     targetRule: 'ground'
-  },
-  {
+  }),
+  baseCard({
     id: 'knight',
     name: '騎士',
     elixirCost: 4,
@@ -43,8 +51,8 @@ export const starterCards = [
     spellRadius: 0,
     spellDamage: 0,
     targetRule: 'ground'
-  },
-  {
+  }),
+  baseCard({
     id: 'giant',
     name: '巨人',
     elixirCost: 5,
@@ -58,8 +66,8 @@ export const starterCards = [
     spellRadius: 0,
     spellDamage: 0,
     targetRule: 'tower'
-  },
-  {
+  }),
+  baseCard({
     id: 'archer',
     name: '弓手',
     elixirCost: 3,
@@ -73,8 +81,8 @@ export const starterCards = [
     spellRadius: 0,
     spellDamage: 0,
     targetRule: 'ground'
-  },
-  {
+  }),
+  baseCard({
     id: 'musketeer',
     name: '火槍手',
     elixirCost: 4,
@@ -88,8 +96,8 @@ export const starterCards = [
     spellRadius: 0,
     spellDamage: 0,
     targetRule: 'ground'
-  },
-  {
+  }),
+  baseCard({
     id: 'bomber',
     name: '投彈兵',
     elixirCost: 3,
@@ -103,8 +111,8 @@ export const starterCards = [
     spellRadius: 0,
     spellDamage: 0,
     targetRule: 'ground'
-  },
-  {
+  }),
+  baseCard({
     id: 'wolf_pack',
     name: '狼群',
     elixirCost: 3,
@@ -118,8 +126,8 @@ export const starterCards = [
     spellRadius: 0,
     spellDamage: 0,
     targetRule: 'ground'
-  },
-  {
+  }),
+  baseCard({
     id: 'goblin_team',
     name: '哥布林小隊',
     elixirCost: 2,
@@ -133,8 +141,8 @@ export const starterCards = [
     spellRadius: 0,
     spellDamage: 0,
     targetRule: 'ground'
-  },
-  {
+  }),
+  baseCard({
     id: 'fireball',
     name: '火球',
     elixirCost: 4,
@@ -148,8 +156,8 @@ export const starterCards = [
     spellRadius: 0.13,
     spellDamage: 280,
     targetRule: 'area'
-  },
-  {
+  }),
+  baseCard({
     id: 'zap',
     name: '電擊',
     elixirCost: 2,
@@ -163,8 +171,8 @@ export const starterCards = [
     spellRadius: 0.1,
     spellDamage: 140,
     targetRule: 'area'
-  },
-  {
+  }),
+  baseCard({
     id: 'healer',
     name: '祭司',
     elixirCost: 3,
@@ -178,16 +186,67 @@ export const starterCards = [
     spellRadius: 0,
     spellDamage: 0,
     targetRule: 'ground'
+  }),
+  {
+    id: 'iron_blade',
+    name: '鋼刃',
+    elixirCost: 2,
+    type: 'equipment',
+    hp: 0,
+    damage: 0,
+    attackRange: 0,
+    moveSpeed: 0,
+    attackSpeed: 0,
+    spawnCount: 1,
+    spellRadius: 0,
+    spellDamage: 0,
+    targetRule: 'ally_combo',
+    effectKind: 'damage_boost',
+    effectValue: 45
+  },
+  {
+    id: 'swift_boots',
+    name: '疾行靴',
+    elixirCost: 2,
+    type: 'equipment',
+    hp: 0,
+    damage: 0,
+    attackRange: 0,
+    moveSpeed: 0,
+    attackSpeed: 0,
+    spawnCount: 1,
+    spellRadius: 0,
+    spellDamage: 0,
+    targetRule: 'ally_combo',
+    effectKind: 'speed_boost',
+    effectValue: 0.35
+  },
+  {
+    id: 'guardian_armor',
+    name: '守衛甲',
+    elixirCost: 3,
+    type: 'equipment',
+    hp: 0,
+    damage: 0,
+    attackRange: 0,
+    moveSpeed: 0,
+    attackSpeed: 0,
+    spawnCount: 1,
+    spellRadius: 0,
+    spellDamage: 0,
+    targetRule: 'ally_combo',
+    effectKind: 'health_boost',
+    effectValue: 180
   }
 ];
 
 export const defaultDeckCardIds = [
   'swordsman',
-  'guardian',
+  'iron_blade',
   'knight',
   'archer',
   'musketeer',
   'wolf_pack',
   'fireball',
-  'zap'
+  'swift_boots'
 ];

@@ -1,4 +1,4 @@
-import { getCardMap, recordMatchHistory } from './royale_repository.js';
+import { recordMatchHistory } from './royale_repository.js';
 
 const TICK_MS = 100;
 const MATCH_DURATION_MS = 180000;
@@ -11,6 +11,7 @@ const RIGHT_DEPLOY_MIN = 0.58;
 const TOWER_HP = 3000;
 const DISCONNECT_GRACE_MS = 15000;
 const PERSIST_INTERVAL_MS = 1000;
+const MAX_COMBO_CARDS = 3;
 
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
@@ -95,7 +96,6 @@ export class RoyaleRoom {
     this.sockets = new Map();
     this.tickHandle = null;
     this.lastPersistedAt = 0;
-    this.cardMapPromise = null;
     this.initialized = this.load();
   }
 
@@ -142,13 +142,6 @@ export class RoyaleRoom {
     }
 
     return json({ error: 'Not Found' }, 404);
-  }
-
-  async getCardMap() {
-    if (!this.cardMapPromise) {
-      this.cardMapPromise = getCardMap(this.env);
-    }
-    return this.cardMapPromise;
   }
 
   findPlayerByUserId(userId) {
@@ -206,7 +199,8 @@ export class RoyaleRoom {
               x: Number(unit.x.toFixed(4)),
               yOffset: unit.yOffset,
               hp: Math.max(0, Math.round(unit.hp)),
-              maxHp: unit.maxHp
+              maxHp: unit.maxHp,
+              effects: unit.effects ?? []
             })),
             result: this.room.battle.result
           }
@@ -370,7 +364,15 @@ export class RoyaleRoom {
     }
 
     if (payload?.type === 'play_card') {
-      await this.handlePlayCard(userId, payload);
+      await this.handlePlayCombo(userId, {
+        cardIds: [payload.cardId],
+        lanePosition: payload.lanePosition
+      });
+      return;
+    }
+
+    if (payload?.type === 'play_combo') {
+      await this.handlePlayCombo(userId, payload);
     }
   }
 
@@ -411,7 +413,92 @@ export class RoyaleRoom {
     }
   }
 
-  async handlePlayCard(userId, payload) {
+  getComboCards(player, battlePlayer, cardIds, userId) {
+    if (!Array.isArray(cardIds) || cardIds.length === 0) {
+      this.sendError(userId, 'Select at least one card');
+      return null;
+    }
+
+    if (cardIds.length > MAX_COMBO_CARDS) {
+      this.sendError(userId, `You can cast at most ${MAX_COMBO_CARDS} cards`);
+      return null;
+    }
+
+    const remainingHand = battlePlayer.hand.slice();
+    const comboCards = [];
+
+    for (const rawId of cardIds) {
+      const cardId = String(rawId);
+      const handIndex = remainingHand.findIndex((entry) => entry === cardId);
+      if (handIndex === -1) {
+        this.sendError(userId, 'One of the selected cards is not in hand');
+        return null;
+      }
+      remainingHand.splice(handIndex, 1);
+
+      const card = player.deckCards.find((entry) => entry.id === cardId);
+      if (!card) {
+        this.sendError(userId, 'Unknown card');
+        return null;
+      }
+      comboCards.push(card);
+    }
+
+    return comboCards;
+  }
+
+  drawReplacementCards(battlePlayer, cardIds) {
+    for (const cardId of cardIds) {
+      const handIndex = battlePlayer.hand.findIndex((entry) => entry === cardId);
+      if (handIndex === -1) {
+        continue;
+      }
+      battlePlayer.hand.splice(handIndex, 1);
+      battlePlayer.queue.push(cardId);
+    }
+
+    for (let index = 0; index < cardIds.length; index += 1) {
+      const nextCardId = battlePlayer.queue.shift();
+      if (nextCardId) {
+        battlePlayer.hand.push(nextCardId);
+      }
+    }
+  }
+
+  equipmentEffects(cards) {
+    return cards
+      .filter((card) => card.type === 'equipment')
+      .map((card) => ({
+        id: card.id,
+        name: card.name,
+        kind: card.effectKind,
+        value: Number(card.effectValue || 0)
+      }));
+  }
+
+  applyEquipmentEffects(card, effects) {
+    let hp = card.hp;
+    let damage = card.damage;
+    let moveSpeed = card.moveSpeed;
+
+    for (const effect of effects) {
+      if (effect.kind === 'damage_boost') {
+        damage += effect.value;
+      } else if (effect.kind === 'health_boost') {
+        hp += effect.value;
+      } else if (effect.kind === 'speed_boost') {
+        moveSpeed *= 1 + effect.value;
+      }
+    }
+
+    return {
+      hp: Math.round(hp),
+      damage: Math.round(damage),
+      moveSpeed: Number(moveSpeed.toFixed(4))
+    };
+  }
+
+  async handlePlayCombo(userId, payload) {
     if (!this.room?.battle || this.room.status !== 'battle') {
       return;
     }
@@ -422,20 +509,29 @@ export class RoyaleRoom {
     }
 
     const battlePlayer = this.room.battle.players[player.side];
-    const handIndex = battlePlayer.hand.findIndex((cardId) => cardId === payload.cardId);
-    if (handIndex === -1) {
-      this.sendError(userId, 'Card is not in hand');
+    const cardIds = Array.isArray(payload?.cardIds)
+      ? payload.cardIds.map(String)
+      : [String(payload?.cardId || '')].filter((cardId) => cardId.length > 0);
+    const comboCards = this.getComboCards(player, battlePlayer, cardIds, userId);
+    if (!comboCards) {
       return;
     }
 
-    const card = player.deckCards.find((entry) => entry.id === payload.cardId);
-    if (!card) {
-      this.sendError(userId, 'Unknown card');
-      return;
-    }
-
-    if (battlePlayer.elixir + 1e-6 < card.elixirCost) {
+    const totalElixirCost = comboCards.reduce(
+      (sum, card) => sum + Number(card.elixirCost || 0),
+      0
+    );
+    if (battlePlayer.elixir + 1e-6 < totalElixirCost) {
       this.sendError(userId, 'Not enough elixir');
+      return;
+    }
+
+    const equipmentCards = comboCards.filter((card) => card.type === 'equipment');
+    const unitCards = comboCards.filter(
+      (card) => card.type !== 'equipment' && card.type !== 'spell'
+    );
+    if (equipmentCards.length > 0 && unitCards.length === 0) {
+      this.sendError(userId, 'Equipment cards need at least one unit in the same cast');
       return;
     }
 
@@ -443,25 +539,32 @@ export class RoyaleRoom {
       player.side,
       Number(payload.lanePosition)
     );
+    const equipmentEffects = this.equipmentEffects(comboCards);
 
-    battlePlayer.elixir = clamp(battlePlayer.elixir - card.elixirCost, 0, MAX_ELIXIR);
-    battlePlayer.hand.splice(handIndex, 1);
-    battlePlayer.queue.push(card.id);
-    battlePlayer.hand.push(battlePlayer.queue.shift());
+    battlePlayer.elixir = clamp(
+      battlePlayer.elixir - totalElixirCost,
+      0,
+      MAX_ELIXIR
+    );
+    this.drawReplacementCards(battlePlayer, comboCards.map((card) => card.id));
 
-    if (card.type === 'spell') {
-      this.resolveSpell(player.side, card, lanePosition);
-      await this.broadcast('battle_event', {
-        event: {
-          type: 'spell_cast',
-          side: player.side,
-          cardId: card.id,
-          lanePosition
-        }
-      });
-    } else {
-      this.spawnUnits(player.side, card, lanePosition);
+    for (const card of comboCards) {
+      if (card.type === 'spell') {
+        this.resolveSpell(player.side, card, lanePosition);
+      } else if (card.type !== 'equipment') {
+        this.spawnUnits(player.side, card, lanePosition, equipmentEffects);
+      }
     }
+
+    await this.broadcast('battle_event', {
+      event: {
+        type: 'combo_cast',
+        side: player.side,
+        cardIds: comboCards.map((card) => card.id),
+        lanePosition,
+        equipment: equipmentEffects.map((effect) => effect.name)
+      }
+    });
 
     await this.persist();
   }
@@ -485,9 +588,10 @@ export class RoyaleRoom {
     }
   }
 
-  spawnUnits(side, card, lanePosition) {
+  spawnUnits(side, card, lanePosition, equipmentEffects = []) {
     const count = Math.max(1, card.spawnCount);
     const spacing = count === 1 ? 0 : 0.03;
+    const stats = this.applyEquipmentEffects(card, equipmentEffects);
     for (let index = 0; index < count; index += 1) {
       const offset = (index - (count - 1) / 2) * spacing;
       this.room.battle.units.push({
@@ -498,14 +602,15 @@ export class RoyaleRoom {
         side,
         x: clamp(lanePosition + offset, 0.08, 0.92),
         yOffset: Number((index - (count - 1) / 2).toFixed(2)),
-        hp: card.hp,
-        maxHp: card.hp,
-        damage: card.damage,
+        hp: stats.hp,
+        maxHp: stats.hp,
+        damage: stats.damage,
         attackRange: card.attackRange,
-        moveSpeed: card.moveSpeed,
+        moveSpeed: stats.moveSpeed,
         attackSpeed: card.attackSpeed || 1,
         targetRule: card.targetRule,
-        cooldown: 0
+        cooldown: 0,
+        effects: equipmentEffects.map((effect) => effect.name)
       });
     }
   }

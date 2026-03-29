@@ -14,7 +14,9 @@ function serializeCard(row) {
     spawnCount: Number(row.spawn_count),
     spellRadius: Number(row.spell_radius),
     spellDamage: Number(row.spell_damage),
-    targetRule: row.target_rule
+    targetRule: row.target_rule,
+    effectKind: row.effect_kind || 'none',
+    effectValue: Number(row.effect_value || 0)
   };
 }
 
@@ -23,8 +25,9 @@ async function insertStarterCards(env) {
     await env.DB.prepare(
       `INSERT OR IGNORE INTO cards (
         id, name, elixir_cost, type, hp, damage, attack_range, move_speed,
-        attack_speed, spawn_count, spell_radius, spell_damage, target_rule
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        attack_speed, spawn_count, spell_radius, spell_damage, target_rule,
+        effect_kind, effect_value
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).bind(
       card.id,
       card.name,
@@ -38,7 +41,9 @@ async function insertStarterCards(env) {
       card.spawnCount,
       card.spellRadius,
       card.spellDamage,
-      card.targetRule
+      card.targetRule,
+      card.effectKind,
+      card.effectValue
     ).run();
   }
 }
@@ -54,7 +59,8 @@ export async function listCards(env) {
   await ensureCardsSeeded(env);
   const rows = await env.DB.prepare(
     `SELECT id, name, elixir_cost, type, hp, damage, attack_range, move_speed,
-            attack_speed, spawn_count, spell_radius, spell_damage, target_rule
+            attack_speed, spawn_count, spell_radius, spell_damage, target_rule,
+            effect_kind, effect_value
      FROM cards
      ORDER BY elixir_cost ASC, name ASC`
   ).all();
