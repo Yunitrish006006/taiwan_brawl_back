@@ -20,6 +20,56 @@ function serializeCard(row) {
   };
 }
 
+function normalizeCardPayload(payload) {
+  const id = String(payload?.id ?? '').trim();
+  const name = String(payload?.name ?? '').trim();
+  const type = String(payload?.type ?? '').trim();
+  const targetRule = String(payload?.targetRule ?? '').trim();
+  const effectKind = String(payload?.effectKind ?? 'none').trim() || 'none';
+
+  const card = {
+    id,
+    name,
+    elixirCost: Number(payload?.elixirCost ?? 0),
+    type,
+    hp: Number(payload?.hp ?? 0),
+    damage: Number(payload?.damage ?? 0),
+    attackRange: Number(payload?.attackRange ?? 0),
+    moveSpeed: Number(payload?.moveSpeed ?? 0),
+    attackSpeed: Number(payload?.attackSpeed ?? 0),
+    spawnCount: Number(payload?.spawnCount ?? 1),
+    spellRadius: Number(payload?.spellRadius ?? 0),
+    spellDamage: Number(payload?.spellDamage ?? 0),
+    targetRule,
+    effectKind,
+    effectValue: Number(payload?.effectValue ?? 0)
+  };
+
+  if (!card.id) {
+    throw new Error('Card id is required');
+  }
+  if (!/^[a-z0-9_]+$/i.test(card.id)) {
+    throw new Error('Card id must be alphanumeric or underscore');
+  }
+  if (!card.name) {
+    throw new Error('Card name is required');
+  }
+  if (!card.type) {
+    throw new Error('Card type is required');
+  }
+  if (!card.targetRule) {
+    throw new Error('targetRule is required');
+  }
+
+  for (const [field, value] of Object.entries(card)) {
+    if (typeof value === 'number' && !Number.isFinite(value)) {
+      throw new Error(`${field} must be a valid number`);
+    }
+  }
+
+  return card;
+}
+
 async function insertStarterCards(env) {
   for (const card of starterCards) {
     await env.DB.prepare(
@@ -65,6 +115,85 @@ export async function listCards(env) {
      ORDER BY elixir_cost ASC, name ASC`
   ).all();
   return rows.results.map(serializeCard);
+}
+
+export async function upsertCard(env, payload) {
+  await ensureCardsSeeded(env);
+  const card = normalizeCardPayload(payload);
+
+  await env.DB.prepare(
+    `INSERT INTO cards (
+      id, name, elixir_cost, type, hp, damage, attack_range, move_speed,
+      attack_speed, spawn_count, spell_radius, spell_damage, target_rule,
+      effect_kind, effect_value
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      name = excluded.name,
+      elixir_cost = excluded.elixir_cost,
+      type = excluded.type,
+      hp = excluded.hp,
+      damage = excluded.damage,
+      attack_range = excluded.attack_range,
+      move_speed = excluded.move_speed,
+      attack_speed = excluded.attack_speed,
+      spawn_count = excluded.spawn_count,
+      spell_radius = excluded.spell_radius,
+      spell_damage = excluded.spell_damage,
+      target_rule = excluded.target_rule,
+      effect_kind = excluded.effect_kind,
+      effect_value = excluded.effect_value`
+  )
+    .bind(
+      card.id,
+      card.name,
+      card.elixirCost,
+      card.type,
+      card.hp,
+      card.damage,
+      card.attackRange,
+      card.moveSpeed,
+      card.attackSpeed,
+      card.spawnCount,
+      card.spellRadius,
+      card.spellDamage,
+      card.targetRule,
+      card.effectKind,
+      card.effectValue
+    )
+    .run();
+
+  const row = await env.DB.prepare(
+    `SELECT id, name, elixir_cost, type, hp, damage, attack_range, move_speed,
+            attack_speed, spawn_count, spell_radius, spell_damage, target_rule,
+            effect_kind, effect_value
+     FROM cards
+     WHERE id = ?`
+  )
+    .bind(card.id)
+    .first();
+
+  return serializeCard(row);
+}
+
+export async function deleteCard(env, cardId) {
+  await ensureCardsSeeded(env);
+  const normalizedCardId = String(cardId ?? '').trim();
+  if (!normalizedCardId) {
+    throw new Error('Card id is required');
+  }
+
+  const inUse = await env.DB.prepare(
+    'SELECT COUNT(*) AS count FROM user_deck_cards WHERE card_id = ?'
+  )
+    .bind(normalizedCardId)
+    .first();
+  if (Number(inUse?.count) > 0) {
+    throw new Error('Card is currently used in decks and cannot be deleted');
+  }
+
+  await env.DB.prepare('DELETE FROM cards WHERE id = ?')
+    .bind(normalizedCardId)
+    .run();
 }
 
 export async function getCardMap(env) {

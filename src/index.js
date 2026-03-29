@@ -1,6 +1,7 @@
 import { getAssetFromKV } from '@cloudflare/kv-asset-handler';
 
 import { handleGoogleLogin, handleLogout, handleMe } from './auth.js';
+import { searchUsersForAdmin, updateUserRole } from './admin.js';
 import {
   blockUser,
   cancelFriendRequest,
@@ -14,12 +15,15 @@ import {
   unblockUser
 } from './friends_repository.js';
 import {
+  deleteCard,
   getDeckForUser,
   listCards,
   listDecksForUser,
-  saveDeckForUser
+  saveDeckForUser,
+  upsertCard
 } from './royale_repository.js';
 import { RoyaleRoom } from './royale_room.js';
+import { canManageCards, isAdmin } from './permissions.js';
 import {
   handleGetCurrentUser,
   handleUpdateCurrentUser,
@@ -53,6 +57,28 @@ async function requireUser(request, env) {
   return user;
 }
 
+async function requireAdminUser(request, env) {
+  const user = await requireUser(request, env);
+  if (!user) {
+    return { error: jsonResponse({ error: 'Not logged in' }, 401, request) };
+  }
+  if (!isAdmin(user)) {
+    return { error: jsonResponse({ error: 'Forbidden' }, 403, request) };
+  }
+  return { user };
+}
+
+async function requireCardManagerUser(request, env) {
+  const user = await requireUser(request, env);
+  if (!user) {
+    return { error: jsonResponse({ error: 'Not logged in' }, 401, request) };
+  }
+  if (!canManageCards(user)) {
+    return { error: jsonResponse({ error: 'Forbidden' }, 403, request) };
+  }
+  return { user };
+}
+
 async function withBadRequest(request, handler) {
   try {
     return await handler();
@@ -77,6 +103,54 @@ async function proxyRoomJson(stub, path, payload, request, user) {
 async function handleListCards(request, env) {
   const cards = await listCards(env);
   return jsonResponse({ ok: true, cards }, 200, request);
+}
+
+async function handleAdminSearchUsers(request, env, url) {
+  const { user, error } = await requireAdminUser(request, env);
+  if (error) {
+    return error;
+  }
+
+  const users = await searchUsersForAdmin(url.searchParams.get('query'), env);
+  return jsonResponse({ ok: true, users, viewerRole: user.role }, 200, request);
+}
+
+async function handleAdminUpdateUserRole(request, env, targetUserId) {
+  return withBadRequest(request, async () => {
+    const { user, error } = await requireAdminUser(request, env);
+    if (error) {
+      return error;
+    }
+
+    const body = await request.json().catch(() => null);
+    const updatedUser = await updateUserRole(user.id, targetUserId, body?.role, env);
+    return jsonResponse({ ok: true, user: updatedUser }, 200, request);
+  });
+}
+
+async function handleManageCard(request, env) {
+  return withBadRequest(request, async () => {
+    const { error } = await requireCardManagerUser(request, env);
+    if (error) {
+      return error;
+    }
+
+    const body = await request.json().catch(() => null);
+    const card = await upsertCard(env, body);
+    return jsonResponse({ ok: true, card }, 200, request);
+  });
+}
+
+async function handleDeleteManagedCard(request, env, cardId) {
+  return withBadRequest(request, async () => {
+    const { error } = await requireCardManagerUser(request, env);
+    if (error) {
+      return error;
+    }
+
+    await deleteCard(env, cardId);
+    return jsonResponse({ ok: true }, 200, request);
+  });
 }
 
 async function handleListDecks(request, env) {
@@ -430,6 +504,22 @@ function matchRoomInviteRoute(pathname) {
   };
 }
 
+function matchAdminUserRoleRoute(pathname) {
+  const match = pathname.match(/^\/api\/admin\/users\/(\d+)\/role$/);
+  if (!match) {
+    return null;
+  }
+  return Number(match[1]);
+}
+
+function matchManagedCardRoute(pathname) {
+  const match = pathname.match(/^\/api\/admin\/cards\/([a-zA-Z0-9_]+)$/);
+  if (!match) {
+    return null;
+  }
+  return match[1];
+}
+
 async function handleApiRequest(request, env, url) {
   if (request.method === 'GET' && url.pathname === '/api/health') {
     return handleHealth(request);
@@ -460,6 +550,12 @@ async function handleApiRequest(request, env, url) {
   }
   if (request.method === 'GET' && url.pathname === '/api/cards') {
     return handleListCards(request, env);
+  }
+  if (request.method === 'GET' && url.pathname === '/api/admin/users') {
+    return handleAdminSearchUsers(request, env, url);
+  }
+  if (request.method === 'POST' && url.pathname === '/api/admin/cards') {
+    return handleManageCard(request, env);
   }
   if (request.method === 'GET' && url.pathname === '/api/decks') {
     return handleListDecks(request, env);
@@ -533,6 +629,16 @@ async function handleApiRequest(request, env, url) {
     if (request.method === 'POST' && roomRoute.action === 'invite') {
       return handleSendRoomInvite(request, env, roomRoute.code);
     }
+  }
+
+  const adminUserRoleTarget = matchAdminUserRoleRoute(url.pathname);
+  if (adminUserRoleTarget && request.method === 'PUT') {
+    return handleAdminUpdateUserRole(request, env, adminUserRoleTarget);
+  }
+
+  const managedCardId = matchManagedCardRoute(url.pathname);
+  if (managedCardId && request.method === 'DELETE') {
+    return handleDeleteManagedCard(request, env, managedCardId);
   }
 
   return jsonResponse({ error: 'Not Found' }, 404, request);

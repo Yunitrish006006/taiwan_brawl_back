@@ -78,7 +78,7 @@ export async function handleGoogleLogin(request, env) {
       `INSERT INTO users (
         name, email, password, google_sub, role, avatar_url, google_avatar_url,
         avatar_source, last_active_at
-      ) VALUES (?, ?, ?, ?, 'user', ?, ?, 'google', CURRENT_TIMESTAMP)`
+      ) VALUES (?, ?, ?, ?, 'player', ?, ?, 'google', CURRENT_TIMESTAMP)`
     )
       .bind(
         defaultName,

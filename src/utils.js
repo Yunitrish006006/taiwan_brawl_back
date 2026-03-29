@@ -1,3 +1,5 @@
+import { normalizeRole } from './permissions.js';
+
 export function corsHeaders(request) {
   const origin = request.headers.get('Origin');
   return {
@@ -55,6 +57,7 @@ export function mapUserRow(row) {
 
   return {
     ...row,
+    role: normalizeRole(row.role),
     avatar_source: avatarSource,
     google_avatar_url: googleAvatarUrl,
     custom_avatar_url: customAvatarUrl,
