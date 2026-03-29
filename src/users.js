@@ -38,24 +38,61 @@ export async function handleUpdateCurrentUser(request, env) {
     return jsonResponse({ error: 'Invalid body' }, 400, request);
   }
 
-  const allowed = ['name', 'bio'];
-  const updates = [];
-  const values = [];
-
-  for (const field of allowed) {
-    if (body[field] !== undefined) {
-      updates.push(`${field} = ?`);
-      values.push(body[field]);
-    }
+  const nextName = body.name !== undefined ? String(body.name) : user.name;
+  const nextBio = body.bio !== undefined ? String(body.bio) : (user.bio ?? '');
+  const requestedAvatarSource = body.avatar_source;
+  const nextAvatarSource =
+    requestedAvatarSource === undefined
+      ? user.avatar_source
+      : String(requestedAvatarSource).trim();
+  const validAvatarSources = ['google', 'custom'];
+  if (!validAvatarSources.includes(nextAvatarSource)) {
+    return jsonResponse({ error: 'avatar_source must be google or custom' }, 400, request);
   }
 
-  if (updates.length === 0) {
-    return jsonResponse({ error: 'No valid fields to update' }, 400, request);
+  const customAvatarInput =
+    body.custom_avatar_url !== undefined
+      ? String(body.custom_avatar_url ?? '').trim()
+      : (user.custom_avatar_url ?? '');
+  if (
+    customAvatarInput !== '' &&
+    !customAvatarInput.startsWith('https://') &&
+    !customAvatarInput.startsWith('http://')
+  ) {
+    return jsonResponse(
+      { error: 'custom_avatar_url must start with http:// or https://' },
+      400,
+      request
+    );
   }
 
-  values.push(user.id);
-  await env.DB.prepare(`UPDATE users SET ${updates.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`)
-    .bind(...values)
+  const nextCustomAvatarUrl = customAvatarInput.isEmpty ? null : customAvatarInput;
+  const googleAvatarUrl = user.google_avatar_url ?? null;
+  if (nextAvatarSource === 'google' && !googleAvatarUrl) {
+    return jsonResponse({ error: 'No Google avatar available' }, 400, request);
+  }
+  if (nextAvatarSource === 'custom' && !nextCustomAvatarUrl) {
+    return jsonResponse({ error: 'Custom avatar URL is required' }, 400, request);
+  }
+
+  const effectiveAvatarUrl =
+    nextAvatarSource === 'custom' ? nextCustomAvatarUrl : googleAvatarUrl;
+
+  const normalizedBio = nextBio.trim();
+  await env.DB.prepare(
+    `UPDATE users
+     SET name = ?, bio = ?, custom_avatar_url = ?, avatar_source = ?,
+         avatar_url = ?, updated_at = CURRENT_TIMESTAMP
+     WHERE id = ?`
+  )
+    .bind(
+      nextName.trim(),
+      normalizedBio.isEmpty ? null : normalizedBio,
+      nextCustomAvatarUrl,
+      nextAvatarSource,
+      effectiveAvatarUrl,
+      user.id
+    )
     .run();
 
   return jsonResponse({ ok: true }, 200, request);

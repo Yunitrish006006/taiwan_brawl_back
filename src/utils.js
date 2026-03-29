@@ -40,6 +40,28 @@ export function parseSessionId(request) {
   return parseSessionIdFromCookie(request);
 }
 
+export function mapUserRow(row) {
+  if (!row) {
+    return null;
+  }
+
+  const avatarSource = row.avatar_source === 'custom' ? 'custom' : 'google';
+  const googleAvatarUrl = row.google_avatar_url ?? null;
+  const customAvatarUrl = row.custom_avatar_url ?? null;
+  const effectiveAvatarUrl =
+    avatarSource === 'custom'
+      ? customAvatarUrl ?? googleAvatarUrl ?? row.avatar_url ?? null
+      : googleAvatarUrl ?? customAvatarUrl ?? row.avatar_url ?? null;
+
+  return {
+    ...row,
+    avatar_source: avatarSource,
+    google_avatar_url: googleAvatarUrl,
+    custom_avatar_url: customAvatarUrl,
+    avatar_url: effectiveAvatarUrl
+  };
+}
+
 export async function getCurrentUser(request, env) {
   const sessionId = parseSessionId(request);
   if (!sessionId) return null;
@@ -58,12 +80,15 @@ export async function getCurrentUser(request, env) {
     .bind(session.user_id)
     .run();
 
-  return env.DB.prepare(
-    `SELECT id, name, email, role, bio, avatar_url, last_active_at,
-            theme_mode, font_size_scale, locale
+  const user = await env.DB.prepare(
+    `SELECT id, name, email, role, bio, avatar_url, google_avatar_url,
+            custom_avatar_url, avatar_source, last_active_at, theme_mode,
+            font_size_scale, locale
      FROM users
      WHERE id = ?`
   )
     .bind(session.user_id)
     .first();
+
+  return mapUserRow(user);
 }

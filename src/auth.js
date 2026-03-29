@@ -3,6 +3,7 @@ import {
   generateSessionId,
   getCurrentUser,
   jsonResponse,
+  mapUserRow,
   parseSessionId,
   setCookie
 } from './utils.js';
@@ -63,7 +64,8 @@ export async function handleGoogleLogin(request, env) {
   }
 
   let user = await env.DB.prepare(
-    `SELECT id, name, email, google_sub, role, bio, avatar_url, last_active_at,
+    `SELECT id, name, email, google_sub, role, bio, avatar_url,
+            google_avatar_url, custom_avatar_url, avatar_source, last_active_at,
             theme_mode, font_size_scale, locale
      FROM users WHERE email = ?`
   )
@@ -74,21 +76,24 @@ export async function handleGoogleLogin(request, env) {
     const defaultName = googleUser.name || googleUser.email.split('@')[0];
     await env.DB.prepare(
       `INSERT INTO users (
-        name, email, password, google_sub, role, avatar_url, last_active_at
-      ) VALUES (?, ?, ?, ?, 'user', ?, CURRENT_TIMESTAMP)`
+        name, email, password, google_sub, role, avatar_url, google_avatar_url,
+        avatar_source, last_active_at
+      ) VALUES (?, ?, ?, ?, 'user', ?, ?, 'google', CURRENT_TIMESTAMP)`
     )
       .bind(
         defaultName,
         googleUser.email,
         crypto.randomUUID(),
         googleUser.sub,
+        googleUser.picture,
         googleUser.picture
       )
       .run();
 
     user = await env.DB.prepare(
-      `SELECT id, name, email, google_sub, role, bio, avatar_url, last_active_at,
-              theme_mode, font_size_scale, locale
+      `SELECT id, name, email, google_sub, role, bio, avatar_url,
+              google_avatar_url, custom_avatar_url, avatar_source,
+              last_active_at, theme_mode, font_size_scale, locale
        FROM users WHERE email = ?`
     )
       .bind(googleUser.email)
@@ -102,21 +107,31 @@ export async function handleGoogleLogin(request, env) {
     return jsonResponse({ error: 'Google account mismatch' }, 401, request);
   }
 
+  const avatarSource = user.avatar_source === 'custom' ? 'custom' : 'google';
+  const customAvatarUrl = user.custom_avatar_url ?? null;
+  const effectiveAvatarUrl =
+    avatarSource === 'custom'
+      ? customAvatarUrl ?? googleUser.picture ?? null
+      : googleUser.picture ?? customAvatarUrl ?? null;
+
   await env.DB.prepare(
     `UPDATE users
-     SET avatar_url = ?, last_active_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+     SET google_avatar_url = ?, avatar_url = ?, last_active_at = CURRENT_TIMESTAMP,
+         updated_at = CURRENT_TIMESTAMP
      WHERE id = ?`
   )
-    .bind(googleUser.picture, user.id)
+    .bind(googleUser.picture, effectiveAvatarUrl, user.id)
     .run();
 
   user = await env.DB.prepare(
-    `SELECT id, name, email, google_sub, role, bio, avatar_url, last_active_at,
+    `SELECT id, name, email, google_sub, role, bio, avatar_url,
+            google_avatar_url, custom_avatar_url, avatar_source, last_active_at,
             theme_mode, font_size_scale, locale
      FROM users WHERE id = ?`
   )
     .bind(user.id)
     .first();
+  user = mapUserRow(user);
 
   const sessionId = await createSession(user.id, env);
   return new Response(JSON.stringify({
@@ -129,6 +144,9 @@ export async function handleGoogleLogin(request, env) {
       role: user.role,
       bio: user.bio,
       avatar_url: user.avatar_url,
+      google_avatar_url: user.google_avatar_url,
+      custom_avatar_url: user.custom_avatar_url,
+      avatar_source: user.avatar_source,
       last_active_at: user.last_active_at,
       theme_mode: user.theme_mode,
       font_size_scale: user.font_size_scale,
