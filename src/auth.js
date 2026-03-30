@@ -18,6 +18,34 @@ async function createSession(userId, env) {
   return sessionId;
 }
 
+function buildUploadedAvatarUrl(userId, uploadedAvatarVersion) {
+  const version = Number(uploadedAvatarVersion || 0);
+  if (version <= 0) {
+    return null;
+  }
+  return `/user-avatars/${encodeURIComponent(userId)}?v=${version}`;
+}
+
+function resolveEffectiveAvatarUrl(user) {
+  const avatarSource = ['custom', 'upload', 'google'].includes(user.avatar_source)
+    ? user.avatar_source
+    : 'google';
+  const googleAvatarUrl = user.google_avatar_url ?? null;
+  const customAvatarUrl = user.custom_avatar_url ?? null;
+  const uploadedAvatarUrl = buildUploadedAvatarUrl(
+    user.id,
+    user.uploaded_avatar_version
+  );
+
+  if (avatarSource === 'custom') {
+    return customAvatarUrl ?? uploadedAvatarUrl ?? googleAvatarUrl ?? null;
+  }
+  if (avatarSource === 'upload') {
+    return uploadedAvatarUrl ?? googleAvatarUrl ?? customAvatarUrl ?? null;
+  }
+  return googleAvatarUrl ?? uploadedAvatarUrl ?? customAvatarUrl ?? null;
+}
+
 function decodeBase64Url(value) {
   let normalized = value.replace(/-/g, '+').replace(/_/g, '/');
   while (normalized.length % 4) {
@@ -65,8 +93,9 @@ export async function handleGoogleLogin(request, env) {
 
   let user = await env.DB.prepare(
     `SELECT id, name, email, google_sub, role, bio, avatar_url,
-            google_avatar_url, custom_avatar_url, avatar_source, last_active_at,
-            theme_mode, font_size_scale, locale
+            google_avatar_url, custom_avatar_url, avatar_source,
+            uploaded_avatar_version, last_active_at, theme_mode,
+            font_size_scale, locale
      FROM users WHERE email = ?`
   )
     .bind(googleUser.email)
@@ -92,7 +121,8 @@ export async function handleGoogleLogin(request, env) {
     user = await env.DB.prepare(
       `SELECT id, name, email, google_sub, role, bio, avatar_url,
               google_avatar_url, custom_avatar_url, avatar_source,
-              last_active_at, theme_mode, font_size_scale, locale
+              uploaded_avatar_version, last_active_at, theme_mode,
+              font_size_scale, locale
        FROM users WHERE email = ?`
     )
       .bind(googleUser.email)
@@ -106,12 +136,10 @@ export async function handleGoogleLogin(request, env) {
     return jsonResponse({ error: 'Google account mismatch' }, 401, request);
   }
 
-  const avatarSource = user.avatar_source === 'custom' ? 'custom' : 'google';
-  const customAvatarUrl = user.custom_avatar_url ?? null;
-  const effectiveAvatarUrl =
-    avatarSource === 'custom'
-      ? customAvatarUrl ?? googleUser.picture ?? null
-      : googleUser.picture ?? customAvatarUrl ?? null;
+  const effectiveAvatarUrl = resolveEffectiveAvatarUrl({
+    ...user,
+    google_avatar_url: googleUser.picture
+  });
 
   await env.DB.prepare(
     `UPDATE users
@@ -124,8 +152,9 @@ export async function handleGoogleLogin(request, env) {
 
   user = await env.DB.prepare(
     `SELECT id, name, email, google_sub, role, bio, avatar_url,
-            google_avatar_url, custom_avatar_url, avatar_source, last_active_at,
-            theme_mode, font_size_scale, locale
+            google_avatar_url, custom_avatar_url, avatar_source,
+            uploaded_avatar_version, last_active_at, theme_mode,
+            font_size_scale, locale
      FROM users WHERE id = ?`
   )
     .bind(user.id)
@@ -146,6 +175,8 @@ export async function handleGoogleLogin(request, env) {
       google_avatar_url: user.google_avatar_url,
       custom_avatar_url: user.custom_avatar_url,
       avatar_source: user.avatar_source,
+      uploaded_avatar_url: user.uploaded_avatar_url,
+      uploaded_avatar_version: user.uploaded_avatar_version,
       last_active_at: user.last_active_at,
       theme_mode: user.theme_mode,
       font_size_scale: user.font_size_scale,

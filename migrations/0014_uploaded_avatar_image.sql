@@ -1,0 +1,1 @@
+ALTER TABLE users ADD COLUMN uploaded_avatar_version INTEGER NOT NULL DEFAULT 0;

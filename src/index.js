@@ -28,8 +28,11 @@ import {
 import { RoyaleRoom } from './royale_room.js';
 import { canManageCards, isAdmin } from './permissions.js';
 import {
+  getUserAvatarImageResponse,
+  handleDeleteAvatarImage,
   handleGetCurrentUser,
   handleUpdateCurrentUser,
+  handleUploadAvatarImage,
   handleUpdateLocale,
   handleUpdateThemeMode,
   handleUpdateUiPreferences
@@ -601,6 +604,14 @@ function matchCardImagePath(pathname) {
   return match[1];
 }
 
+function matchUserAvatarPath(pathname) {
+  const match = pathname.match(/^\/user-avatars\/(\d+)$/);
+  if (!match) {
+    return null;
+  }
+  return Number(match[1]);
+}
+
 async function handleApiRequest(request, env, url) {
   if (request.method === 'GET' && url.pathname === '/api/health') {
     return handleHealth(request);
@@ -613,6 +624,15 @@ async function handleApiRequest(request, env, url) {
   }
   if (request.method === 'PUT' && url.pathname === '/api/users/me') {
     return handleUpdateCurrentUser(request, env);
+  }
+  if (request.method === 'POST' && url.pathname === '/api/users/me/avatar-image') {
+    return handleUploadAvatarImage(request, env);
+  }
+  if (
+    request.method === 'DELETE' &&
+    url.pathname === '/api/users/me/avatar-image'
+  ) {
+    return handleDeleteAvatarImage(request, env);
   }
   if (request.method === 'PUT' && url.pathname === '/api/users/theme-mode') {
     return handleUpdateThemeMode(request, env);
@@ -749,6 +769,15 @@ export default {
     const cardImageId = matchCardImagePath(url.pathname);
     if (cardImageId && request.method === 'GET') {
       const response = await getCardImageResponse(env, cardImageId);
+      if (response) {
+        return response;
+      }
+      return jsonResponse({ error: 'Not Found' }, 404, request);
+    }
+
+    const userAvatarId = matchUserAvatarPath(url.pathname);
+    if (userAvatarId && request.method === 'GET') {
+      const response = await getUserAvatarImageResponse(env, userAvatarId);
       if (response) {
         return response;
       }

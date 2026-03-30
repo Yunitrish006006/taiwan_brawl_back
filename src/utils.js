@@ -47,13 +47,34 @@ export function mapUserRow(row) {
     return null;
   }
 
-  const avatarSource = row.avatar_source === 'custom' ? 'custom' : 'google';
+  const avatarSource = ['custom', 'upload', 'google'].includes(row.avatar_source)
+    ? row.avatar_source
+    : 'google';
   const googleAvatarUrl = row.google_avatar_url ?? null;
   const customAvatarUrl = row.custom_avatar_url ?? null;
+  const uploadedAvatarVersion = Number(row.uploaded_avatar_version || 0);
+  const uploadedAvatarUrl =
+    uploadedAvatarVersion > 0
+      ? `/user-avatars/${encodeURIComponent(row.id)}?v=${uploadedAvatarVersion}`
+      : null;
   const effectiveAvatarUrl =
     avatarSource === 'custom'
-      ? customAvatarUrl ?? googleAvatarUrl ?? row.avatar_url ?? null
-      : googleAvatarUrl ?? customAvatarUrl ?? row.avatar_url ?? null;
+      ? customAvatarUrl ??
+        uploadedAvatarUrl ??
+        googleAvatarUrl ??
+        row.avatar_url ??
+        null
+      : avatarSource === 'upload'
+        ? uploadedAvatarUrl ??
+          googleAvatarUrl ??
+          customAvatarUrl ??
+          row.avatar_url ??
+          null
+        : googleAvatarUrl ??
+          uploadedAvatarUrl ??
+          customAvatarUrl ??
+          row.avatar_url ??
+          null;
 
   return {
     ...row,
@@ -61,6 +82,8 @@ export function mapUserRow(row) {
     avatar_source: avatarSource,
     google_avatar_url: googleAvatarUrl,
     custom_avatar_url: customAvatarUrl,
+    uploaded_avatar_version: uploadedAvatarVersion,
+    uploaded_avatar_url: uploadedAvatarUrl,
     avatar_url: effectiveAvatarUrl
   };
 }
@@ -85,7 +108,8 @@ export async function getCurrentUser(request, env) {
 
   const user = await env.DB.prepare(
     `SELECT id, name, email, role, bio, avatar_url, google_avatar_url,
-            custom_avatar_url, avatar_source, last_active_at, theme_mode,
+            custom_avatar_url, avatar_source, uploaded_avatar_version,
+            last_active_at, theme_mode,
             font_size_scale, locale
      FROM users
      WHERE id = ?`
