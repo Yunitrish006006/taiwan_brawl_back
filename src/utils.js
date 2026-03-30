@@ -1,5 +1,10 @@
 import { normalizeRole } from './permissions.js';
 
+export const USER_SELECT_COLUMNS = `SELECT id, name, email, role, bio, avatar_url, google_avatar_url,
+        custom_avatar_url, avatar_source, uploaded_avatar_version,
+        last_active_at, theme_mode, font_size_scale, locale
+ FROM users`;
+
 export function corsHeaders(request) {
   const origin = request.headers.get('Origin');
   return {
@@ -28,6 +33,34 @@ export function setCookie(name, value, maxAge = 3600) {
   return `${name}=${value}; Path=/; Max-Age=${maxAge}; SameSite=None; Secure`;
 }
 
+export function buildUploadedAvatarUrl(userId, uploadedAvatarVersion) {
+  const version = Number(uploadedAvatarVersion || 0);
+  if (version <= 0) {
+    return null;
+  }
+  return `/user-avatars/${encodeURIComponent(userId)}?v=${version}`;
+}
+
+export function resolveAvatarUrlForSource({
+  avatarSource,
+  googleAvatarUrl,
+  customAvatarUrl,
+  uploadedAvatarUrl,
+  fallbackAvatarUrl = null
+}) {
+  const normalizedSource = ['custom', 'upload', 'google'].includes(avatarSource)
+    ? avatarSource
+    : 'google';
+
+  if (normalizedSource === 'custom') {
+    return customAvatarUrl ?? uploadedAvatarUrl ?? googleAvatarUrl ?? fallbackAvatarUrl ?? null;
+  }
+  if (normalizedSource === 'upload') {
+    return uploadedAvatarUrl ?? googleAvatarUrl ?? customAvatarUrl ?? fallbackAvatarUrl ?? null;
+  }
+  return googleAvatarUrl ?? uploadedAvatarUrl ?? customAvatarUrl ?? fallbackAvatarUrl ?? null;
+}
+
 export function parseSessionIdFromCookie(request) {
   const cookie = request.headers.get('Cookie') || '';
   const match = cookie.match(/session_id=([a-zA-Z0-9-]+)/);
@@ -53,28 +86,14 @@ export function mapUserRow(row) {
   const googleAvatarUrl = row.google_avatar_url ?? null;
   const customAvatarUrl = row.custom_avatar_url ?? null;
   const uploadedAvatarVersion = Number(row.uploaded_avatar_version || 0);
-  const uploadedAvatarUrl =
-    uploadedAvatarVersion > 0
-      ? `/user-avatars/${encodeURIComponent(row.id)}?v=${uploadedAvatarVersion}`
-      : null;
-  const effectiveAvatarUrl =
-    avatarSource === 'custom'
-      ? customAvatarUrl ??
-        uploadedAvatarUrl ??
-        googleAvatarUrl ??
-        row.avatar_url ??
-        null
-      : avatarSource === 'upload'
-        ? uploadedAvatarUrl ??
-          googleAvatarUrl ??
-          customAvatarUrl ??
-          row.avatar_url ??
-          null
-        : googleAvatarUrl ??
-          uploadedAvatarUrl ??
-          customAvatarUrl ??
-          row.avatar_url ??
-          null;
+  const uploadedAvatarUrl = buildUploadedAvatarUrl(row.id, uploadedAvatarVersion);
+  const effectiveAvatarUrl = resolveAvatarUrlForSource({
+    avatarSource,
+    googleAvatarUrl,
+    customAvatarUrl,
+    uploadedAvatarUrl,
+    fallbackAvatarUrl: row.avatar_url ?? null
+  });
 
   return {
     ...row,
@@ -86,6 +105,16 @@ export function mapUserRow(row) {
     uploaded_avatar_url: uploadedAvatarUrl,
     avatar_url: effectiveAvatarUrl
   };
+}
+
+export async function fetchMappedUserById(env, userId) {
+  const row = await env.DB.prepare(
+    `${USER_SELECT_COLUMNS}
+     WHERE id = ?`
+  )
+    .bind(userId)
+    .first();
+  return mapUserRow(row);
 }
 
 export async function getCurrentUser(request, env) {
@@ -106,16 +135,5 @@ export async function getCurrentUser(request, env) {
     .bind(session.user_id)
     .run();
 
-  const user = await env.DB.prepare(
-    `SELECT id, name, email, role, bio, avatar_url, google_avatar_url,
-            custom_avatar_url, avatar_source, uploaded_avatar_version,
-            last_active_at, theme_mode,
-            font_size_scale, locale
-     FROM users
-     WHERE id = ?`
-  )
-    .bind(session.user_id)
-    .first();
-
-  return mapUserRow(user);
+  return fetchMappedUserById(env, session.user_id);
 }

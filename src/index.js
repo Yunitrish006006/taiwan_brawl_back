@@ -68,6 +68,14 @@ async function requireUser(request, env) {
   return user;
 }
 
+async function withAuthenticatedUser(request, env, handler) {
+  const user = await requireUser(request, env);
+  if (!user) {
+    return jsonResponse({ error: 'Not logged in' }, 401, request);
+  }
+  return handler(user);
+}
+
 async function requireAdminUser(request, env) {
   const user = await requireUser(request, env);
   if (!user) {
@@ -109,6 +117,14 @@ async function proxyRoomJson(stub, path, payload, request, user) {
 
   const data = await upstream.json();
   return jsonResponse(data, upstream.status, request);
+}
+
+async function proxyRoomAction(request, env, code, path, payloadBuilder) {
+  return withAuthenticatedUser(request, env, async (user) => {
+    const stub = getRoomStub(env, code);
+    const payload = await payloadBuilder(user);
+    return proxyRoomJson(stub, path, payload, request, user);
+  });
 }
 
 async function handleListCards(request, env) {
@@ -190,28 +206,22 @@ async function handleDeleteManagedCardImage(request, env, cardId) {
 }
 
 async function handleListDecks(request, env) {
-  const user = await requireUser(request, env);
-  if (!user) {
-    return jsonResponse({ error: 'Not logged in' }, 401, request);
-  }
-
-  const decks = await listDecksForUser(user.id, env);
-  return jsonResponse({ ok: true, decks }, 200, request);
+  return withAuthenticatedUser(request, env, async (user) => {
+    const decks = await listDecksForUser(user.id, env);
+    return jsonResponse({ ok: true, decks }, 200, request);
+  });
 }
 
 async function handleSaveDeck(request, env) {
-  const user = await requireUser(request, env);
-  if (!user) {
-    return jsonResponse({ error: 'Not logged in' }, 401, request);
-  }
+  return withAuthenticatedUser(request, env, async (user) => {
+    const body = await request.json().catch(() => null);
+    if (!body) {
+      return jsonResponse({ error: 'Invalid body' }, 400, request);
+    }
 
-  const body = await request.json().catch(() => null);
-  if (!body) {
-    return jsonResponse({ error: 'Invalid body' }, 400, request);
-  }
-
-  const deck = await saveDeckForUser(user.id, body, env);
-  return jsonResponse({ ok: true, deck }, 200, request);
+    const deck = await saveDeckForUser(user.id, body, env);
+    return jsonResponse({ ok: true, deck }, 200, request);
+  });
 }
 
 async function resolveOwnedDeck(request, env, user, body) {
@@ -229,144 +239,96 @@ async function resolveOwnedDeck(request, env, user, body) {
 }
 
 async function handleCreateRoom(request, env) {
-  const user = await requireUser(request, env);
-  if (!user) {
-    return jsonResponse({ error: 'Not logged in' }, 401, request);
-  }
+  return withAuthenticatedUser(request, env, async (user) => {
+    const body = await request.json().catch(() => null);
+    const { deck, error } = await resolveOwnedDeck(request, env, user, body);
+    if (error) {
+      return error;
+    }
+    const vsBot = Boolean(body?.vsBot);
+    const simulationMode = normalizeSimulationMode(body?.simulationMode);
 
-  const body = await request.json().catch(() => null);
-  const { deck, error } = await resolveOwnedDeck(request, env, user, body);
-  if (error) {
-    return error;
-  }
-  const vsBot = Boolean(body?.vsBot);
-  const simulationMode = normalizeSimulationMode(body?.simulationMode);
-
-  for (let attempt = 0; attempt < 5; attempt += 1) {
-    const code = randomRoomCode();
-    const stub = getRoomStub(env, code);
-    const upstream = await stub.fetch(
-      new Request('https://royale-room/internal/create', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          code,
-          user: { id: user.id, name: user.name },
-          deck,
-          vsBot,
-          botDeck: deck,
-          simulationMode
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const code = randomRoomCode();
+      const stub = getRoomStub(env, code);
+      const upstream = await stub.fetch(
+        new Request('https://royale-room/internal/create', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            code,
+            user: { id: user.id, name: user.name },
+            deck,
+            vsBot,
+            botDeck: deck,
+            simulationMode
+          })
         })
-      })
-    );
+      );
 
-    if (upstream.status === 409) {
-      continue;
+      if (upstream.status === 409) {
+        continue;
+      }
+
+      const data = await upstream.json();
+      return jsonResponse(data, upstream.status, request);
     }
 
-    const data = await upstream.json();
-    return jsonResponse(data, upstream.status, request);
-  }
-
-  return jsonResponse({ error: 'Unable to allocate room code' }, 500, request);
+    return jsonResponse({ error: 'Unable to allocate room code' }, 500, request);
+  });
 }
 
 async function handleJoinRoom(request, env, code) {
-  const user = await requireUser(request, env);
-  if (!user) {
-    return jsonResponse({ error: 'Not logged in' }, 401, request);
-  }
+  return withAuthenticatedUser(request, env, async (user) => {
+    const body = await request.json().catch(() => null);
+    const { deck, error } = await resolveOwnedDeck(request, env, user, body);
+    if (error) {
+      return error;
+    }
 
-  const body = await request.json().catch(() => null);
-  const { deck, error } = await resolveOwnedDeck(request, env, user, body);
-  if (error) {
-    return error;
-  }
-
-  const stub = getRoomStub(env, code);
-  return proxyRoomJson(
-    stub,
-    '/internal/join',
-    {
+    return proxyRoomAction(request, env, code, '/internal/join', async () => ({
       user: { id: user.id, name: user.name },
       deck
-    },
-    request,
-    user
-  );
+    }));
+  });
 }
 
 async function handleReadyRoom(request, env, code) {
-  const user = await requireUser(request, env);
-  if (!user) {
-    return jsonResponse({ error: 'Not logged in' }, 401, request);
-  }
-
-  const stub = getRoomStub(env, code);
-  return proxyRoomJson(
-    stub,
-    '/internal/ready',
-    { userId: user.id },
-    request,
-    user
-  );
+  return proxyRoomAction(request, env, code, '/internal/ready', async (user) => ({
+    userId: user.id
+  }));
 }
 
 async function handleRematchRoom(request, env, code) {
-  const user = await requireUser(request, env);
-  if (!user) {
-    return jsonResponse({ error: 'Not logged in' }, 401, request);
-  }
-
-  const stub = getRoomStub(env, code);
-  return proxyRoomJson(
-    stub,
-    '/internal/rematch',
-    { userId: user.id },
-    request,
-    user
-  );
+  return proxyRoomAction(request, env, code, '/internal/rematch', async (user) => ({
+    userId: user.id
+  }));
 }
 
 async function handleHostFinishRoom(request, env, code) {
-  const user = await requireUser(request, env);
-  if (!user) {
-    return jsonResponse({ error: 'Not logged in' }, 401, request);
-  }
-
   const body = await request.json().catch(() => null);
-  const stub = getRoomStub(env, code);
-  return proxyRoomJson(
-    stub,
-    '/internal/host-finish',
-    {
-      userId: user.id,
-      winnerSide: body?.winnerSide ?? null,
-      reason: body?.reason ?? 'time_up',
-      leftTowerHp: body?.leftTowerHp,
-      rightTowerHp: body?.rightTowerHp
-    },
-    request,
-    user
-  );
+  return proxyRoomAction(request, env, code, '/internal/host-finish', async (user) => ({
+    userId: user.id,
+    winnerSide: body?.winnerSide ?? null,
+    reason: body?.reason ?? 'time_up',
+    leftTowerHp: body?.leftTowerHp,
+    rightTowerHp: body?.rightTowerHp
+  }));
 }
 
 async function handleRoomState(request, env, code) {
-  const user = await requireUser(request, env);
-  if (!user) {
-    return jsonResponse({ error: 'Not logged in' }, 401, request);
-  }
+  return withAuthenticatedUser(request, env, async (user) => {
+    const stub = getRoomStub(env, code);
+    const upstream = await stub.fetch(
+      new Request('https://royale-room/internal/state', {
+        method: 'GET',
+        headers: { 'x-user-id': String(user.id) }
+      })
+    );
 
-  const stub = getRoomStub(env, code);
-  const upstream = await stub.fetch(
-    new Request('https://royale-room/internal/state', {
-      method: 'GET',
-      headers: { 'x-user-id': String(user.id) }
-    })
-  );
-
-  const data = await upstream.json();
-  return jsonResponse(data, upstream.status, request);
+    const data = await upstream.json();
+    return jsonResponse(data, upstream.status, request);
+  });
 }
 
 async function handleFriendsOverview(request, env) {

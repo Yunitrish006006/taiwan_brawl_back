@@ -262,6 +262,107 @@ export class RoyaleRoom {
     );
   }
 
+  simulationMode() {
+    return normalizeSimulationMode(this.room?.simulationMode);
+  }
+
+  hostUserId() {
+    return Number(this.room?.hostUserId || this.room?.players?.left?.userId || 0);
+  }
+
+  hasAllPlayersReady() {
+    if (!this.room) {
+      return false;
+    }
+    return (
+      Object.keys(this.room.players).length === 2 &&
+      Object.values(this.room.players).every((player) => player.ready)
+    );
+  }
+
+  okRoom(userId) {
+    return json({ ok: true, room: this.viewerSnapshot(userId) });
+  }
+
+  playerSnapshot(player, battleState, includeHostDecks) {
+    return {
+      userId: player.userId,
+      name: player.name,
+      side: player.side,
+      deckId: player.deckId,
+      deckName: player.deckName,
+      deckCards: includeHostDecks ? player.deckCards : undefined,
+      elixir: includeHostDecks ? Number((battleState?.elixir ?? 5).toFixed(1)) : undefined,
+      handCardIds: includeHostDecks ? battleState?.hand ?? player.deckCardIds.slice(0, 4) : undefined,
+      queueCardIds: includeHostDecks ? battleState?.queue ?? player.deckCardIds.slice(4) : undefined,
+      isBot: Boolean(player.isBot),
+      ready: player.ready,
+      connected: player.connected,
+      towerHp: battleState?.towerHp ?? TOWER_HP,
+      maxTowerHp: battleState?.maxTowerHp ?? TOWER_HP
+    };
+  }
+
+  unitSnapshot(unit) {
+    return {
+      id: unit.id,
+      cardId: unit.cardId,
+      name: unit.name,
+      nameZhHant: unit.nameZhHant || unit.name,
+      nameEn: unit.nameEn || unit.name,
+      nameJa: unit.nameJa || unit.name,
+      imageUrl: unit.imageUrl || null,
+      side: unit.side,
+      type: unit.type,
+      progress: Math.round(unit.progress),
+      lateralPosition: Math.round(unit.lateralPosition),
+      hp: Math.max(0, Math.round(unit.hp)),
+      maxHp: unit.maxHp,
+      attackRange: Math.round(displayAttackReach(unit)),
+      bodyRadius: Math.round(unit.bodyRadius ?? 0),
+      effects: unit.effects ?? []
+    };
+  }
+
+  battleSnapshot(viewer, battlePlayer) {
+    if (!this.room?.battle) {
+      return null;
+    }
+
+    return {
+      timeRemainingMs: Math.max(0, Math.floor(this.room.battle.timeRemainingMs)),
+      yourElixir: battlePlayer ? Number(battlePlayer.elixir.toFixed(1)) : 0,
+      yourHand: battlePlayer
+        ? battlePlayer.hand
+            .map((cardId) => viewer.deckCards.find((card) => card.id === cardId))
+            .filter(Boolean)
+        : [],
+      nextCardId: battlePlayer?.queue?.[0] ?? null,
+      units: this.room.battle.units.map((unit) => this.unitSnapshot(unit)),
+      result: this.room.battle.result
+    };
+  }
+
+  async persistAndBroadcast(type, { force = true } = {}) {
+    await this.persist(force);
+    await this.broadcast(type);
+  }
+
+  async markPlayerReady(userId) {
+    const player = this.findPlayerByUserId(userId);
+    if (!player) {
+      return false;
+    }
+
+    player.ready = true;
+    await this.persistAndBroadcast('room_state');
+    if (this.hasAllPlayersReady()) {
+      this.startBattle();
+      await this.broadcast('battle_started');
+    }
+    return true;
+  }
+
   viewerSnapshot(userId) {
     if (!this.room) {
       return null;
@@ -276,58 +377,16 @@ export class RoyaleRoom {
       code: this.room.code,
       status: this.room.status,
       simulationMode,
-      hostUserId: Number(this.room.hostUserId || this.room.players.left?.userId || 0),
+      hostUserId: this.hostUserId(),
       viewerSide: viewer?.side ?? null,
-      players: Object.values(this.room.players).map((player) => {
-        const battleState = this.room.battle?.players[player.side];
-        return {
-          userId: player.userId,
-          name: player.name,
-          side: player.side,
-          deckId: player.deckId,
-          deckName: player.deckName,
-          deckCards: includeHostDecks ? player.deckCards : undefined,
-          elixir: includeHostDecks ? Number((battleState?.elixir ?? 5).toFixed(1)) : undefined,
-          handCardIds: includeHostDecks ? battleState?.hand ?? player.deckCardIds.slice(0, 4) : undefined,
-          queueCardIds: includeHostDecks ? battleState?.queue ?? player.deckCardIds.slice(4) : undefined,
-          isBot: Boolean(player.isBot),
-          ready: player.ready,
-          connected: player.connected,
-          towerHp: battleState?.towerHp ?? TOWER_HP,
-          maxTowerHp: battleState?.maxTowerHp ?? TOWER_HP
-        };
-      }),
-      battle: this.room.battle
-        ? {
-            timeRemainingMs: Math.max(0, Math.floor(this.room.battle.timeRemainingMs)),
-            yourElixir: battlePlayer ? Number(battlePlayer.elixir.toFixed(1)) : 0,
-            yourHand: battlePlayer
-              ? battlePlayer.hand
-                  .map((cardId) => viewer.deckCards.find((card) => card.id === cardId))
-                  .filter(Boolean)
-              : [],
-            nextCardId: battlePlayer?.queue?.[0] ?? null,
-            units: this.room.battle.units.map((unit) => ({
-              id: unit.id,
-              cardId: unit.cardId,
-              name: unit.name,
-              nameZhHant: unit.nameZhHant || unit.name,
-              nameEn: unit.nameEn || unit.name,
-              nameJa: unit.nameJa || unit.name,
-              imageUrl: unit.imageUrl || null,
-              side: unit.side,
-              type: unit.type,
-              progress: Math.round(unit.progress),
-              lateralPosition: Math.round(unit.lateralPosition),
-              hp: Math.max(0, Math.round(unit.hp)),
-              maxHp: unit.maxHp,
-              attackRange: Math.round(displayAttackReach(unit)),
-              bodyRadius: Math.round(unit.bodyRadius ?? 0),
-              effects: unit.effects ?? []
-            })),
-            result: this.room.battle.result
-          }
-        : null
+      players: Object.values(this.room.players).map((player) =>
+        this.playerSnapshot(
+          player,
+          this.room.battle?.players[player.side],
+          includeHostDecks
+        )
+      ),
+      battle: this.battleSnapshot(viewer, battlePlayer)
     };
   }
 
@@ -381,7 +440,7 @@ export class RoyaleRoom {
     }
     await this.persist(true);
 
-    return json({ ok: true, room: this.viewerSnapshot(payload.user.id) });
+    return this.okRoom(payload.user.id);
   }
 
   async handleJoin(request) {
@@ -392,7 +451,7 @@ export class RoyaleRoom {
 
     const existing = this.findPlayerByUserId(payload.user.id);
     if (existing) {
-      return json({ ok: true, room: this.viewerSnapshot(payload.user.id) });
+      return this.okRoom(payload.user.id);
     }
 
     if (Object.keys(this.room.players).length >= 2) {
@@ -400,9 +459,8 @@ export class RoyaleRoom {
     }
 
     this.room.players.right = createPlayer('right', payload);
-    await this.persist(true);
-    await this.broadcast('room_state');
-    return json({ ok: true, room: this.viewerSnapshot(payload.user.id) });
+    await this.persistAndBroadcast('room_state');
+    return this.okRoom(payload.user.id);
   }
 
   async handleReady(request) {
@@ -416,19 +474,8 @@ export class RoyaleRoom {
       return json({ error: 'Match has ended, start a rematch first' }, 409);
     }
 
-    player.ready = true;
-    await this.persist(true);
-    await this.broadcast('room_state');
-
-    if (
-      Object.keys(this.room.players).length === 2 &&
-      Object.values(this.room.players).every((entry) => entry.ready)
-    ) {
-      this.startBattle();
-      await this.broadcast('battle_started');
-    }
-
-    return json({ ok: true, room: this.viewerSnapshot(payload.userId) });
+    await this.markPlayerReady(payload.userId);
+    return this.okRoom(payload.userId);
   }
 
   async handleRematch(request) {
@@ -445,9 +492,8 @@ export class RoyaleRoom {
     }
 
     this.resetRoomToLobby();
-    await this.persist(true);
-    await this.broadcast('room_state');
-    return json({ ok: true, room: this.viewerSnapshot(payload.userId) });
+    await this.persistAndBroadcast('room_state');
+    return this.okRoom(payload.userId);
   }
 
   async handleState(request) {
@@ -456,7 +502,7 @@ export class RoyaleRoom {
       return json({ error: 'Room not found' }, 404);
     }
 
-    return json({ ok: true, room: this.viewerSnapshot(userId) });
+    return this.okRoom(userId);
   }
 
   async handleHostFinish(request) {
@@ -468,7 +514,7 @@ export class RoyaleRoom {
     if (!this.room) {
       return json({ error: 'Room not found' }, 404);
     }
-    if (normalizeSimulationMode(this.room.simulationMode) !== 'host') {
+    if (this.simulationMode() !== 'host') {
       return json({ error: 'Host finish is only available in host simulation mode' }, 409);
     }
     if (this.room.status !== 'battle' || !this.room.battle) {
@@ -499,9 +545,8 @@ export class RoyaleRoom {
       reason: String(payload.reason ?? 'time_up')
     };
 
-    await this.persist(true);
-    await this.broadcast('match_result');
-    return json({ ok: true, room: this.viewerSnapshot(payload.userId) });
+    await this.persistAndBroadcast('match_result');
+    return this.okRoom(payload.userId);
   }
 
   async handleWebSocket(request) {
@@ -550,20 +595,7 @@ export class RoyaleRoom {
     }
 
     if (payload?.type === 'ready') {
-      const player = this.findPlayerByUserId(userId);
-      if (!player) {
-        return;
-      }
-      player.ready = true;
-      await this.persist(true);
-      await this.broadcast('room_state');
-      if (
-        Object.keys(this.room.players).length === 2 &&
-        Object.values(this.room.players).every((entry) => entry.ready)
-      ) {
-        this.startBattle();
-        await this.broadcast('battle_started');
-      }
+      await this.markPlayerReady(userId);
       return;
     }
 
@@ -602,7 +634,7 @@ export class RoyaleRoom {
   }
 
   hostSocket() {
-    const hostUserId = Number(this.room?.hostUserId || this.room?.players?.left?.userId || 0);
+    const hostUserId = this.hostUserId();
     if (!hostUserId) {
       return null;
     }
@@ -613,7 +645,7 @@ export class RoyaleRoom {
     if (!this.room?.battle || this.room.status !== 'battle') {
       return;
     }
-    if (normalizeSimulationMode(this.room.simulationMode) !== 'host') {
+    if (this.simulationMode() !== 'host') {
       await this.handlePlayCombo(userId, payload);
       return;
     }
@@ -623,7 +655,7 @@ export class RoyaleRoom {
       return;
     }
 
-    const hostUserId = Number(this.room.hostUserId || this.room.players.left?.userId || 0);
+    const hostUserId = this.hostUserId();
     if (userId === hostUserId) {
       return;
     }
@@ -655,11 +687,11 @@ export class RoyaleRoom {
     if (!this.room || !this.room.battle || this.room.status !== 'battle') {
       return;
     }
-    if (normalizeSimulationMode(this.room.simulationMode) !== 'host') {
+    if (this.simulationMode() !== 'host') {
       return;
     }
 
-    const hostUserId = Number(this.room.hostUserId || this.room.players.left?.userId || 0);
+    const hostUserId = this.hostUserId();
     if (Number(userId) !== hostUserId) {
       this.sendError(userId, 'Only the host can submit host state');
       return;

@@ -1,5 +1,11 @@
 import { defaultDeckCardIds, starterCards } from './royale_cards.js';
 
+const CARD_SELECT_COLUMNS = `SELECT id, name, elixir_cost, type, hp, damage, attack_range, move_speed,
+        attack_speed, spawn_count, spell_radius, spell_damage, target_rule,
+        effect_kind, effect_value, body_radius, name_zh_hant, name_en, name_ja,
+        name_i18n, image_version
+ FROM cards`;
+
 function normalizeLocaleKey(locale) {
   const normalized = String(locale ?? '').trim();
   if (!normalized) {
@@ -120,6 +126,36 @@ function serializeCard(row) {
   };
 }
 
+function cardImageKey(cardId) {
+  return `card-image:${cardId}`;
+}
+
+function cardImageMetaKey(cardId) {
+  return `card-image-meta:${cardId}`;
+}
+
+async function fetchCardRow(env, cardId) {
+  return env.DB.prepare(
+    `${CARD_SELECT_COLUMNS}
+     WHERE id = ?`
+  )
+    .bind(cardId)
+    .first();
+}
+
+async function fetchCardById(env, cardId) {
+  const row = await fetchCardRow(env, cardId);
+  return row ? serializeCard(row) : null;
+}
+
+function starterCardNameI18n(card) {
+  return JSON.stringify(card.nameI18n ?? {
+    'zh-Hant': card.nameZhHant,
+    en: card.nameEn,
+    ja: card.nameJa
+  });
+}
+
 function normalizeCardPayload(payload) {
   const id = String(payload?.id ?? '').trim();
   const nameI18n = parseNameI18n(payload?.nameI18n);
@@ -217,11 +253,7 @@ async function insertStarterCards(env) {
       card.nameZhHant,
       card.nameEn,
       card.nameJa,
-      JSON.stringify(card.nameI18n ?? {
-        'zh-Hant': card.nameZhHant,
-        en: card.nameEn,
-        ja: card.nameJa
-      })
+      starterCardNameI18n(card)
     ).run();
   }
 }
@@ -236,11 +268,7 @@ export async function ensureCardsSeeded(env) {
 export async function listCards(env) {
   await ensureCardsSeeded(env);
   const rows = await env.DB.prepare(
-    `SELECT id, name, elixir_cost, type, hp, damage, attack_range, move_speed,
-            attack_speed, spawn_count, spell_radius, spell_damage, target_rule,
-            effect_kind, effect_value, body_radius, name_zh_hant, name_en, name_ja,
-            name_i18n, image_version
-     FROM cards
+    `${CARD_SELECT_COLUMNS}
      ORDER BY elixir_cost ASC, name ASC`
   ).all();
   return rows.results.map(serializeCard);
@@ -302,18 +330,7 @@ export async function upsertCard(env, payload) {
     )
     .run();
 
-  const row = await env.DB.prepare(
-    `SELECT id, name, elixir_cost, type, hp, damage, attack_range, move_speed,
-            attack_speed, spawn_count, spell_radius, spell_damage, target_rule,
-            effect_kind, effect_value, body_radius, name_zh_hant, name_en, name_ja,
-            name_i18n, image_version
-     FROM cards
-     WHERE id = ?`
-  )
-    .bind(card.id)
-    .first();
-
-  return serializeCard(row);
+  return fetchCardById(env, card.id);
 }
 
 export async function deleteCard(env, cardId) {
@@ -392,8 +409,8 @@ export async function uploadCardImage(env, cardId, payload) {
     throw new Error('Image must be 1 MB or smaller');
   }
 
-  const imageKey = `card-image:${normalizedCardId}`;
-  const metaKey = `card-image-meta:${normalizedCardId}`;
+  const imageKey = cardImageKey(normalizedCardId);
+  const metaKey = cardImageMetaKey(normalizedCardId);
   await env.STATIC_ASSETS.put(imageKey, bytes);
   await env.STATIC_ASSETS.put(
     metaKey,
@@ -408,18 +425,7 @@ export async function uploadCardImage(env, cardId, payload) {
     .bind(imageVersion, normalizedCardId)
     .run();
 
-  const row = await env.DB.prepare(
-    `SELECT id, name, elixir_cost, type, hp, damage, attack_range, move_speed,
-            attack_speed, spawn_count, spell_radius, spell_damage, target_rule,
-            effect_kind, effect_value, body_radius, name_zh_hant, name_en, name_ja,
-            name_i18n, image_version
-     FROM cards
-     WHERE id = ?`
-  )
-    .bind(normalizedCardId)
-    .first();
-
-  return serializeCard(row);
+  return fetchCardById(env, normalizedCardId);
 }
 
 export async function removeCardImage(env, cardId) {
@@ -428,24 +434,13 @@ export async function removeCardImage(env, cardId) {
     throw new Error('Card id is required');
   }
 
-  await env.STATIC_ASSETS?.delete?.(`card-image:${normalizedCardId}`);
-  await env.STATIC_ASSETS?.delete?.(`card-image-meta:${normalizedCardId}`);
+  await env.STATIC_ASSETS?.delete?.(cardImageKey(normalizedCardId));
+  await env.STATIC_ASSETS?.delete?.(cardImageMetaKey(normalizedCardId));
   await env.DB.prepare('UPDATE cards SET image_version = 0 WHERE id = ?')
     .bind(normalizedCardId)
     .run();
 
-  const row = await env.DB.prepare(
-    `SELECT id, name, elixir_cost, type, hp, damage, attack_range, move_speed,
-            attack_speed, spawn_count, spell_radius, spell_damage, target_rule,
-            effect_kind, effect_value, body_radius, name_zh_hant, name_en, name_ja,
-            name_i18n, image_version
-     FROM cards
-     WHERE id = ?`
-  )
-    .bind(normalizedCardId)
-    .first();
-
-  return row ? serializeCard(row) : null;
+  return fetchCardById(env, normalizedCardId);
 }
 
 export async function getCardImageResponse(env, cardId) {
@@ -454,8 +449,8 @@ export async function getCardImageResponse(env, cardId) {
     return null;
   }
 
-  const imageKey = `card-image:${normalizedCardId}`;
-  const metaKey = `card-image-meta:${normalizedCardId}`;
+  const imageKey = cardImageKey(normalizedCardId);
+  const metaKey = cardImageMetaKey(normalizedCardId);
   const [bytes, metaRaw] = await Promise.all([
     env.STATIC_ASSETS.get(imageKey, 'arrayBuffer'),
     env.STATIC_ASSETS.get(metaKey)

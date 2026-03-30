@@ -9,6 +9,23 @@ function serializeUser(row) {
   };
 }
 
+function serializeRequest(row) {
+  return {
+    id: Number(row.request_id),
+    createdAt: row.created_at,
+    user: serializeUser(row),
+  };
+}
+
+function serializeRoomInvite(row) {
+  return {
+    id: Number(row.invite_id),
+    roomCode: row.room_code,
+    createdAt: row.created_at,
+    inviter: serializeUser(row),
+  };
+}
+
 function friendPair(userIdA, userIdB) {
   const a = Number(userIdA);
   const b = Number(userIdB);
@@ -17,6 +34,23 @@ function friendPair(userIdA, userIdB) {
 
 async function userExists(userId, env) {
   return env.DB.prepare('SELECT id FROM users WHERE id = ?').bind(userId).first();
+}
+
+async function requireTargetUser(currentUserId, rawTargetUserId, env, selfActionMessage) {
+  const targetUserId = Number(rawTargetUserId);
+  if (!Number.isInteger(targetUserId) || targetUserId <= 0) {
+    throw new Error('targetUserId is required');
+  }
+  if (targetUserId === Number(currentUserId)) {
+    throw new Error(`You cannot ${selfActionMessage}`);
+  }
+
+  const targetUser = await userExists(targetUserId, env);
+  if (!targetUser) {
+    throw new Error('Player not found');
+  }
+
+  return targetUserId;
 }
 
 async function pendingRequestBetween(userIdA, userIdB, env) {
@@ -109,6 +143,46 @@ function userSelectFields(alias = 'u') {
     END AS is_online`;
 }
 
+async function loadPendingFriendRequest(requestId, env) {
+  return env.DB.prepare(
+    `SELECT id, sender_user_id, receiver_user_id, status
+     FROM friend_requests
+     WHERE id = ?`
+  )
+    .bind(requestId)
+    .first();
+}
+
+async function loadPendingRoomInvite(inviteId, env) {
+  return env.DB.prepare(
+    `SELECT id, room_code, invitee_user_id, status
+     FROM room_invites
+     WHERE id = ?`
+  )
+    .bind(inviteId)
+    .first();
+}
+
+async function updateFriendRequestStatus(requestId, status, env) {
+  await env.DB.prepare(
+    `UPDATE friend_requests
+     SET status = ?, responded_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+     WHERE id = ?`
+  )
+    .bind(status, requestId)
+    .run();
+}
+
+async function updateRoomInviteStatus(inviteId, status, env) {
+  await env.DB.prepare(
+    `UPDATE room_invites
+     SET status = ?, responded_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+     WHERE id = ?`
+  )
+    .bind(status, inviteId)
+    .run();
+}
+
 export async function getFriendsOverview(userId, env) {
   const friendsRows = await env.DB.prepare(
     `SELECT ${userSelectFields('u')}
@@ -166,23 +240,10 @@ export async function getFriendsOverview(userId, env) {
 
   return {
     friends: friendsRows.results.map(serializeUser),
-    incomingRequests: incomingRows.results.map((row) => ({
-      id: Number(row.request_id),
-      createdAt: row.created_at,
-      user: serializeUser(row),
-    })),
-    outgoingRequests: outgoingRows.results.map((row) => ({
-      id: Number(row.request_id),
-      createdAt: row.created_at,
-      user: serializeUser(row),
-    })),
+    incomingRequests: incomingRows.results.map(serializeRequest),
+    outgoingRequests: outgoingRows.results.map(serializeRequest),
     blockedUsers: blockedRows.results.map(serializeUser),
-    roomInvites: roomInviteRows.results.map((row) => ({
-      id: Number(row.invite_id),
-      roomCode: row.room_code,
-      createdAt: row.created_at,
-      inviter: serializeUser(row),
-    })),
+    roomInvites: roomInviteRows.results.map(serializeRoomInvite),
   };
 }
 
@@ -221,18 +282,12 @@ export async function searchUsersByName(currentUserId, rawQuery, env) {
 }
 
 export async function sendFriendRequest(currentUserId, rawTargetUserId, env) {
-  const targetUserId = Number(rawTargetUserId);
-  if (!Number.isInteger(targetUserId) || targetUserId <= 0) {
-    throw new Error('targetUserId is required');
-  }
-  if (targetUserId === Number(currentUserId)) {
-    throw new Error('You cannot add yourself as a friend');
-  }
-
-  const targetUser = await userExists(targetUserId, env);
-  if (!targetUser) {
-    throw new Error('Player not found');
-  }
+  const targetUserId = await requireTargetUser(
+    currentUserId,
+    rawTargetUserId,
+    env,
+    'add yourself as a friend'
+  );
 
   const relationshipStatus = await resolveRelationshipStatus(
     currentUserId,
@@ -278,13 +333,7 @@ export async function respondToFriendRequest(
   action,
   env
 ) {
-  const request = await env.DB.prepare(
-    `SELECT id, sender_user_id, receiver_user_id, status
-     FROM friend_requests
-     WHERE id = ?`
-  )
-    .bind(requestId)
-    .first();
+  const request = await loadPendingFriendRequest(requestId, env);
 
   if (!request || request.status !== 'pending') {
     throw new Error('Friend request not found');
@@ -294,13 +343,7 @@ export async function respondToFriendRequest(
   }
 
   const status = action === 'accept' ? 'accepted' : 'rejected';
-  await env.DB.prepare(
-    `UPDATE friend_requests
-     SET status = ?, responded_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
-     WHERE id = ?`
-  )
-    .bind(status, requestId)
-    .run();
+  await updateFriendRequestStatus(requestId, status, env);
 
   if (action === 'accept') {
     await createFriendship(request.sender_user_id, request.receiver_user_id, env);
@@ -310,13 +353,7 @@ export async function respondToFriendRequest(
 }
 
 export async function cancelFriendRequest(currentUserId, requestId, env) {
-  const request = await env.DB.prepare(
-    `SELECT id, sender_user_id, status
-     FROM friend_requests
-     WHERE id = ?`
-  )
-    .bind(requestId)
-    .first();
+  const request = await loadPendingFriendRequest(requestId, env);
 
   if (!request || request.status !== 'pending') {
     throw new Error('Friend request not found');
@@ -325,13 +362,7 @@ export async function cancelFriendRequest(currentUserId, requestId, env) {
     throw new Error('You cannot cancel this friend request');
   }
 
-  await env.DB.prepare(
-    `UPDATE friend_requests
-     SET status = 'cancelled', responded_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
-     WHERE id = ?`
-  )
-    .bind(requestId)
-    .run();
+  await updateFriendRequestStatus(requestId, 'cancelled', env);
 
   return { ok: true };
 }
@@ -349,17 +380,12 @@ export async function removeFriend(currentUserId, rawTargetUserId, env) {
 }
 
 export async function blockUser(currentUserId, rawTargetUserId, env) {
-  const targetUserId = Number(rawTargetUserId);
-  if (!Number.isInteger(targetUserId) || targetUserId <= 0) {
-    throw new Error('targetUserId is required');
-  }
-  if (targetUserId === Number(currentUserId)) {
-    throw new Error('You cannot block yourself');
-  }
-  const targetUser = await userExists(targetUserId, env);
-  if (!targetUser) {
-    throw new Error('Player not found');
-  }
+  const targetUserId = await requireTargetUser(
+    currentUserId,
+    rawTargetUserId,
+    env,
+    'block yourself'
+  );
 
   await env.DB.prepare(
     `INSERT OR IGNORE INTO user_blocks (blocker_user_id, blocked_user_id)
@@ -422,10 +448,12 @@ export async function sendRoomInvite(
   roomCode,
   env
 ) {
-  const inviteeUserId = Number(rawInviteeUserId);
-  if (!Number.isInteger(inviteeUserId) || inviteeUserId <= 0) {
-    throw new Error('inviteeUserId is required');
-  }
+  const inviteeUserId = await requireTargetUser(
+    currentUserId,
+    rawInviteeUserId,
+    env,
+    'invite yourself'
+  );
   if (!(await friendshipExists(currentUserId, inviteeUserId, env))) {
     throw new Error('You can only invite friends to battle');
   }
@@ -460,13 +488,7 @@ export async function sendRoomInvite(
 }
 
 export async function respondToRoomInvite(currentUserId, inviteId, action, env) {
-  const invite = await env.DB.prepare(
-    `SELECT id, room_code, invitee_user_id, status
-     FROM room_invites
-     WHERE id = ?`
-  )
-    .bind(inviteId)
-    .first();
+  const invite = await loadPendingRoomInvite(inviteId, env);
 
   if (!invite || invite.status !== 'pending') {
     throw new Error('Room invite not found');
@@ -476,13 +498,7 @@ export async function respondToRoomInvite(currentUserId, inviteId, action, env) 
   }
 
   const status = action === 'accept' ? 'accepted' : 'rejected';
-  await env.DB.prepare(
-    `UPDATE room_invites
-     SET status = ?, responded_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
-     WHERE id = ?`
-  )
-    .bind(status, inviteId)
-    .run();
+  await updateRoomInviteStatus(inviteId, status, env);
 
   return {
     ok: true,

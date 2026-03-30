@@ -1,10 +1,12 @@
 import {
+  buildUploadedAvatarUrl,
   corsHeaders,
+  fetchMappedUserById,
   generateSessionId,
   getCurrentUser,
   jsonResponse,
-  mapUserRow,
   parseSessionId,
+  resolveAvatarUrlForSource,
   setCookie
 } from './utils.js';
 
@@ -18,32 +20,16 @@ async function createSession(userId, env) {
   return sessionId;
 }
 
-function buildUploadedAvatarUrl(userId, uploadedAvatarVersion) {
-  const version = Number(uploadedAvatarVersion || 0);
-  if (version <= 0) {
-    return null;
-  }
-  return `/user-avatars/${encodeURIComponent(userId)}?v=${version}`;
-}
-
-function resolveEffectiveAvatarUrl(user) {
-  const avatarSource = ['custom', 'upload', 'google'].includes(user.avatar_source)
-    ? user.avatar_source
-    : 'google';
-  const googleAvatarUrl = user.google_avatar_url ?? null;
-  const customAvatarUrl = user.custom_avatar_url ?? null;
-  const uploadedAvatarUrl = buildUploadedAvatarUrl(
-    user.id,
-    user.uploaded_avatar_version
-  );
-
-  if (avatarSource === 'custom') {
-    return customAvatarUrl ?? uploadedAvatarUrl ?? googleAvatarUrl ?? null;
-  }
-  if (avatarSource === 'upload') {
-    return uploadedAvatarUrl ?? googleAvatarUrl ?? customAvatarUrl ?? null;
-  }
-  return googleAvatarUrl ?? uploadedAvatarUrl ?? customAvatarUrl ?? null;
+async function findUserByEmail(env, email) {
+  return env.DB.prepare(
+    `SELECT id, name, email, google_sub, role, bio, avatar_url,
+            google_avatar_url, custom_avatar_url, avatar_source,
+            uploaded_avatar_version, last_active_at, theme_mode,
+            font_size_scale, locale
+     FROM users WHERE email = ?`
+  )
+    .bind(email)
+    .first();
 }
 
 function decodeBase64Url(value) {
@@ -91,15 +77,7 @@ export async function handleGoogleLogin(request, env) {
     return jsonResponse({ error: 'Invalid Google token' }, 401, request);
   }
 
-  let user = await env.DB.prepare(
-    `SELECT id, name, email, google_sub, role, bio, avatar_url,
-            google_avatar_url, custom_avatar_url, avatar_source,
-            uploaded_avatar_version, last_active_at, theme_mode,
-            font_size_scale, locale
-     FROM users WHERE email = ?`
-  )
-    .bind(googleUser.email)
-    .first();
+  let user = await findUserByEmail(env, googleUser.email);
 
   if (!user) {
     const defaultName = googleUser.name || googleUser.email.split('@')[0];
@@ -118,15 +96,7 @@ export async function handleGoogleLogin(request, env) {
       )
       .run();
 
-    user = await env.DB.prepare(
-      `SELECT id, name, email, google_sub, role, bio, avatar_url,
-              google_avatar_url, custom_avatar_url, avatar_source,
-              uploaded_avatar_version, last_active_at, theme_mode,
-              font_size_scale, locale
-       FROM users WHERE email = ?`
-    )
-      .bind(googleUser.email)
-      .first();
+    user = await findUserByEmail(env, googleUser.email);
   } else if (!user.google_sub) {
     await env.DB.prepare('UPDATE users SET google_sub = ? WHERE id = ?')
       .bind(googleUser.sub, user.id)
@@ -136,9 +106,12 @@ export async function handleGoogleLogin(request, env) {
     return jsonResponse({ error: 'Google account mismatch' }, 401, request);
   }
 
-  const effectiveAvatarUrl = resolveEffectiveAvatarUrl({
-    ...user,
-    google_avatar_url: googleUser.picture
+  const effectiveAvatarUrl = resolveAvatarUrlForSource({
+    avatarSource: user.avatar_source,
+    googleAvatarUrl: googleUser.picture,
+    customAvatarUrl: user.custom_avatar_url ?? null,
+    uploadedAvatarUrl: buildUploadedAvatarUrl(user.id, user.uploaded_avatar_version),
+    fallbackAvatarUrl: user.avatar_url ?? null
   });
 
   await env.DB.prepare(
@@ -150,16 +123,7 @@ export async function handleGoogleLogin(request, env) {
     .bind(googleUser.picture, effectiveAvatarUrl, user.id)
     .run();
 
-  user = await env.DB.prepare(
-    `SELECT id, name, email, google_sub, role, bio, avatar_url,
-            google_avatar_url, custom_avatar_url, avatar_source,
-            uploaded_avatar_version, last_active_at, theme_mode,
-            font_size_scale, locale
-     FROM users WHERE id = ?`
-  )
-    .bind(user.id)
-    .first();
-  user = mapUserRow(user);
+  user = await fetchMappedUserById(env, user.id);
 
   const sessionId = await createSession(user.id, env);
   return new Response(JSON.stringify({

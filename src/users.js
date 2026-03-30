@@ -1,4 +1,15 @@
-import { getCurrentUser, jsonResponse, mapUserRow } from './utils.js';
+import {
+  buildUploadedAvatarUrl,
+  fetchMappedUserById,
+  getCurrentUser,
+  jsonResponse,
+  resolveAvatarUrlForSource
+} from './utils.js';
+
+const VALID_AVATAR_SOURCES = ['google', 'custom', 'upload'];
+const VALID_LOCALES = ['zh-Hant', 'en', 'ja'];
+const VALID_THEME_MODES = ['light', 'dark', 'system'];
+const MAX_UPLOADED_AVATAR_BYTES = 1024 * 1024;
 
 function allowedImageContentType(contentType) {
   const normalized = String(contentType ?? '').trim().toLowerCase();
@@ -23,245 +34,246 @@ function decodeBase64(value) {
   return bytes;
 }
 
-function buildUploadedAvatarUrl(userId, uploadedAvatarVersion) {
-  const version = Number(uploadedAvatarVersion || 0);
-  if (version <= 0) {
+async function fetchUserRow(env, userId) {
+  return fetchMappedUserById(env, userId);
+}
+
+async function withCurrentUser(request, env, handler) {
+  const user = await getCurrentUser(request, env);
+  if (!user) {
+    return jsonResponse({ error: 'Not logged in' }, 401, request);
+  }
+  return handler(user);
+}
+
+function uploadedAvatarImageKey(userId) {
+  return `user-avatar:${userId}`;
+}
+
+function uploadedAvatarMetaKey(userId) {
+  return `user-avatar-meta:${userId}`;
+}
+
+function uploadedAvatarUrlFor(userId, uploadedAvatarVersion) {
+  return buildUploadedAvatarUrl(userId, uploadedAvatarVersion);
+}
+
+function resolveEffectiveAvatarUrl(user, {
+  avatarSource = user.avatar_source,
+  customAvatarUrl = user.custom_avatar_url ?? null,
+  uploadedAvatarVersion = user.uploaded_avatar_version ?? 0,
+  uploadedAvatarUrl
+} = {}) {
+  return resolveAvatarUrlForSource({
+    avatarSource,
+    googleAvatarUrl: user.google_avatar_url ?? null,
+    customAvatarUrl,
+    uploadedAvatarUrl:
+      uploadedAvatarUrl ??
+      uploadedAvatarUrlFor(user.id, uploadedAvatarVersion),
+    fallbackAvatarUrl: user.avatar_url ?? null
+  });
+}
+
+function validateAvatarSource(avatarSource, request) {
+  if (VALID_AVATAR_SOURCES.includes(avatarSource)) {
     return null;
   }
-  return `/user-avatars/${encodeURIComponent(userId)}?v=${version}`;
+  return jsonResponse(
+    { error: 'avatar_source must be google, custom, or upload' },
+    400,
+    request
+  );
 }
 
-function resolveAvatarUrlForSource({
-  avatarSource,
-  googleAvatarUrl,
-  customAvatarUrl,
-  uploadedAvatarUrl
-}) {
-  if (avatarSource === 'custom') {
-    return customAvatarUrl ?? uploadedAvatarUrl ?? googleAvatarUrl ?? null;
+function normalizeCustomAvatarUrl(value, request) {
+  const normalized = String(value ?? '').trim();
+  if (
+    normalized !== '' &&
+    !normalized.startsWith('https://') &&
+    !normalized.startsWith('http://')
+  ) {
+    return {
+      error: jsonResponse(
+        { error: 'custom_avatar_url must start with http:// or https://' },
+        400,
+        request
+      )
+    };
   }
-  if (avatarSource === 'upload') {
-    return uploadedAvatarUrl ?? googleAvatarUrl ?? customAvatarUrl ?? null;
-  }
-  return googleAvatarUrl ?? uploadedAvatarUrl ?? customAvatarUrl ?? null;
-}
 
-async function fetchUserRow(env, userId) {
-  const row = await env.DB.prepare(
-    `SELECT id, name, email, role, bio, avatar_url, google_avatar_url,
-            custom_avatar_url, avatar_source, uploaded_avatar_version,
-            last_active_at, theme_mode, font_size_scale, locale
-     FROM users
-     WHERE id = ?`
-  )
-    .bind(userId)
-    .first();
-  return mapUserRow(row);
+  return { value: normalized.length === 0 ? null : normalized };
 }
 
 export async function handleUpdateLocale(request, env) {
-  const user = await getCurrentUser(request, env);
-  if (!user) {
-    return jsonResponse({ error: 'Not logged in' }, 401, request);
-  }
-  const body = await request.json().catch(() => null);
-  const locale = body?.locale;
-  // 可支援 zh-Hant, en, ja
-  const validLocales = ['zh-Hant', 'en', 'ja'];
-  if (!validLocales.includes(locale)) {
-    return jsonResponse({ error: 'Invalid locale' }, 400, request);
-  }
-  await env.DB.prepare('UPDATE users SET locale = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
-    .bind(locale, user.id)
-    .run();
-  return jsonResponse({ ok: true }, 200, request);
+  return withCurrentUser(request, env, async (user) => {
+    const body = await request.json().catch(() => null);
+    const locale = body?.locale;
+    if (!VALID_LOCALES.includes(locale)) {
+      return jsonResponse({ error: 'Invalid locale' }, 400, request);
+    }
+    await env.DB.prepare('UPDATE users SET locale = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+      .bind(locale, user.id)
+      .run();
+    return jsonResponse({ ok: true }, 200, request);
+  });
 }
 
 export async function handleGetCurrentUser(request, env) {
-  const user = await getCurrentUser(request, env);
-  if (!user) {
-    return jsonResponse({ error: 'Not logged in' }, 401, request);
-  }
-  return jsonResponse({ user }, 200, request);
+  return withCurrentUser(request, env, async (user) => {
+    return jsonResponse({ user }, 200, request);
+  });
 }
 
 export async function handleUpdateCurrentUser(request, env) {
-  const user = await getCurrentUser(request, env);
-  if (!user) {
-    return jsonResponse({ error: 'Not logged in' }, 401, request);
-  }
+  return withCurrentUser(request, env, async (user) => {
+    const body = await request.json().catch(() => null);
+    if (!body) {
+      return jsonResponse({ error: 'Invalid body' }, 400, request);
+    }
 
-  const body = await request.json().catch(() => null);
-  if (!body) {
-    return jsonResponse({ error: 'Invalid body' }, 400, request);
-  }
+    const nextName = body.name !== undefined ? String(body.name) : user.name;
+    const nextBio = body.bio !== undefined ? String(body.bio) : (user.bio ?? '');
+    const requestedAvatarSource = body.avatar_source;
+    const nextAvatarSource =
+      requestedAvatarSource === undefined
+        ? user.avatar_source
+        : String(requestedAvatarSource).trim();
+    const avatarSourceError = validateAvatarSource(nextAvatarSource, request);
+    if (avatarSourceError) {
+      return avatarSourceError;
+    }
 
-  const nextName = body.name !== undefined ? String(body.name) : user.name;
-  const nextBio = body.bio !== undefined ? String(body.bio) : (user.bio ?? '');
-  const requestedAvatarSource = body.avatar_source;
-  const nextAvatarSource =
-    requestedAvatarSource === undefined
-      ? user.avatar_source
-      : String(requestedAvatarSource).trim();
-  const validAvatarSources = ['google', 'custom', 'upload'];
-  if (!validAvatarSources.includes(nextAvatarSource)) {
-    return jsonResponse(
-      { error: 'avatar_source must be google, custom, or upload' },
-      400,
+    const customAvatarResult = normalizeCustomAvatarUrl(
+      body.custom_avatar_url !== undefined
+        ? body.custom_avatar_url
+        : (user.custom_avatar_url ?? ''),
       request
     );
-  }
+    if (customAvatarResult.error) {
+      return customAvatarResult.error;
+    }
 
-  const customAvatarInput =
-    body.custom_avatar_url !== undefined
-      ? String(body.custom_avatar_url ?? '').trim()
-      : (user.custom_avatar_url ?? '');
-  if (
-    customAvatarInput !== '' &&
-    !customAvatarInput.startsWith('https://') &&
-    !customAvatarInput.startsWith('http://')
-  ) {
-    return jsonResponse(
-      { error: 'custom_avatar_url must start with http:// or https://' },
-      400,
-      request
+    const nextCustomAvatarUrl = customAvatarResult.value;
+    const uploadedAvatarUrl = uploadedAvatarUrlFor(
+      user.id,
+      user.uploaded_avatar_version
     );
-  }
+    if (nextAvatarSource === 'google' && !user.google_avatar_url) {
+      return jsonResponse({ error: 'No Google avatar available' }, 400, request);
+    }
+    if (nextAvatarSource === 'custom' && !nextCustomAvatarUrl) {
+      return jsonResponse({ error: 'Custom avatar URL is required' }, 400, request);
+    }
+    if (nextAvatarSource === 'upload' && !uploadedAvatarUrl) {
+      return jsonResponse({ error: 'Uploaded avatar image is required' }, 400, request);
+    }
 
-  const nextCustomAvatarUrl = customAvatarInput.length === 0 ? null : customAvatarInput;
-  const googleAvatarUrl = user.google_avatar_url ?? null;
-  const uploadedAvatarUrl = buildUploadedAvatarUrl(
-    user.id,
-    user.uploaded_avatar_version
-  );
-  if (nextAvatarSource === 'google' && !googleAvatarUrl) {
-    return jsonResponse({ error: 'No Google avatar available' }, 400, request);
-  }
-  if (nextAvatarSource === 'custom' && !nextCustomAvatarUrl) {
-    return jsonResponse({ error: 'Custom avatar URL is required' }, 400, request);
-  }
-  if (nextAvatarSource === 'upload' && !uploadedAvatarUrl) {
-    return jsonResponse({ error: 'Uploaded avatar image is required' }, 400, request);
-  }
+    const normalizedBio = nextBio.trim();
+    const effectiveAvatarUrl = resolveEffectiveAvatarUrl(user, {
+      avatarSource: nextAvatarSource,
+      customAvatarUrl: nextCustomAvatarUrl,
+      uploadedAvatarUrl
+    });
 
-  const effectiveAvatarUrl = resolveAvatarUrlForSource({
-    avatarSource: nextAvatarSource,
-    googleAvatarUrl,
-    customAvatarUrl: nextCustomAvatarUrl,
-    uploadedAvatarUrl
-  });
-
-  const normalizedBio = nextBio.trim();
-  await env.DB.prepare(
-    `UPDATE users
-     SET name = ?, bio = ?, custom_avatar_url = ?, avatar_source = ?,
-         avatar_url = ?, updated_at = CURRENT_TIMESTAMP
-     WHERE id = ?`
-  )
-    .bind(
-      nextName.trim(),
-      normalizedBio.length === 0 ? null : normalizedBio,
-      nextCustomAvatarUrl,
-      nextAvatarSource,
-      effectiveAvatarUrl,
-      user.id
+    await env.DB.prepare(
+      `UPDATE users
+       SET name = ?, bio = ?, custom_avatar_url = ?, avatar_source = ?,
+           avatar_url = ?, updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`
     )
-    .run();
+      .bind(
+        nextName.trim(),
+        normalizedBio.length === 0 ? null : normalizedBio,
+        nextCustomAvatarUrl,
+        nextAvatarSource,
+        effectiveAvatarUrl,
+        user.id
+      )
+      .run();
 
-  return jsonResponse({ ok: true }, 200, request);
+    return jsonResponse({ ok: true }, 200, request);
+  });
 }
 
 export async function handleUploadAvatarImage(request, env) {
-  const user = await getCurrentUser(request, env);
-  if (!user) {
-    return jsonResponse({ error: 'Not logged in' }, 401, request);
-  }
+  return withCurrentUser(request, env, async (user) => {
+    const body = await request.json().catch(() => null);
+    const contentType = allowedImageContentType(body?.contentType);
+    if (!contentType) {
+      return jsonResponse(
+        { error: 'Only PNG, JPEG, WEBP, and GIF images are supported' },
+        400,
+        request
+      );
+    }
 
-  const body = await request.json().catch(() => null);
-  const contentType = allowedImageContentType(body?.contentType);
-  if (!contentType) {
-    return jsonResponse(
-      { error: 'Only PNG, JPEG, WEBP, and GIF images are supported' },
-      400,
-      request
+    const bytes = decodeBase64(body?.bytesBase64);
+    if (!bytes || !bytes.length) {
+      return jsonResponse({ error: 'Image data is required' }, 400, request);
+    }
+    if (bytes.length > MAX_UPLOADED_AVATAR_BYTES) {
+      return jsonResponse({ error: 'Image must be 1 MB or smaller' }, 400, request);
+    }
+
+    await env.STATIC_ASSETS.put(uploadedAvatarImageKey(user.id), bytes);
+    await env.STATIC_ASSETS.put(
+      uploadedAvatarMetaKey(user.id),
+      JSON.stringify({
+        contentType,
+        uploadedAt: new Date().toISOString()
+      })
     );
-  }
 
-  const bytes = decodeBase64(body?.bytesBase64);
-  if (!bytes || !bytes.length) {
-    return jsonResponse({ error: 'Image data is required' }, 400, request);
-  }
-  if (bytes.length > 1024 * 1024) {
-    return jsonResponse({ error: 'Image must be 1 MB or smaller' }, 400, request);
-  }
+    const uploadedAvatarVersion = Date.now();
+    const effectiveAvatarUrl = resolveEffectiveAvatarUrl(user, {
+      avatarSource: user.avatar_source === 'upload' ? 'upload' : user.avatar_source,
+      uploadedAvatarVersion
+    });
 
-  const imageKey = `user-avatar:${user.id}`;
-  const metaKey = `user-avatar-meta:${user.id}`;
-  await env.STATIC_ASSETS.put(imageKey, bytes);
-  await env.STATIC_ASSETS.put(
-    metaKey,
-    JSON.stringify({
-      contentType,
-      uploadedAt: new Date().toISOString()
-    })
-  );
+    await env.DB.prepare(
+      `UPDATE users
+       SET uploaded_avatar_version = ?, avatar_url = ?, updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`
+    )
+      .bind(uploadedAvatarVersion, effectiveAvatarUrl, user.id)
+      .run();
 
-  const uploadedAvatarVersion = Date.now();
-  const uploadedAvatarUrl = buildUploadedAvatarUrl(user.id, uploadedAvatarVersion);
-  const effectiveAvatarUrl = resolveAvatarUrlForSource({
-    avatarSource: user.avatar_source === 'upload' ? 'upload' : user.avatar_source,
-    googleAvatarUrl: user.google_avatar_url ?? null,
-    customAvatarUrl: user.custom_avatar_url ?? null,
-    uploadedAvatarUrl
+    const nextUser = await fetchUserRow(env, user.id);
+    return jsonResponse({ ok: true, user: nextUser }, 200, request);
   });
-
-  await env.DB.prepare(
-    `UPDATE users
-     SET uploaded_avatar_version = ?, avatar_url = ?, updated_at = CURRENT_TIMESTAMP
-     WHERE id = ?`
-  )
-    .bind(uploadedAvatarVersion, effectiveAvatarUrl, user.id)
-    .run();
-
-  const nextUser = await fetchUserRow(env, user.id);
-  return jsonResponse({ ok: true, user: nextUser }, 200, request);
 }
 
 export async function handleDeleteAvatarImage(request, env) {
-  const user = await getCurrentUser(request, env);
-  if (!user) {
-    return jsonResponse({ error: 'Not logged in' }, 401, request);
-  }
+  return withCurrentUser(request, env, async (user) => {
+    await env.STATIC_ASSETS?.delete?.(uploadedAvatarImageKey(user.id));
+    await env.STATIC_ASSETS?.delete?.(uploadedAvatarMetaKey(user.id));
 
-  await env.STATIC_ASSETS?.delete?.(`user-avatar:${user.id}`);
-  await env.STATIC_ASSETS?.delete?.(`user-avatar-meta:${user.id}`);
+    const fallbackSource =
+      user.avatar_source === 'upload'
+        ? user.google_avatar_url
+          ? 'google'
+          : user.custom_avatar_url
+            ? 'custom'
+            : 'google'
+        : user.avatar_source;
+    const effectiveAvatarUrl = resolveEffectiveAvatarUrl(user, {
+      avatarSource: fallbackSource,
+      uploadedAvatarUrl: null
+    });
 
-  const fallbackSource =
-    user.avatar_source === 'upload'
-      ? user.google_avatar_url
-        ? 'google'
-        : user.custom_avatar_url
-          ? 'custom'
-          : 'google'
-      : user.avatar_source;
-  const effectiveAvatarUrl = resolveAvatarUrlForSource({
-    avatarSource: fallbackSource,
-    googleAvatarUrl: user.google_avatar_url ?? null,
-    customAvatarUrl: user.custom_avatar_url ?? null,
-    uploadedAvatarUrl: null
+    await env.DB.prepare(
+      `UPDATE users
+       SET uploaded_avatar_version = 0, avatar_source = ?, avatar_url = ?,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`
+    )
+      .bind(fallbackSource, effectiveAvatarUrl, user.id)
+      .run();
+
+    const nextUser = await fetchUserRow(env, user.id);
+    return jsonResponse({ ok: true, user: nextUser }, 200, request);
   });
-
-  await env.DB.prepare(
-    `UPDATE users
-     SET uploaded_avatar_version = 0, avatar_source = ?, avatar_url = ?,
-         updated_at = CURRENT_TIMESTAMP
-     WHERE id = ?`
-  )
-    .bind(fallbackSource, effectiveAvatarUrl, user.id)
-    .run();
-
-  const nextUser = await fetchUserRow(env, user.id);
-  return jsonResponse({ ok: true, user: nextUser }, 200, request);
 }
 
 export async function getUserAvatarImageResponse(env, userId) {
@@ -270,8 +282,8 @@ export async function getUserAvatarImageResponse(env, userId) {
     return null;
   }
 
-  const imageKey = `user-avatar:${normalizedUserId}`;
-  const metaKey = `user-avatar-meta:${normalizedUserId}`;
+  const imageKey = uploadedAvatarImageKey(normalizedUserId);
+  const metaKey = uploadedAvatarMetaKey(normalizedUserId);
   const [bytes, metaRaw] = await Promise.all([
     env.STATIC_ASSETS.get(imageKey, 'arrayBuffer'),
     env.STATIC_ASSETS.get(metaKey)
@@ -302,40 +314,33 @@ export async function getUserAvatarImageResponse(env, userId) {
 }
 
 export async function handleUpdateThemeMode(request, env) {
-  const user = await getCurrentUser(request, env);
-  if (!user) {
-    return jsonResponse({ error: 'Not logged in' }, 401, request);
-  }
+  return withCurrentUser(request, env, async (user) => {
+    const body = await request.json().catch(() => null);
+    const mode = body?.theme_mode;
+    if (!VALID_THEME_MODES.includes(mode)) {
+      return jsonResponse({ error: 'Invalid theme mode' }, 400, request);
+    }
 
-  const body = await request.json().catch(() => null);
-  const mode = body?.theme_mode;
-  const validModes = ['light', 'dark', 'system'];
-  if (!validModes.includes(mode)) {
-    return jsonResponse({ error: 'Invalid theme mode' }, 400, request);
-  }
+    await env.DB.prepare('UPDATE users SET theme_mode = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+      .bind(mode, user.id)
+      .run();
 
-  await env.DB.prepare('UPDATE users SET theme_mode = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
-    .bind(mode, user.id)
-    .run();
-
-  return jsonResponse({ ok: true }, 200, request);
+    return jsonResponse({ ok: true }, 200, request);
+  });
 }
 
 export async function handleUpdateUiPreferences(request, env) {
-  const user = await getCurrentUser(request, env);
-  if (!user) {
-    return jsonResponse({ error: 'Not logged in' }, 401, request);
-  }
+  return withCurrentUser(request, env, async (user) => {
+    const body = await request.json().catch(() => null);
+    const scale = Number(body?.font_size_scale);
+    if (!Number.isFinite(scale) || scale < 0.8 || scale > 1.6) {
+      return jsonResponse({ error: 'font_size_scale must be between 0.8 and 1.6' }, 400, request);
+    }
 
-  const body = await request.json().catch(() => null);
-  const scale = Number(body?.font_size_scale);
-  if (!Number.isFinite(scale) || scale < 0.8 || scale > 1.6) {
-    return jsonResponse({ error: 'font_size_scale must be between 0.8 and 1.6' }, 400, request);
-  }
+    await env.DB.prepare('UPDATE users SET font_size_scale = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+      .bind(scale, user.id)
+      .run();
 
-  await env.DB.prepare('UPDATE users SET font_size_scale = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
-    .bind(scale, user.id)
-    .run();
-
-  return jsonResponse({ ok: true }, 200, request);
+    return jsonResponse({ ok: true }, 200, request);
+  });
 }
