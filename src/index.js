@@ -9,7 +9,7 @@ import {
   removeFriend,
   respondToFriendRequest,
   respondToRoomInvite,
-  searchUserById,
+  searchUsersByName,
   sendFriendRequest,
   sendRoomInvite,
   unblockUser
@@ -393,8 +393,12 @@ async function handleFriendSearch(request, env, url) {
       return jsonResponse({ error: 'Not logged in' }, 401, request);
     }
 
-    const result = await searchUserById(user.id, url.searchParams.get('id'), env);
-    return jsonResponse({ ok: true, result }, 200, request);
+    const results = await searchUsersByName(
+      user.id,
+      url.searchParams.get('query'),
+      env
+    );
+    return jsonResponse({ ok: true, results }, 200, request);
   });
 }
 

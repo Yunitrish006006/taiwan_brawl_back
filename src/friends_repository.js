@@ -186,32 +186,38 @@ export async function getFriendsOverview(userId, env) {
   };
 }
 
-export async function searchUserById(currentUserId, rawTargetId, env) {
-  const targetUserId = Number(rawTargetId);
-  if (!Number.isInteger(targetUserId) || targetUserId <= 0) {
-    throw new Error('Player ID must be a positive integer');
+export async function searchUsersByName(currentUserId, rawQuery, env) {
+  const query = String(rawQuery ?? '').trim();
+  if (query.length < 1) {
+    throw new Error('Name query is required');
   }
 
-  const row = await env.DB.prepare(
+  const rows = await env.DB.prepare(
     `SELECT ${userSelectFields('u')}
      FROM users u
-     WHERE u.id = ?`
+     WHERE u.name IS NOT NULL
+       AND u.name != ''
+       AND lower(u.name) LIKE lower(?)
+     ORDER BY
+       CASE WHEN u.id = ? THEN 1 ELSE 0 END ASC,
+       is_online DESC,
+       u.name COLLATE NOCASE ASC,
+       u.id ASC
+     LIMIT 12`
   )
-    .bind(targetUserId)
-    .first();
+    .bind(`%${query}%`, currentUserId)
+    .all();
 
-  if (!row) {
-    return null;
-  }
-
-  return {
-    user: serializeUser(row),
-    relationshipStatus: await resolveRelationshipStatus(
-      currentUserId,
-      targetUserId,
-      env
-    ),
-  };
+  return Promise.all(
+    rows.results.map(async (row) => ({
+      user: serializeUser(row),
+      relationshipStatus: await resolveRelationshipStatus(
+        currentUserId,
+        Number(row.user_id ?? row.id),
+        env
+      ),
+    }))
+  );
 }
 
 export async function sendFriendRequest(currentUserId, rawTargetUserId, env) {
