@@ -241,13 +241,6 @@ async function handleCreateRoom(request, env) {
   }
   const vsBot = Boolean(body?.vsBot);
   const simulationMode = normalizeSimulationMode(body?.simulationMode);
-  if (simulationMode === 'host' && !vsBot) {
-    return jsonResponse(
-      { error: 'Host simulation is currently available for bot matches only' },
-      400,
-      request
-    );
-  }
 
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const code = randomRoomCode();

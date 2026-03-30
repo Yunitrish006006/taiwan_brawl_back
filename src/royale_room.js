@@ -268,12 +268,15 @@ export class RoyaleRoom {
     }
 
     const viewer = this.findPlayerByUserId(userId);
+    const simulationMode = normalizeSimulationMode(this.room.simulationMode);
+    const includeHostDecks = simulationMode === 'host' && viewer?.side === 'left';
     const battlePlayer = viewer && this.room.battle ? this.room.battle.players[viewer.side] : null;
 
     return {
       code: this.room.code,
       status: this.room.status,
-      simulationMode: normalizeSimulationMode(this.room.simulationMode),
+      simulationMode,
+      hostUserId: Number(this.room.hostUserId || this.room.players.left?.userId || 0),
       viewerSide: viewer?.side ?? null,
       players: Object.values(this.room.players).map((player) => {
         const battleState = this.room.battle?.players[player.side];
@@ -283,6 +286,10 @@ export class RoyaleRoom {
           side: player.side,
           deckId: player.deckId,
           deckName: player.deckName,
+          deckCards: includeHostDecks ? player.deckCards : undefined,
+          elixir: includeHostDecks ? Number((battleState?.elixir ?? 5).toFixed(1)) : undefined,
+          handCardIds: includeHostDecks ? battleState?.hand ?? player.deckCardIds.slice(0, 4) : undefined,
+          queueCardIds: includeHostDecks ? battleState?.queue ?? player.deckCardIds.slice(4) : undefined,
           isBot: Boolean(player.isBot),
           ready: player.ready,
           connected: player.connected,
@@ -354,6 +361,7 @@ export class RoyaleRoom {
       code: payload.code,
       status: 'lobby',
       simulationMode: normalizeSimulationMode(payload.simulationMode),
+      hostUserId: Number(payload.user.id),
       createdAt: new Date().toISOString(),
       players: {
         left: createPlayer('left', payload)
@@ -560,6 +568,16 @@ export class RoyaleRoom {
     }
 
     if (payload?.type === 'play_card') {
+      if (normalizeSimulationMode(this.room?.simulationMode) === 'host') {
+        await this.forwardHostCommand(userId, {
+          type: 'play_combo',
+          cardIds: [payload.cardId],
+          lanePosition: payload.lanePosition,
+          dropX: payload.dropX,
+          dropY: payload.dropY
+        });
+        return;
+      }
       await this.handlePlayCombo(userId, {
         cardIds: [payload.cardId],
         lanePosition: payload.lanePosition,
@@ -570,8 +588,148 @@ export class RoyaleRoom {
     }
 
     if (payload?.type === 'play_combo') {
+      if (normalizeSimulationMode(this.room?.simulationMode) === 'host') {
+        await this.forwardHostCommand(userId, payload);
+        return;
+      }
       await this.handlePlayCombo(userId, payload);
+      return;
     }
+
+    if (payload?.type === 'host_state') {
+      await this.handleHostState(userId, payload.state);
+    }
+  }
+
+  hostSocket() {
+    const hostUserId = Number(this.room?.hostUserId || this.room?.players?.left?.userId || 0);
+    if (!hostUserId) {
+      return null;
+    }
+    return this.sockets.get(String(hostUserId)) ?? null;
+  }
+
+  async forwardHostCommand(userId, payload) {
+    if (!this.room?.battle || this.room.status !== 'battle') {
+      return;
+    }
+    if (normalizeSimulationMode(this.room.simulationMode) !== 'host') {
+      await this.handlePlayCombo(userId, payload);
+      return;
+    }
+
+    const player = this.findPlayerByUserId(userId);
+    if (!player) {
+      return;
+    }
+
+    const hostUserId = Number(this.room.hostUserId || this.room.players.left?.userId || 0);
+    if (userId === hostUserId) {
+      return;
+    }
+
+    const hostSocket = this.hostSocket();
+    if (!hostSocket) {
+      this.sendError(userId, 'Host is offline');
+      return;
+    }
+
+    hostSocket.send(
+      JSON.stringify({
+        type: 'host_command',
+        command: {
+          type: 'play_combo',
+          side: player.side,
+          cardIds: Array.isArray(payload?.cardIds)
+            ? payload.cardIds.map(String)
+            : [String(payload?.cardId || '')].filter(Boolean),
+          dropX: Number(payload?.dropX),
+          dropY: Number(payload?.dropY),
+          lanePosition: Number(payload?.lanePosition)
+        }
+      })
+    );
+  }
+
+  async handleHostState(userId, state) {
+    if (!this.room || !this.room.battle || this.room.status !== 'battle') {
+      return;
+    }
+    if (normalizeSimulationMode(this.room.simulationMode) !== 'host') {
+      return;
+    }
+
+    const hostUserId = Number(this.room.hostUserId || this.room.players.left?.userId || 0);
+    if (Number(userId) !== hostUserId) {
+      this.sendError(userId, 'Only the host can submit host state');
+      return;
+    }
+
+    if (!state || typeof state !== 'object' || !state.players || !state.units) {
+      this.sendError(userId, 'Invalid host state');
+      return;
+    }
+
+    this.room.battle = clone({
+      timeRemainingMs: Math.max(0, Number(state.timeRemainingMs || 0)),
+      startedAt: this.room.battle.startedAt || new Date().toISOString(),
+      nextUnitId: Number(state.nextUnitId || this.room.battle.nextUnitId || 1),
+      result: state.result ?? null,
+      players: {
+        left: {
+          elixir: Number(state.players.left?.elixir || 0),
+          hand: Array.isArray(state.players.left?.hand)
+            ? state.players.left.hand.map(String)
+            : [],
+          queue: Array.isArray(state.players.left?.queue)
+            ? state.players.left.queue.map(String)
+            : [],
+          botThinkMs: Number(state.players.left?.botThinkMs || 0),
+          towerHp: clamp(Number(state.players.left?.towerHp || TOWER_HP), 0, TOWER_HP),
+          maxTowerHp: Number(state.players.left?.maxTowerHp || TOWER_HP)
+        },
+        right: {
+          elixir: Number(state.players.right?.elixir || 0),
+          hand: Array.isArray(state.players.right?.hand)
+            ? state.players.right.hand.map(String)
+            : [],
+          queue: Array.isArray(state.players.right?.queue)
+            ? state.players.right.queue.map(String)
+            : [],
+          botThinkMs: Number(state.players.right?.botThinkMs || 0),
+          towerHp: clamp(Number(state.players.right?.towerHp || TOWER_HP), 0, TOWER_HP),
+          maxTowerHp: Number(state.players.right?.maxTowerHp || TOWER_HP)
+        }
+      },
+      units: Array.isArray(state.units)
+        ? state.units.map((unit) => ({
+            id: String(unit.id),
+            cardId: String(unit.cardId),
+            name: String(unit.name || ''),
+            nameZhHant: String(unit.nameZhHant || unit.name || ''),
+            nameEn: String(unit.nameEn || unit.name || ''),
+            nameJa: String(unit.nameJa || unit.name || ''),
+            imageUrl: unit.imageUrl || null,
+            type: String(unit.type || 'melee'),
+            side: unit.side === 'right' ? 'right' : 'left',
+            progress: Number(unit.progress || 0),
+            lateralPosition: Number(unit.lateralPosition || WORLD_SCALE / 2),
+            hp: Number(unit.hp || 0),
+            maxHp: Number(unit.maxHp || 0),
+            damage: Number(unit.damage || 0),
+            attackRange: Number(unit.attackRange || 0),
+            bodyRadius: Number(unit.bodyRadius || bodyRadiusForUnitType(unit.type)),
+            moveSpeed: Number(unit.moveSpeed || 0),
+            attackSpeed: Number(unit.attackSpeed || 1),
+            targetRule: String(unit.targetRule || 'ground'),
+            cooldown: Number(unit.cooldown || 0),
+            effects: Array.isArray(unit.effects) ? unit.effects.map(String) : []
+          }))
+        : []
+    });
+
+    await this.persist(false);
+    await this.broadcast('state_snapshot');
   }
 
   handleSocketClose(userId) {
