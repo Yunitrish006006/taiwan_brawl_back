@@ -69,6 +69,7 @@ function localizedName(nameI18n, locale, fallbackName = '') {
 function serializeCard(row) {
   const nameI18n = parseNameI18n(row.name_i18n);
   const fallbackName = String(row.name ?? '').trim();
+  const imageVersion = Number(row.image_version || 0);
   return {
     id: row.id,
     name: firstAvailableName(nameI18n, fallbackName),
@@ -113,7 +114,9 @@ function serializeCard(row) {
     spellDamage: Number(row.spell_damage),
     targetRule: row.target_rule,
     effectKind: row.effect_kind || 'none',
-    effectValue: Number(row.effect_value || 0)
+    effectValue: Number(row.effect_value || 0),
+    imageVersion,
+    imageUrl: imageVersion > 0 ? `/card-images/${encodeURIComponent(row.id)}?v=${imageVersion}` : null
   };
 }
 
@@ -236,7 +239,7 @@ export async function listCards(env) {
     `SELECT id, name, elixir_cost, type, hp, damage, attack_range, move_speed,
             attack_speed, spawn_count, spell_radius, spell_damage, target_rule,
             effect_kind, effect_value, body_radius, name_zh_hant, name_en, name_ja,
-            name_i18n
+            name_i18n, image_version
      FROM cards
      ORDER BY elixir_cost ASC, name ASC`
   ).all();
@@ -303,7 +306,7 @@ export async function upsertCard(env, payload) {
     `SELECT id, name, elixir_cost, type, hp, damage, attack_range, move_speed,
             attack_speed, spawn_count, spell_radius, spell_damage, target_rule,
             effect_kind, effect_value, body_radius, name_zh_hant, name_en, name_ja,
-            name_i18n
+            name_i18n, image_version
      FROM cards
      WHERE id = ?`
   )
@@ -332,6 +335,154 @@ export async function deleteCard(env, cardId) {
   await env.DB.prepare('DELETE FROM cards WHERE id = ?')
     .bind(normalizedCardId)
     .run();
+
+  await env.STATIC_ASSETS?.delete?.(`card-image:${normalizedCardId}`);
+  await env.STATIC_ASSETS?.delete?.(`card-image-meta:${normalizedCardId}`);
+}
+
+function decodeBase64(value) {
+  const normalized = String(value ?? '').trim();
+  if (!normalized) {
+    return null;
+  }
+
+  const binary = atob(normalized);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes;
+}
+
+function allowedImageContentType(contentType) {
+  const normalized = String(contentType ?? '').trim().toLowerCase();
+  return [
+    'image/png',
+    'image/jpeg',
+    'image/webp',
+    'image/gif'
+  ].includes(normalized)
+    ? normalized
+    : null;
+}
+
+export async function uploadCardImage(env, cardId, payload) {
+  const normalizedCardId = String(cardId ?? '').trim();
+  if (!normalizedCardId) {
+    throw new Error('Card id is required');
+  }
+
+  const existing = await env.DB.prepare('SELECT id FROM cards WHERE id = ?')
+    .bind(normalizedCardId)
+    .first();
+  if (!existing) {
+    throw new Error('Card not found');
+  }
+
+  const contentType = allowedImageContentType(payload?.contentType);
+  if (!contentType) {
+    throw new Error('Only PNG, JPEG, WEBP, and GIF images are supported');
+  }
+
+  const bytes = decodeBase64(payload?.bytesBase64);
+  if (!bytes || !bytes.length) {
+    throw new Error('Image data is required');
+  }
+  if (bytes.length > 1024 * 1024) {
+    throw new Error('Image must be 1 MB or smaller');
+  }
+
+  const imageKey = `card-image:${normalizedCardId}`;
+  const metaKey = `card-image-meta:${normalizedCardId}`;
+  await env.STATIC_ASSETS.put(imageKey, bytes);
+  await env.STATIC_ASSETS.put(
+    metaKey,
+    JSON.stringify({
+      contentType,
+      uploadedAt: new Date().toISOString()
+    })
+  );
+
+  const imageVersion = Date.now();
+  await env.DB.prepare('UPDATE cards SET image_version = ? WHERE id = ?')
+    .bind(imageVersion, normalizedCardId)
+    .run();
+
+  const row = await env.DB.prepare(
+    `SELECT id, name, elixir_cost, type, hp, damage, attack_range, move_speed,
+            attack_speed, spawn_count, spell_radius, spell_damage, target_rule,
+            effect_kind, effect_value, body_radius, name_zh_hant, name_en, name_ja,
+            name_i18n, image_version
+     FROM cards
+     WHERE id = ?`
+  )
+    .bind(normalizedCardId)
+    .first();
+
+  return serializeCard(row);
+}
+
+export async function removeCardImage(env, cardId) {
+  const normalizedCardId = String(cardId ?? '').trim();
+  if (!normalizedCardId) {
+    throw new Error('Card id is required');
+  }
+
+  await env.STATIC_ASSETS?.delete?.(`card-image:${normalizedCardId}`);
+  await env.STATIC_ASSETS?.delete?.(`card-image-meta:${normalizedCardId}`);
+  await env.DB.prepare('UPDATE cards SET image_version = 0 WHERE id = ?')
+    .bind(normalizedCardId)
+    .run();
+
+  const row = await env.DB.prepare(
+    `SELECT id, name, elixir_cost, type, hp, damage, attack_range, move_speed,
+            attack_speed, spawn_count, spell_radius, spell_damage, target_rule,
+            effect_kind, effect_value, body_radius, name_zh_hant, name_en, name_ja,
+            name_i18n, image_version
+     FROM cards
+     WHERE id = ?`
+  )
+    .bind(normalizedCardId)
+    .first();
+
+  return row ? serializeCard(row) : null;
+}
+
+export async function getCardImageResponse(env, cardId) {
+  const normalizedCardId = String(cardId ?? '').trim();
+  if (!normalizedCardId) {
+    return null;
+  }
+
+  const imageKey = `card-image:${normalizedCardId}`;
+  const metaKey = `card-image-meta:${normalizedCardId}`;
+  const [bytes, metaRaw] = await Promise.all([
+    env.STATIC_ASSETS.get(imageKey, 'arrayBuffer'),
+    env.STATIC_ASSETS.get(metaKey)
+  ]);
+  if (!bytes) {
+    return null;
+  }
+
+  let contentType = 'application/octet-stream';
+  if (metaRaw) {
+    try {
+      const meta = JSON.parse(metaRaw);
+      if (typeof meta?.contentType === 'string' && meta.contentType) {
+        contentType = meta.contentType;
+      }
+    } catch (_) {
+      // ignore invalid metadata and serve with fallback content type
+    }
+  }
+
+  return new Response(bytes, {
+    status: 200,
+    headers: {
+      'Content-Type': contentType,
+      'Cache-Control': 'public, max-age=31536000, immutable'
+    }
+  });
 }
 
 export async function getCardMap(env) {

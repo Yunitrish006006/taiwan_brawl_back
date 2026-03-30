@@ -16,10 +16,13 @@ import {
 } from './friends_repository.js';
 import {
   deleteCard,
+  getCardImageResponse,
   getDeckForUser,
   listCards,
   listDecksForUser,
+  removeCardImage,
   saveDeckForUser,
+  uploadCardImage,
   upsertCard
 } from './royale_repository.js';
 import { RoyaleRoom } from './royale_room.js';
@@ -155,6 +158,31 @@ async function handleDeleteManagedCard(request, env, cardId) {
 
     await deleteCard(env, cardId);
     return jsonResponse({ ok: true }, 200, request);
+  });
+}
+
+async function handleUploadManagedCardImage(request, env, cardId) {
+  return withBadRequest(request, async () => {
+    const { error } = await requireCardManagerUser(request, env);
+    if (error) {
+      return error;
+    }
+
+    const body = await request.json().catch(() => null);
+    const card = await uploadCardImage(env, cardId, body);
+    return jsonResponse({ ok: true, card }, 200, request);
+  });
+}
+
+async function handleDeleteManagedCardImage(request, env, cardId) {
+  return withBadRequest(request, async () => {
+    const { error } = await requireCardManagerUser(request, env);
+    if (error) {
+      return error;
+    }
+
+    const card = await removeCardImage(env, cardId);
+    return jsonResponse({ ok: true, card }, 200, request);
   });
 }
 
@@ -557,6 +585,22 @@ function matchManagedCardRoute(pathname) {
   return match[1];
 }
 
+function matchManagedCardImageRoute(pathname) {
+  const match = pathname.match(/^\/api\/admin\/cards\/([a-zA-Z0-9_]+)\/image$/);
+  if (!match) {
+    return null;
+  }
+  return match[1];
+}
+
+function matchCardImagePath(pathname) {
+  const match = pathname.match(/^\/card-images\/([a-zA-Z0-9_]+)$/);
+  if (!match) {
+    return null;
+  }
+  return match[1];
+}
+
 async function handleApiRequest(request, env, url) {
   if (request.method === 'GET' && url.pathname === '/api/health') {
     return handleHealth(request);
@@ -676,6 +720,14 @@ async function handleApiRequest(request, env, url) {
     return handleAdminUpdateUserRole(request, env, adminUserRoleTarget);
   }
 
+  const managedCardImageId = matchManagedCardImageRoute(url.pathname);
+  if (managedCardImageId && request.method === 'POST') {
+    return handleUploadManagedCardImage(request, env, managedCardImageId);
+  }
+  if (managedCardImageId && request.method === 'DELETE') {
+    return handleDeleteManagedCardImage(request, env, managedCardImageId);
+  }
+
   const managedCardId = matchManagedCardRoute(url.pathname);
   if (managedCardId && request.method === 'DELETE') {
     return handleDeleteManagedCard(request, env, managedCardId);
@@ -692,6 +744,15 @@ export default {
 
     if (request.method === 'OPTIONS') {
       return new Response(null, { status: 204, headers: corsHeaders(request) });
+    }
+
+    const cardImageId = matchCardImagePath(url.pathname);
+    if (cardImageId && request.method === 'GET') {
+      const response = await getCardImageResponse(env, cardImageId);
+      if (response) {
+        return response;
+      }
+      return jsonResponse({ error: 'Not Found' }, 404, request);
     }
 
     if (url.pathname.startsWith('/api/')) {
