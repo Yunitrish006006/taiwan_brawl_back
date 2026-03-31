@@ -5,10 +5,7 @@ import {
   ELIXIR_PER_SECOND,
   FIELD_ASPECT_RATIO,
   GLOBAL_ATTACK_SPEED_MULTIPLIER,
-  GLOBAL_MOVE_SPEED_MULTIPLIER,
   LEFT_TOWER_X,
-  MATCH_DURATION_MS,
-  MAX_COMBO_CARDS,
   MAX_ELIXIR,
   MAX_FIELD_PROGRESS,
   MIN_FIELD_PROGRESS,
@@ -30,6 +27,14 @@ import {
   sanitizeLateralPosition,
   sideDirection
 } from './royale_battle_rules.js';
+import {
+  applyEquipmentEffects,
+  buildBotPayload,
+  chooseBotCombo,
+  drawReplacementCards,
+  equipmentEffects,
+  resolveComboCards
+} from './royale_room_combat.js';
 import {
   buildBattleSnapshot,
   buildPlayerSnapshot,
@@ -562,78 +567,6 @@ export class RoyaleRoom {
     }
   }
 
-  buildBotPayload(side, battlePlayer, comboCards) {
-    const enemyUnits = this.room.battle.units.filter(
-      (unit) => unit.side !== side && unit.hp > 0
-    );
-    const averageEnemyLateral = enemyUnits.length
-      ? enemyUnits.reduce((sum, unit) => sum + unit.lateralPosition, 0) /
-        enemyUnits.length
-      : CENTER_LATERAL;
-    const progress = sanitizeLanePosition(
-      side,
-      side === 'left' ? 260 + Math.random() * 80 : 660 + Math.random() * 80
-    );
-    const lateralPosition = sanitizeLateralPosition(
-      averageEnemyLateral + (Math.random() - 0.5) * (140 / FIELD_ASPECT_RATIO)
-    );
-    const dropY = side === 'left' ? WORLD_SCALE - progress : progress;
-
-    return {
-      cardIds: comboCards.map((card) => card.id),
-      lanePosition: progress,
-      dropX: lateralPosition,
-      dropY
-    };
-  }
-
-  chooseBotCombo(player, battlePlayer) {
-    const handCards = battlePlayer.hand
-      .map((cardId) => player.deckCards.find((card) => card.id === cardId))
-      .filter(Boolean);
-    const affordable = handCards.filter(
-      (card) => Number(card.elixirCost || 0) <= battlePlayer.elixir + 1e-6
-    );
-    if (affordable.length === 0) {
-      return [];
-    }
-
-    const playableUnits = affordable.filter(
-      (card) => card.type !== 'equipment' && card.type !== 'spell'
-    );
-    const playableSpells = affordable.filter((card) => card.type === 'spell');
-    const playableEquipment = affordable.filter((card) => card.type === 'equipment');
-
-    let primaryCard = null;
-    if (playableUnits.length > 0) {
-      primaryCard = playableUnits[Math.floor(Math.random() * playableUnits.length)];
-    } else if (playableSpells.length > 0) {
-      primaryCard = playableSpells[Math.floor(Math.random() * playableSpells.length)];
-    }
-
-    if (!primaryCard) {
-      return [];
-    }
-
-    const comboCards = [primaryCard];
-    if (
-      primaryCard.type !== 'spell' &&
-      playableEquipment.length > 0 &&
-      Math.random() < 0.4
-    ) {
-      const candidate = playableEquipment.find(
-        (card) =>
-          Number(card.elixirCost || 0) + Number(primaryCard.elixirCost || 0) <=
-          battlePlayer.elixir + 1e-6
-      );
-      if (candidate) {
-        comboCards.push(candidate);
-      }
-    }
-
-    return comboCards;
-  }
-
   async runBotTurns() {
     for (const [side, player] of Object.entries(this.room.players)) {
       if (!player.isBot) {
@@ -646,13 +579,13 @@ export class RoyaleRoom {
         continue;
       }
 
-      const comboCards = this.chooseBotCombo(player, battlePlayer);
+      const comboCards = chooseBotCombo(player, battlePlayer);
       battlePlayer.botThinkMs = randomBotThinkMs();
       if (comboCards.length === 0) {
         continue;
       }
 
-      await this.handlePlayCombo(player.userId, this.buildBotPayload(side, battlePlayer, comboCards));
+      await this.handlePlayCombo(player.userId, buildBotPayload(this.room, side, comboCards));
     }
   }
 
@@ -673,91 +606,6 @@ export class RoyaleRoom {
     }
   }
 
-  getComboCards(player, battlePlayer, cardIds, userId) {
-    if (!Array.isArray(cardIds) || cardIds.length === 0) {
-      this.sendError(userId, 'Select at least one card');
-      return null;
-    }
-
-    if (cardIds.length > MAX_COMBO_CARDS) {
-      this.sendError(userId, `You can cast at most ${MAX_COMBO_CARDS} cards`);
-      return null;
-    }
-
-    const remainingHand = battlePlayer.hand.slice();
-    const comboCards = [];
-
-    for (const rawId of cardIds) {
-      const cardId = String(rawId);
-      const handIndex = remainingHand.findIndex((entry) => entry === cardId);
-      if (handIndex === -1) {
-        this.sendError(userId, 'One of the selected cards is not in hand');
-        return null;
-      }
-      remainingHand.splice(handIndex, 1);
-
-      const card = player.deckCards.find((entry) => entry.id === cardId);
-      if (!card) {
-        this.sendError(userId, 'Unknown card');
-        return null;
-      }
-      comboCards.push(card);
-    }
-
-    return comboCards;
-  }
-
-  drawReplacementCards(battlePlayer, cardIds) {
-    for (const cardId of cardIds) {
-      const handIndex = battlePlayer.hand.findIndex((entry) => entry === cardId);
-      if (handIndex === -1) {
-        continue;
-      }
-      battlePlayer.hand.splice(handIndex, 1);
-      battlePlayer.queue.push(cardId);
-    }
-
-    for (let index = 0; index < cardIds.length; index += 1) {
-      const nextCardId = battlePlayer.queue.shift();
-      if (nextCardId) {
-        battlePlayer.hand.push(nextCardId);
-      }
-    }
-  }
-
-  equipmentEffects(cards) {
-    return cards
-      .filter((card) => card.type === 'equipment')
-      .map((card) => ({
-        id: card.id,
-        name: card.name,
-        kind: card.effectKind,
-        value: Number(card.effectValue || 0)
-      }));
-  }
-
-  applyEquipmentEffects(card, effects) {
-    let hp = card.hp;
-    let damage = card.damage;
-    let moveSpeed = card.moveSpeed * GLOBAL_MOVE_SPEED_MULTIPLIER;
-
-    for (const effect of effects) {
-      if (effect.kind === 'damage_boost') {
-        damage += effect.value;
-      } else if (effect.kind === 'health_boost') {
-        hp += effect.value;
-      } else if (effect.kind === 'speed_boost') {
-        moveSpeed *= 1 + effect.value;
-      }
-    }
-
-    return {
-      hp: Math.round(hp),
-      damage: Math.round(damage),
-      moveSpeed: Number(moveSpeed.toFixed(4))
-    };
-  }
-
   async handlePlayCombo(userId, payload) {
     if (!this.room?.battle || this.room.status !== 'battle') {
       return;
@@ -772,7 +620,12 @@ export class RoyaleRoom {
     const cardIds = Array.isArray(payload?.cardIds)
       ? payload.cardIds.map(String)
       : [String(payload?.cardId || '')].filter((cardId) => cardId.length > 0);
-    const comboCards = this.getComboCards(player, battlePlayer, cardIds, userId);
+    const comboCards = resolveComboCards(
+      player,
+      battlePlayer,
+      cardIds,
+      (message) => this.sendError(userId, message)
+    );
     if (!comboCards) {
       return;
     }
@@ -796,20 +649,20 @@ export class RoyaleRoom {
     }
 
     const dropPoint = normalizeDropPoint(player.side, payload);
-    const equipmentEffects = this.equipmentEffects(comboCards);
+    const comboEquipmentEffects = equipmentEffects(comboCards);
 
     battlePlayer.elixir = clamp(
       battlePlayer.elixir - totalElixirCost,
       0,
       MAX_ELIXIR
     );
-    this.drawReplacementCards(battlePlayer, comboCards.map((card) => card.id));
+    drawReplacementCards(battlePlayer, comboCards.map((card) => card.id));
 
     for (const card of comboCards) {
       if (card.type === 'spell') {
         this.resolveSpell(player.side, card, dropPoint);
       } else if (card.type !== 'equipment') {
-        this.spawnUnits(player.side, card, dropPoint, equipmentEffects);
+        this.spawnUnits(player.side, card, dropPoint, comboEquipmentEffects);
       }
     }
 
@@ -820,7 +673,7 @@ export class RoyaleRoom {
         cardIds: comboCards.map((card) => card.id),
         progress: dropPoint.progress,
         lateralPosition: dropPoint.lateralPosition,
-        equipment: equipmentEffects.map((effect) => effect.name)
+        equipment: comboEquipmentEffects.map((effect) => effect.name)
       }
     });
 
@@ -864,7 +717,7 @@ export class RoyaleRoom {
   spawnUnits(side, card, dropPoint, equipmentEffects = []) {
     const count = Math.max(1, card.spawnCount);
     const spacing = count === 1 ? 0 : 30 / FIELD_ASPECT_RATIO;
-    const stats = this.applyEquipmentEffects(card, equipmentEffects);
+    const stats = applyEquipmentEffects(card, equipmentEffects);
     for (let index = 0; index < count; index += 1) {
       const offset = (index - (count - 1) / 2) * spacing;
       this.room.battle.units.push({

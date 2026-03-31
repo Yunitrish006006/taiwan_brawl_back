@@ -7,44 +7,14 @@ import {
 } from './royale_repository.js';
 import { matchRoomRoute } from './route_patterns.js';
 import { handleSendRoomInvite } from './friends_api.js';
+import { requireUser, withAuthenticatedUser } from './request_helpers.js';
 import {
-  requireUser,
-  withAuthenticatedUser
-} from './request_helpers.js';
+  getRoomStub,
+  proxyRoomAction,
+  proxyRoomJson,
+  randomRoomCode
+} from './royale_room_proxy.js';
 import { jsonResponse } from './utils.js';
-
-function randomRoomCode() {
-  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  return Array.from({ length: 6 }, () => {
-    const index = Math.floor(Math.random() * alphabet.length);
-    return alphabet[index];
-  }).join('');
-}
-
-function getRoomStub(env, code) {
-  return env.ROYALE_ROOM.get(env.ROYALE_ROOM.idFromName(code));
-}
-
-async function proxyRoomJson(stub, path, payload, request) {
-  const upstream = await stub.fetch(
-    new Request(`https://royale-room${path}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    })
-  );
-
-  const data = await upstream.json();
-  return jsonResponse(data, upstream.status, request);
-}
-
-async function proxyRoomAction(request, env, code, path, payloadBuilder) {
-  return withAuthenticatedUser(request, env, async (user) => {
-    const stub = getRoomStub(env, code);
-    const payload = await payloadBuilder(user);
-    return proxyRoomJson(stub, path, payload, request);
-  });
-}
 
 async function handleListCards(request, env) {
   const cards = await listCards(env);
