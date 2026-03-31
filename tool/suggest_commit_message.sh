@@ -8,7 +8,7 @@ RULES_FILE="${BACKEND_DIR}/conventional_commit_rules.sh"
 CC_MINOR_TYPES=(feat)
 CC_PATCH_TYPES=(fix perf refactor)
 CC_NONE_TYPES=(docs test build ci chore style revert)
-CC_SCOPE_RULES=("*|app|chore|update project files")
+CC_SCOPE_RULES=("*|app|chore|更新專案檔案")
 
 if [[ -f "${RULES_FILE}" ]]; then
   # shellcheck disable=SC1090
@@ -42,7 +42,7 @@ path_rule_match() {
     index=$((index + 1))
   done
 
-  printf '999|app|chore|update project files\n'
+  printf '999|app|chore|更新專案檔案\n'
 }
 
 type_to_bump() {
@@ -68,19 +68,19 @@ version_bump_rank() {
   esac
 }
 
-summary_case() {
+normalize_subject() {
   local text="$1"
-  printf '%s' "${text}" | awk '{print tolower(substr($0,1,1)) substr($0,2)}'
+  printf '%s' "${text}" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//'
 }
 
 usage() {
   cat <<'EOF'
-Usage:
+用法：
   bash tool/suggest_commit_message.sh [--repo PATH] [--summary "custom summary"] [--explain]
 
-Examples:
+範例：
   bash tool/suggest_commit_message.sh
-  bash tool/suggest_commit_message.sh --summary "split royale room runtime helpers"
+  bash tool/suggest_commit_message.sh --summary "重整 royale room runtime helpers"
   bash tool/suggest_commit_message.sh --repo ../taiwan_brawl_front
 EOF
 }
@@ -108,7 +108,7 @@ while [[ $# -gt 0 ]]; do
       exit 0
       ;;
     *)
-      echo "Unknown argument: $1" >&2
+      echo "未知參數：$1" >&2
       usage >&2
       exit 1
       ;;
@@ -117,7 +117,7 @@ done
 
 GIT_ROOT="$(git -C "${REPO_DIR}" rev-parse --show-toplevel 2>/dev/null || true)"
 if [[ -z "${GIT_ROOT}" ]]; then
-  echo "Not a git repository: ${REPO_DIR}" >&2
+  echo "不是 git repository：${REPO_DIR}" >&2
   exit 1
 fi
 
@@ -127,13 +127,13 @@ while IFS= read -r line; do
 done < <(git -C "${GIT_ROOT}" status --short --untracked-files=all)
 
 if (( ${#STATUS_LINES[@]} == 0 )); then
-  echo "No changes detected in ${GIT_ROOT}" >&2
+  echo "在 ${GIT_ROOT} 沒有偵測到變更" >&2
   exit 1
 fi
 
 BEST_TYPE="chore"
 BEST_SCOPE="app"
-BEST_SUMMARY="update project files"
+BEST_SUMMARY="更新專案檔案"
 BEST_BUMP="none"
 BEST_PATH=""
 BEST_RULE_INDEX=999
@@ -166,7 +166,7 @@ for line in "${STATUS_LINES[@]}"; do
 done
 
 if [[ -n "${CUSTOM_SUMMARY}" ]]; then
-  SUBJECT="$(summary_case "${CUSTOM_SUMMARY}")"
+  SUBJECT="$(normalize_subject "${CUSTOM_SUMMARY}")"
 else
   SUBJECT="${BEST_SUMMARY}"
 fi
