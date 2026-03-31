@@ -8,7 +8,9 @@
     "deploy": "wrangler deploy",
     "test": "node --test",
     "assets:generate": "node upload.js",
-    "kv:upload": "wrangler kv bulk put assets.json --binding=STATIC_ASSETS --remote"
+    "kv:upload": "wrangler kv bulk put assets.json --binding=STATIC_ASSETS --remote",
+    "commit:suggest": "bash tool/suggest_commit_message.sh",
+    "commit:suggest:front": "bash tool/suggest_commit_message.sh --repo ../taiwan_brawl_front"
   },
   "dependencies": {
     "@cloudflare/kv-asset-handler": "^0.4.0"

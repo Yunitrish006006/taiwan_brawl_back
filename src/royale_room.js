@@ -1,40 +1,32 @@
 import { recordMatchHistory } from './royale_repository.js';
 import {
-  CENTER_LATERAL,
   DISCONNECT_GRACE_MS,
-  ELIXIR_PER_SECOND,
-  FIELD_ASPECT_RATIO,
-  GLOBAL_ATTACK_SPEED_MULTIPLIER,
-  LEFT_TOWER_X,
   MAX_ELIXIR,
-  MAX_FIELD_PROGRESS,
-  MIN_FIELD_PROGRESS,
   PERSIST_INTERVAL_MS,
-  RIGHT_TOWER_X,
   TICK_MS,
-  TOWER_HP,
-  WORLD_SCALE,
-  bodyRadiusForUnitType,
   clamp,
-  displayAttackReach,
-  distanceBetweenPoints,
-  effectiveAttackReachToTower,
-  effectiveAttackReachToUnit,
   normalizeDropPoint,
   normalizeSimulationMode,
-  randomBotThinkMs,
-  sanitizeLanePosition,
-  sanitizeLateralPosition,
-  sideDirection
+  randomBotThinkMs
 } from './royale_battle_rules.js';
 import {
-  applyEquipmentEffects,
   buildBotPayload,
   chooseBotCombo,
   drawReplacementCards,
   equipmentEffects,
   resolveComboCards
 } from './royale_room_combat.js';
+import {
+  getEnemySide,
+  performUnitAttack,
+  replenishBattleElixir,
+  resolveSpellEffect,
+  selectUnitTarget,
+  spawnBattleUnits,
+  tickBattleUnits,
+  towerHitPoints,
+  winnerSideFromTowers
+} from './royale_room_runtime.js';
 import {
   buildBattleSnapshot,
   buildPlayerSnapshot,
@@ -681,142 +673,23 @@ export class RoyaleRoom {
   }
 
   resolveSpell(side, card, dropPoint) {
-    const enemySide = side === 'left' ? 'right' : 'left';
-    const enemyBattleState = this.room.battle.players[enemySide];
-
-    for (const unit of this.room.battle.units) {
-      if (unit.side === side) {
-        continue;
-      }
-      if (
-        distanceBetweenPoints(
-          unit.progress,
-          unit.lateralPosition,
-          dropPoint.progress,
-          dropPoint.lateralPosition
-        ) <= card.spellRadius
-      ) {
-        unit.hp -= card.spellDamage;
-      }
-    }
-
-    const towerProgress = enemySide === 'left' ? LEFT_TOWER_X : RIGHT_TOWER_X;
-    if (
-      distanceBetweenPoints(
-        towerProgress,
-        CENTER_LATERAL,
-        dropPoint.progress,
-        dropPoint.lateralPosition
-      ) <=
-      card.spellRadius + 50
-    ) {
-      enemyBattleState.towerHp = Math.max(0, enemyBattleState.towerHp - card.spellDamage);
-    }
+    resolveSpellEffect(this.room, side, card, dropPoint);
   }
 
   spawnUnits(side, card, dropPoint, equipmentEffects = []) {
-    const count = Math.max(1, card.spawnCount);
-    const spacing = count === 1 ? 0 : 30 / FIELD_ASPECT_RATIO;
-    const stats = applyEquipmentEffects(card, equipmentEffects);
-    for (let index = 0; index < count; index += 1) {
-      const offset = (index - (count - 1) / 2) * spacing;
-      this.room.battle.units.push({
-        id: `unit-${this.room.battle.nextUnitId++}`,
-        cardId: card.id,
-        name: card.name,
-        nameZhHant: card.nameZhHant || card.name,
-        nameEn: card.nameEn || card.name,
-        nameJa: card.nameJa || card.name,
-        imageUrl: card.imageUrl || null,
-        type: card.type,
-        side,
-        progress: dropPoint.progress,
-        lateralPosition: sanitizeLateralPosition(dropPoint.lateralPosition + offset),
-        hp: stats.hp,
-        maxHp: stats.hp,
-        damage: stats.damage,
-        attackRange: Number(card.attackRange || 0),
-        bodyRadius: Number(card.bodyRadius ?? bodyRadiusForUnitType(card.type)),
-        moveSpeed: stats.moveSpeed,
-        attackSpeed: (card.attackSpeed || 1) * GLOBAL_ATTACK_SPEED_MULTIPLIER,
-        targetRule: card.targetRule,
-        cooldown: 0,
-        effects: equipmentEffects.map((effect) => effect.name)
-      });
-    }
+    spawnBattleUnits(this.room, side, card, dropPoint, equipmentEffects);
   }
 
   getEnemySide(side) {
-    return side === 'left' ? 'right' : 'left';
+    return getEnemySide(side);
   }
 
   selectTarget(unit) {
-    const direction = sideDirection(unit.side);
-    const enemySide = this.getEnemySide(unit.side);
-    const towerProgress = enemySide === 'left' ? LEFT_TOWER_X : RIGHT_TOWER_X;
-    const towerForwardDistance = (towerProgress - unit.progress) * direction;
-    const towerDistance = distanceBetweenPoints(
-      unit.progress,
-      unit.lateralPosition,
-      towerProgress,
-      CENTER_LATERAL
-    );
-    const towerReach = effectiveAttackReachToTower(unit);
-
-    if (unit.targetRule === 'tower') {
-      if (towerForwardDistance >= 0 && towerDistance <= towerReach) {
-        return {
-          kind: 'tower',
-          target: enemySide,
-          distance: towerDistance
-        };
-      }
-      return null;
-    }
-
-    const enemyUnits = this.room.battle.units
-      .filter((entry) => entry.side !== unit.side && entry.hp > 0)
-      .map((entry) => ({
-        kind: 'unit',
-        target: entry,
-        forwardDistance: (entry.progress - unit.progress) * direction,
-        distance: distanceBetweenPoints(
-          unit.progress,
-          unit.lateralPosition,
-          entry.progress,
-          entry.lateralPosition
-        )
-      }))
-      .filter((entry) => entry.forwardDistance >= -20);
-
-    enemyUnits.sort((a, b) => a.distance - b.distance);
-    const enemyUnit = enemyUnits[0];
-    if (
-      enemyUnit &&
-      enemyUnit.distance <= effectiveAttackReachToUnit(unit, enemyUnit.target)
-    ) {
-      return enemyUnit;
-    }
-
-    if (towerForwardDistance >= 0 && towerDistance <= towerReach) {
-      return {
-        kind: 'tower',
-        target: enemySide,
-        distance: towerDistance
-      };
-    }
-
-    return enemyUnit && enemyUnit.forwardDistance < 120 ? enemyUnit : null;
+    return selectUnitTarget(this.room, unit);
   }
 
   performAttack(unit, target) {
-    if (target.kind === 'unit') {
-      target.target.hp -= unit.damage;
-      return;
-    }
-
-    const enemyBattleState = this.room.battle.players[target.target];
-    enemyBattleState.towerHp = Math.max(0, enemyBattleState.towerHp - unit.damage);
+    performUnitAttack(this.room, unit, target);
   }
 
   async tick() {
@@ -828,65 +701,17 @@ export class RoyaleRoom {
     const dt = TICK_MS / 1000;
     this.room.battle.timeRemainingMs -= TICK_MS;
 
-    for (const side of Object.keys(this.room.battle.players)) {
-      const battlePlayer = this.room.battle.players[side];
-      battlePlayer.elixir = clamp(
-        battlePlayer.elixir + ELIXIR_PER_SECOND * dt,
-        0,
-        MAX_ELIXIR
-      );
-    }
+    replenishBattleElixir(this.room, dt);
 
     await this.runBotTurns();
-
-    for (const unit of this.room.battle.units) {
-      if (unit.hp <= 0) {
-        continue;
-      }
-
-      unit.cooldown = Math.max(0, unit.cooldown - dt);
-      const target = this.selectTarget(unit);
-      const attackReach =
-        !target
-          ? 0
-          : target.kind === 'unit'
-            ? effectiveAttackReachToUnit(unit, target.target)
-            : effectiveAttackReachToTower(unit);
-      if (target && target.distance <= attackReach) {
-        if (unit.cooldown <= 0) {
-          this.performAttack(unit, target);
-          unit.cooldown = unit.attackSpeed;
-        }
-      } else {
-        unit.progress = clamp(
-          unit.progress + sideDirection(unit.side) * unit.moveSpeed * dt,
-          MIN_FIELD_PROGRESS,
-          MAX_FIELD_PROGRESS
-        );
-        const desiredLateral =
-          target?.kind === 'unit' ? target.target.lateralPosition : CENTER_LATERAL;
-        const lateralDelta = desiredLateral - unit.lateralPosition;
-        const lateralStep =
-          (unit.moveSpeed * 0.45 * dt) / FIELD_ASPECT_RATIO;
-        unit.lateralPosition = sanitizeLateralPosition(
-          unit.lateralPosition + clamp(lateralDelta, -lateralStep, lateralStep)
-        );
-      }
-    }
-
-    this.room.battle.units = this.room.battle.units.filter((unit) => unit.hp > 0);
-
-    const leftTowerHp = this.room.battle.players.left?.towerHp ?? TOWER_HP;
-    const rightTowerHp = this.room.battle.players.right?.towerHp ?? TOWER_HP;
+    tickBattleUnits(this.room, dt);
+    const { leftTowerHp, rightTowerHp } = towerHitPoints(this.room);
 
     if (leftTowerHp <= 0 || rightTowerHp <= 0) {
-      const winnerSide =
-        leftTowerHp <= 0 && rightTowerHp <= 0
-          ? null
-          : leftTowerHp <= 0
-            ? 'right'
-            : 'left';
-      await this.finishMatch(winnerSide, 'tower_destroyed');
+      await this.finishMatch(
+        winnerSideFromTowers(leftTowerHp, rightTowerHp),
+        'tower_destroyed'
+      );
       return;
     }
 
@@ -901,11 +726,10 @@ export class RoyaleRoom {
     }
 
     if (this.room.battle.timeRemainingMs <= 0) {
-      let winnerSide = null;
-      if (leftTowerHp !== rightTowerHp) {
-        winnerSide = leftTowerHp > rightTowerHp ? 'left' : 'right';
-      }
-      await this.finishMatch(winnerSide, 'time_up');
+      await this.finishMatch(
+        winnerSideFromTowers(leftTowerHp, rightTowerHp),
+        'time_up'
+      );
       return;
     }
 

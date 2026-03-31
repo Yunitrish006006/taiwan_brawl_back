@@ -18,6 +18,7 @@ import {
 } from './route_patterns.js';
 import {
   requireUser,
+  readJsonBody,
   withAuthenticatedBadRequest
 } from './request_helpers.js';
 import { jsonResponse } from './utils.js';
@@ -45,7 +46,7 @@ async function handleFriendSearch(request, env, url) {
 
 async function handleSendFriendRequest(request, env) {
   return withAuthenticatedBadRequest(request, env, async (user) => {
-    const body = await request.json().catch(() => null);
+    const body = await readJsonBody(request);
     const result = await sendFriendRequest(user.id, body?.targetUserId, env);
     return jsonResponse({ ok: true, ...result }, 200, request);
   });
@@ -72,7 +73,7 @@ async function handleRemoveFriend(request, env, targetUserId) {
 
 async function handleBlockUser(request, env) {
   return withAuthenticatedBadRequest(request, env, async (user) => {
-    const body = await request.json().catch(() => null);
+    const body = await readJsonBody(request);
     const result = await blockUser(user.id, body?.targetUserId, env);
     return jsonResponse(result, 200, request);
   });
@@ -87,7 +88,7 @@ async function handleUnblockUser(request, env, targetUserId) {
 
 export async function handleSendRoomInvite(request, env, roomCode) {
   return withAuthenticatedBadRequest(request, env, async (user) => {
-    const body = await request.json().catch(() => null);
+    const body = await readJsonBody(request);
     const result = await sendRoomInvite(
       user.id,
       body?.inviteeUserId,

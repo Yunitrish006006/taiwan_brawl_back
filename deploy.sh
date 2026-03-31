@@ -3,11 +3,273 @@ set -euo pipefail
 
 # Optional overrides:
 # export VERSION="0.1.0"
-# export BUILD_NUMBER="1"
+# export WRANGLER_VERSION="4.78.0"
+# export VERSION_BUMP="auto" # auto|major|minor|patch|none
 
-WRANGLER_VERSION="4.78.0"
+WRANGLER_VERSION="${WRANGLER_VERSION:-latest}"
+VERSION_BUMP="${VERSION_BUMP:-auto}"
+CC_MINOR_TYPES=(feat)
+CC_PATCH_TYPES=(fix perf refactor)
+CC_NONE_TYPES=(docs test build ci chore style revert)
+CC_VERSION_IGNORED_PATHS=(assets.json pubspec.lock package-lock.json lib/constants/generated/locale_catalog.g.dart)
+CC_VERSION_MINOR_PATHS=(migrations/* src/royale_room*.js src/royale_battle_rules.js src/rooms_api.js lib/pages/game/* lib/models/* lib/services/royale_* web/*)
+CC_VERSION_PATCH_PATHS=(deploy.sh wrangler.jsonc upload.js tool/* tests/* assets/i18n/* lib/constants/* lib/services/* lib/pages/* src/* pubspec.yaml package.json)
+
+version_bump_rank() {
+  case "$1" in
+    none) echo 0 ;;
+    patch) echo 1 ;;
+    minor) echo 2 ;;
+    major) echo 3 ;;
+    *) echo 0 ;;
+  esac
+}
+
+max_version_bump() {
+  local left_rank right_rank
+  left_rank="$(version_bump_rank "$1")"
+  right_rank="$(version_bump_rank "$2")"
+  if (( right_rank > left_rank )); then
+    printf '%s\n' "$2"
+  else
+    printf '%s\n' "$1"
+  fi
+}
+
+normalize_version_bump() {
+  case "$1" in
+    auto|major|minor|patch|none) printf '%s\n' "$1" ;;
+    *) printf 'auto\n' ;;
+  esac
+}
+
+array_contains() {
+  local needle="$1"
+  shift
+  local item
+  for item in "$@"; do
+    if [[ "${item}" == "${needle}" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+path_matches_patterns() {
+  local path="$1"
+  shift
+  local pattern
+  for pattern in "$@"; do
+    case "${path}" in
+      ${pattern}) return 0 ;;
+    esac
+  done
+  return 1
+}
+
+commit_message_version_bump() {
+  local subject="$1"
+  local body="$2"
+  local type breaking=""
+  local conventional_regex='^([A-Za-z]+)(\([^)]+\))?(!)?:[[:space:]]'
+
+  if [[ "${subject}" =~ ${conventional_regex} ]]; then
+    type="${BASH_REMATCH[1],,}"
+    breaking="${BASH_REMATCH[3]:-}"
+  else
+    printf 'none\n'
+    return 0
+  fi
+
+  if [[ -n "${breaking}" || "${body}" == *"BREAKING CHANGE:"* || "${body}" == *"BREAKING-CHANGE:"* ]]; then
+    printf 'major\n'
+    return 0
+  fi
+
+  if array_contains "${type}" "${CC_MINOR_TYPES[@]}"; then
+    printf 'minor\n'
+  elif array_contains "${type}" "${CC_PATCH_TYPES[@]}"; then
+    printf 'patch\n'
+  elif array_contains "${type}" "${CC_NONE_TYPES[@]}"; then
+    printf 'none\n'
+  else
+    printf 'none\n'
+  fi
+}
+
+bump_semver() {
+  local version="$1"
+  local bump="$2"
+  local major minor patch
+  IFS='.' read -r major minor patch <<< "${version}"
+  major="${major:-0}"
+  minor="${minor:-0}"
+  patch="${patch:-0}"
+
+  case "${bump}" in
+    major)
+      major=$((major + 1))
+      minor=0
+      patch=0
+      ;;
+    minor)
+      minor=$((minor + 1))
+      patch=0
+      ;;
+    patch)
+      patch=$((patch + 1))
+      ;;
+  esac
+
+  printf '%s.%s.%s\n' "${major}" "${minor}" "${patch}"
+}
+
+resolve_git_root() {
+  local directory="$1"
+  git -C "${directory}" rev-parse --show-toplevel 2>/dev/null || true
+}
+
+resolve_version_anchor_epoch() {
+  local git_root
+  git_root="$(resolve_git_root "${FRONTEND_DIR}")"
+  if [[ -z "${git_root}" ]]; then
+    return 0
+  fi
+
+  git -C "${git_root}" log -n1 --format=%ct -- pubspec.yaml 2>/dev/null || true
+}
+
+is_ignored_version_path() {
+  path_matches_patterns "$1" "${CC_VERSION_IGNORED_PATHS[@]}"
+}
+
+is_minor_change_path() {
+  path_matches_patterns "$1" "${CC_VERSION_MINOR_PATHS[@]}"
+}
+
+is_patch_change_path() {
+  path_matches_patterns "$1" "${CC_VERSION_PATCH_PATHS[@]}"
+}
+
+detect_repo_version_bump() {
+  local repo_dir="$1"
+  local git_root
+  git_root="$(resolve_git_root "${repo_dir}")"
+  if [[ -z "${git_root}" ]]; then
+    return 0
+  fi
+
+  local line status path trimmed_path detected_bump="none"
+  while IFS= read -r line; do
+    [[ -z "${line}" ]] && continue
+    status="${line:0:2}"
+    path="${line:3}"
+    trimmed_path="${path##* -> }"
+
+    if is_ignored_version_path "${trimmed_path}"; then
+      continue
+    fi
+
+    if is_minor_change_path "${trimmed_path}"; then
+      detected_bump="$(max_version_bump "${detected_bump}" "minor")"
+      continue
+    fi
+
+    if [[ "${status}" == *"A"* || "${status}" == *"D"* ]]; then
+      detected_bump="$(max_version_bump "${detected_bump}" "minor")"
+      continue
+    fi
+
+    if is_patch_change_path "${trimmed_path}"; then
+      detected_bump="$(max_version_bump "${detected_bump}" "patch")"
+    fi
+  done < <(git -C "${git_root}" status --short --untracked-files=all)
+
+  printf '%s\n' "${detected_bump}"
+}
+
+detect_repo_commit_version_bump() {
+  local repo_dir="$1"
+  local since_epoch="$2"
+  local git_root
+  git_root="$(resolve_git_root "${repo_dir}")"
+  if [[ -z "${git_root}" || -z "${since_epoch}" ]]; then
+    printf 'none\n'
+    return 0
+  fi
+
+  local detected_bump="none"
+  local record subject body commit_bump
+  while IFS= read -r -d $'\x1e' record; do
+    [[ -z "${record}" ]] && continue
+    subject="${record%%$'\x1f'*}"
+    body="${record#*$'\x1f'}"
+    if [[ "${body}" == "${record}" ]]; then
+      body=""
+    fi
+    commit_bump="$(commit_message_version_bump "${subject}" "${body}")"
+    detected_bump="$(max_version_bump "${detected_bump}" "${commit_bump}")"
+  done < <(git -C "${git_root}" log --format='%s%x1f%b%x1e' --since="@${since_epoch}" && printf '\x1e')
+
+  printf '%s\n' "${detected_bump}"
+}
+
+detect_auto_version_bump() {
+  local anchor_epoch commit_backend_bump commit_frontend_bump path_backend_bump path_frontend_bump detected_bump="none"
+  anchor_epoch="$(resolve_version_anchor_epoch)"
+
+  commit_backend_bump="$(detect_repo_commit_version_bump "${BACKEND_DIR}" "${anchor_epoch}")"
+  commit_frontend_bump="$(detect_repo_commit_version_bump "${FRONTEND_DIR}" "${anchor_epoch}")"
+  path_backend_bump="$(detect_repo_version_bump "${BACKEND_DIR}" | tail -n1)"
+  path_frontend_bump="$(detect_repo_version_bump "${FRONTEND_DIR}" | tail -n1)"
+
+  detected_bump="$(max_version_bump "${detected_bump}" "${commit_backend_bump}")"
+  detected_bump="$(max_version_bump "${detected_bump}" "${commit_frontend_bump}")"
+  detected_bump="$(max_version_bump "${detected_bump}" "${path_backend_bump}")"
+  detected_bump="$(max_version_bump "${detected_bump}" "${path_frontend_bump}")"
+
+  printf '%s\n' "${detected_bump}"
+}
+
+resolve_version_bump() {
+  local requested_bump normalized_bump
+  requested_bump="$1"
+  normalized_bump="$(normalize_version_bump "${requested_bump}")"
+
+  case "${normalized_bump}" in
+    auto)
+      detect_auto_version_bump
+      ;;
+    *)
+      printf '%s\n' "${normalized_bump}"
+      ;;
+  esac
+}
+
+resolve_wrangler_package() {
+  if [[ "${WRANGLER_VERSION}" != "latest" ]]; then
+    printf 'wrangler@%s\n' "${WRANGLER_VERSION}"
+    return 0
+  fi
+
+  local resolved_version
+  resolved_version="$(npm view wrangler version 2>/dev/null || true)"
+  if [[ -n "${resolved_version}" ]]; then
+    printf 'wrangler@%s\n' "${resolved_version}"
+  else
+    printf 'wrangler@latest\n'
+  fi
+}
+
+WRANGLER_PACKAGE="$(resolve_wrangler_package)"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+RULES_FILE="${SCRIPT_DIR}/conventional_commit_rules.sh"
+if [[ -f "${RULES_FILE}" ]]; then
+  # shellcheck disable=SC1090
+  source "${RULES_FILE}"
+fi
+
 resolve_frontend_dir() {
   if [[ -n "${FRONTEND_DIR:-}" ]]; then
     printf '%s\n' "${FRONTEND_DIR}"
@@ -38,51 +300,64 @@ BACKEND_DIR="${SCRIPT_DIR}"
 ASSETS_PATH="${BACKEND_DIR}/assets.json"
 UPLOAD_SCRIPT="${BACKEND_DIR}/upload.js"
 WRANGLER_CONFIG="${BACKEND_DIR}/wrangler.jsonc"
+LOCALE_GENERATOR="${FRONTEND_DIR}/tool/generate_locale_catalog.dart"
 
 VERSION="${VERSION:-}"
-BUILD_NUMBER="${BUILD_NUMBER:-}"
+FULL_VER="$(sed -nE 's/^version:[[:space:]]*([^[:space:]]+).*/\1/p' "${PUBSPEC}" | head -n1)"
+if [[ -z "${FULL_VER}" ]]; then
+  echo "Failed to read version from ${PUBSPEC}"
+  exit 1
+fi
 
-if [[ -z "${VERSION}" ]]; then
-  FULL_VER="$(sed -nE 's/^version:[[:space:]]*([^[:space:]]+).*/\1/p' "${PUBSPEC}" | head -n1)"
-  if [[ -z "${FULL_VER}" ]]; then
-    echo "Failed to read version from ${PUBSPEC}"
-    exit 1
-  fi
+BASE_VERSION="${FULL_VER%%+*}"
 
-  VERSION="${FULL_VER%%+*}"
-  if [[ "${FULL_VER}" == *"+"* ]]; then
-    BUILD_NUMBER="${FULL_VER#*+}"
-  else
-    BUILD_NUMBER="1"
-  fi
+RESOLVED_VERSION_BUMP="none"
+if [[ -n "${VERSION}" ]]; then
+  RESOLVED_VERSION_BUMP="manual"
+else
+  RESOLVED_VERSION_BUMP="$(resolve_version_bump "${VERSION_BUMP}")"
+  VERSION="$(bump_semver "${BASE_VERSION}" "${RESOLVED_VERSION_BUMP}")"
 fi
 
 echo "======================================"
 echo "Taiwan Brawl Auto Deployment"
-echo "Version: ${VERSION} (Build #${BUILD_NUMBER})"
+echo "Version: ${VERSION}"
+echo "Version bump: ${RESOLVED_VERSION_BUMP} (base ${BASE_VERSION})"
 echo "Frontend: ${FRONTEND_DIR}"
+echo "Wrangler: ${WRANGLER_PACKAGE}"
 echo "======================================"
 echo
 
-echo "[1/4] Building Flutter Frontend..."
+echo "[1/5] Generating locale catalog..."
 cd "${FRONTEND_DIR}"
-CMD="flutter build web --release --build-name=${VERSION} --build-number=${BUILD_NUMBER}"
-echo "Running: ${CMD}"
-flutter build web --release --build-name="${VERSION}" --build-number="${BUILD_NUMBER}"
-echo "Step 1 completed"
+if [[ -f "${LOCALE_GENERATOR}" ]]; then
+  CMD="dart run tool/generate_locale_catalog.dart"
+  echo "Running: ${CMD}"
+  dart run tool/generate_locale_catalog.dart
+  echo "Step 1 completed"
+else
+  echo "Locale generator not found, skipping catalog generation"
+fi
 echo
 
-echo "[2/4] Generating asset list..."
+echo "[2/5] Building Flutter Frontend..."
+CMD="flutter build web --release --build-name=${VERSION}"
+echo "Running: ${CMD}"
+flutter build web --release --build-name="${VERSION}"
+echo "Step 2 completed"
+echo
+
+echo "[3/5] Generating asset list..."
 cd "${BACKEND_DIR}"
 if [[ -f "${UPLOAD_SCRIPT}" ]]; then
   node "${UPLOAD_SCRIPT}"
-  echo "Step 2 completed"
+  echo "Step 3 completed"
 else
   echo "upload.js not found, skipping asset generation"
 fi
 echo
 
-echo "[3/4] Uploading static files to KV..."
+echo "[4/5] Uploading static files to KV..."
 if [[ -f "${ASSETS_PATH}" ]]; then
   DETECTED_KV_NAMESPACE_ID="$(node -e "const fs=require('node:fs');const p='${WRANGLER_CONFIG}';try{const cfg=JSON.parse(fs.readFileSync(p,'utf8'));const ns=(cfg.kv_namespaces||[]).find(n=>n.binding==='STATIC_ASSETS');process.stdout.write(ns?.id||'');}catch{process.stdout.write('');}")"
   KV_TARGET_NAMESPACE_ID="${KV_NAMESPACE_ID:-${DETECTED_KV_NAMESPACE_ID}}"
@@ -93,22 +368,22 @@ if [[ -f "${ASSETS_PATH}" ]]; then
   else
     echo "assetsPath: ${ASSETS_PATH}"
     echo "namespaceId: ${KV_TARGET_NAMESPACE_ID}"
-    echo "Running: npm exec --package=wrangler@${WRANGLER_VERSION} -- wrangler kv bulk put ${ASSETS_PATH} --namespace-id ${KV_TARGET_NAMESPACE_ID} --remote"
-    npm exec --package="wrangler@${WRANGLER_VERSION}" -- wrangler kv bulk put "${ASSETS_PATH}" --namespace-id "${KV_TARGET_NAMESPACE_ID}" --remote
-    echo "Step 3 completed"
+    echo "Running: npm exec --package=${WRANGLER_PACKAGE} -- wrangler kv bulk put ${ASSETS_PATH} --namespace-id ${KV_TARGET_NAMESPACE_ID} --remote"
+    npm exec --package="${WRANGLER_PACKAGE}" -- wrangler kv bulk put "${ASSETS_PATH}" --namespace-id "${KV_TARGET_NAMESPACE_ID}" --remote
+    echo "Step 4 completed"
   fi
 else
   echo "assets.json not found, skipping KV upload"
 fi
 echo
 
-echo "[4/4] Deploying Workers..."
-echo "Running: npm exec --package=wrangler@${WRANGLER_VERSION} -- wrangler deploy"
-npm exec --package="wrangler@${WRANGLER_VERSION}" -- wrangler deploy
-echo "Step 4 completed"
+echo "[5/5] Deploying Workers..."
+echo "Running: npm exec --package=${WRANGLER_PACKAGE} -- wrangler deploy"
+npm exec --package="${WRANGLER_PACKAGE}" -- wrangler deploy
+echo "Step 5 completed"
 echo
 
-echo "[4.5/4] Running smoke tests..."
+echo "[5.5/5] Running smoke tests..."
 BASE_URL="${DEPLOY_BASE_URL:-https://taiwan-brawl-api.yunitrish0419.workers.dev}"
 echo "Testing base URL: ${BASE_URL}"
 
@@ -136,17 +411,15 @@ echo "Smoke tests passed"
 echo
 
 echo "======================================"
-echo "Deployment successful! Version: ${VERSION} (Build #${BUILD_NUMBER})"
+echo "Deployment successful! Version: ${VERSION}"
 echo "Access: https://taiwan-brawl-api.yunitrish0419.workers.dev"
 echo "======================================"
 echo
 
-echo "Updating version number..."
-NEXT_BUILD_NUMBER=$((BUILD_NUMBER + 1))
-NEXT_VERSION="${VERSION}+${NEXT_BUILD_NUMBER}"
+echo "Updating pubspec version..."
 
 TMP_FILE="$(mktemp)"
-awk -v new_version="${NEXT_VERSION}" '
+awk -v new_version="${VERSION}" '
   BEGIN { replaced = 0 }
   {
     if (!replaced && $0 ~ /^version:[[:space:]]*[^[:space:]]+/) {
@@ -164,6 +437,6 @@ awk -v new_version="${NEXT_VERSION}" '
 ' "${PUBSPEC}" > "${TMP_FILE}"
 mv "${TMP_FILE}" "${PUBSPEC}"
 
-echo "Next deployment version will be: ${NEXT_VERSION}"
+echo "Pubspec version is now: ${VERSION}"
 echo
 read -r -p "Press Enter to exit" _

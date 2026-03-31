@@ -8,6 +8,10 @@ export async function requireUser(request, env) {
   return user;
 }
 
+export async function readJsonBody(request) {
+  return request.json().catch(() => null);
+}
+
 export async function requireAuthorizedUser(request, env, isAllowed) {
   const user = await requireUser(request, env);
   if (!user) {
@@ -39,4 +43,14 @@ export async function withAuthenticatedBadRequest(request, env, handler) {
   return withBadRequest(request, async () =>
     withAuthenticatedUser(request, env, handler)
   );
+}
+
+export async function withAuthorizedBadRequest(request, env, isAllowed, handler) {
+  return withBadRequest(request, async () => {
+    const { user, error } = await requireAuthorizedUser(request, env, isAllowed);
+    if (error) {
+      return error;
+    }
+    return handler(user);
+  });
 }
