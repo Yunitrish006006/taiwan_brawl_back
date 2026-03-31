@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
+    "test": "node --test",
     "assets:generate": "node upload.js",
     "kv:upload": "wrangler kv bulk put assets.json --binding=STATIC_ASSETS --remote"
   },

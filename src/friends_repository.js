@@ -32,15 +32,20 @@ function friendPair(userIdA, userIdB) {
   return a < b ? [a, b] : [b, a];
 }
 
+function normalizeUserId(rawUserId, fieldName = 'userId') {
+  const userId = Number(rawUserId);
+  if (!Number.isInteger(userId) || userId <= 0) {
+    throw new Error(`${fieldName} is required`);
+  }
+  return userId;
+}
+
 async function userExists(userId, env) {
   return env.DB.prepare('SELECT id FROM users WHERE id = ?').bind(userId).first();
 }
 
 async function requireTargetUser(currentUserId, rawTargetUserId, env, selfActionMessage) {
-  const targetUserId = Number(rawTargetUserId);
-  if (!Number.isInteger(targetUserId) || targetUserId <= 0) {
-    throw new Error('targetUserId is required');
-  }
+  const targetUserId = normalizeUserId(rawTargetUserId, 'targetUserId');
   if (targetUserId === Number(currentUserId)) {
     throw new Error(`You cannot ${selfActionMessage}`);
   }
@@ -129,6 +134,16 @@ async function createFriendship(userIdA, userIdB, env) {
     .run();
 }
 
+async function deleteFriendshipBetween(userIdA, userIdB, env) {
+  const [userOneId, userTwoId] = friendPair(userIdA, userIdB);
+  await env.DB.prepare(
+    `DELETE FROM friendships
+     WHERE user_one_id = ? AND user_two_id = ?`
+  )
+    .bind(userOneId, userTwoId)
+    .run();
+}
+
 function userSelectFields(alias = 'u') {
   return `${alias}.id AS user_id,
     ${alias}.name,
@@ -181,6 +196,42 @@ async function updateRoomInviteStatus(inviteId, status, env) {
   )
     .bind(status, inviteId)
     .run();
+}
+
+async function cancelPendingFriendRequestsBetween(userIdA, userIdB, env) {
+  await env.DB.prepare(
+    `UPDATE friend_requests
+     SET status = 'cancelled', responded_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+     WHERE status = 'pending'
+       AND (
+         (sender_user_id = ? AND receiver_user_id = ?)
+         OR
+         (sender_user_id = ? AND receiver_user_id = ?)
+       )`
+  )
+    .bind(userIdA, userIdB, userIdB, userIdA)
+    .run();
+}
+
+async function cancelPendingRoomInvitesBetween(userIdA, userIdB, env) {
+  await env.DB.prepare(
+    `UPDATE room_invites
+     SET status = 'cancelled', responded_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+     WHERE status = 'pending'
+       AND (
+         (inviter_user_id = ? AND invitee_user_id = ?)
+         OR
+         (inviter_user_id = ? AND invitee_user_id = ?)
+       )`
+  )
+    .bind(userIdA, userIdB, userIdB, userIdA)
+    .run();
+}
+
+function requirePendingRecord(record, missingMessage) {
+  if (!record || record.status !== 'pending') {
+    throw new Error(missingMessage);
+  }
 }
 
 export async function getFriendsOverview(userId, env) {
@@ -334,10 +385,7 @@ export async function respondToFriendRequest(
   env
 ) {
   const request = await loadPendingFriendRequest(requestId, env);
-
-  if (!request || request.status !== 'pending') {
-    throw new Error('Friend request not found');
-  }
+  requirePendingRecord(request, 'Friend request not found');
   if (Number(request.receiver_user_id) !== Number(currentUserId)) {
     throw new Error('You cannot update this friend request');
   }
@@ -354,10 +402,7 @@ export async function respondToFriendRequest(
 
 export async function cancelFriendRequest(currentUserId, requestId, env) {
   const request = await loadPendingFriendRequest(requestId, env);
-
-  if (!request || request.status !== 'pending') {
-    throw new Error('Friend request not found');
-  }
+  requirePendingRecord(request, 'Friend request not found');
   if (Number(request.sender_user_id) !== Number(currentUserId)) {
     throw new Error('You cannot cancel this friend request');
   }
@@ -368,14 +413,8 @@ export async function cancelFriendRequest(currentUserId, requestId, env) {
 }
 
 export async function removeFriend(currentUserId, rawTargetUserId, env) {
-  const targetUserId = Number(rawTargetUserId);
-  const [userOneId, userTwoId] = friendPair(currentUserId, targetUserId);
-  await env.DB.prepare(
-    `DELETE FROM friendships
-     WHERE user_one_id = ? AND user_two_id = ?`
-  )
-    .bind(userOneId, userTwoId)
-    .run();
+  const targetUserId = normalizeUserId(rawTargetUserId, 'targetUserId');
+  await deleteFriendshipBetween(currentUserId, targetUserId, env);
   return { ok: true };
 }
 
@@ -394,45 +433,15 @@ export async function blockUser(currentUserId, rawTargetUserId, env) {
     .bind(currentUserId, targetUserId)
     .run();
 
-  const [userOneId, userTwoId] = friendPair(currentUserId, targetUserId);
-  await env.DB.prepare(
-    `DELETE FROM friendships
-     WHERE user_one_id = ? AND user_two_id = ?`
-  )
-    .bind(userOneId, userTwoId)
-    .run();
-
-  await env.DB.prepare(
-    `UPDATE friend_requests
-     SET status = 'cancelled', responded_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
-     WHERE status = 'pending'
-       AND (
-         (sender_user_id = ? AND receiver_user_id = ?)
-         OR
-         (sender_user_id = ? AND receiver_user_id = ?)
-       )`
-  )
-    .bind(currentUserId, targetUserId, targetUserId, currentUserId)
-    .run();
-
-  await env.DB.prepare(
-    `UPDATE room_invites
-     SET status = 'cancelled', responded_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
-     WHERE status = 'pending'
-       AND (
-         (inviter_user_id = ? AND invitee_user_id = ?)
-         OR
-         (inviter_user_id = ? AND invitee_user_id = ?)
-       )`
-  )
-    .bind(currentUserId, targetUserId, targetUserId, currentUserId)
-    .run();
+  await deleteFriendshipBetween(currentUserId, targetUserId, env);
+  await cancelPendingFriendRequestsBetween(currentUserId, targetUserId, env);
+  await cancelPendingRoomInvitesBetween(currentUserId, targetUserId, env);
 
   return { ok: true };
 }
 
 export async function unblockUser(currentUserId, rawTargetUserId, env) {
-  const targetUserId = Number(rawTargetUserId);
+  const targetUserId = normalizeUserId(rawTargetUserId, 'targetUserId');
   await env.DB.prepare(
     `DELETE FROM user_blocks
      WHERE blocker_user_id = ? AND blocked_user_id = ?`
@@ -489,10 +498,7 @@ export async function sendRoomInvite(
 
 export async function respondToRoomInvite(currentUserId, inviteId, action, env) {
   const invite = await loadPendingRoomInvite(inviteId, env);
-
-  if (!invite || invite.status !== 'pending') {
-    throw new Error('Room invite not found');
-  }
+  requirePendingRecord(invite, 'Room invite not found');
   if (Number(invite.invitee_user_id) !== Number(currentUserId)) {
     throw new Error('You cannot update this room invite');
   }

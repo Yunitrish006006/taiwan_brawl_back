@@ -10,9 +10,86 @@ import {
   setCookie
 } from './utils.js';
 
+const SESSION_TTL_SECONDS = 30 * 24 * 3600;
+const SESSION_DURATION_MS = SESSION_TTL_SECONDS * 1000;
+
+function authJsonResponse(request, body, setCookieValue) {
+  return new Response(JSON.stringify(body), {
+    status: 200,
+    headers: {
+      ...corsHeaders(request),
+      'Content-Type': 'application/json',
+      ...(setCookieValue ? { 'Set-Cookie': setCookieValue } : {})
+    }
+  });
+}
+
+function sessionCookieHeader(sessionId, ttlSeconds = SESSION_TTL_SECONDS) {
+  return setCookie('session_id', sessionId, ttlSeconds);
+}
+
+function serializedAuthUser(user) {
+  return {
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    role: user.role,
+    bio: user.bio,
+    avatar_url: user.avatar_url,
+    google_avatar_url: user.google_avatar_url,
+    custom_avatar_url: user.custom_avatar_url,
+    avatar_source: user.avatar_source,
+    uploaded_avatar_url: user.uploaded_avatar_url,
+    uploaded_avatar_version: user.uploaded_avatar_version,
+    last_active_at: user.last_active_at,
+    theme_mode: user.theme_mode,
+    font_size_scale: user.font_size_scale,
+    locale: user.locale
+  };
+}
+
+function resolveGoogleLoginAvatarUrl(user, googleAvatarUrl) {
+  return resolveAvatarUrlForSource({
+    avatarSource: user.avatar_source,
+    googleAvatarUrl,
+    customAvatarUrl: user.custom_avatar_url ?? null,
+    uploadedAvatarUrl: buildUploadedAvatarUrl(
+      user.id,
+      user.uploaded_avatar_version
+    ),
+    fallbackAvatarUrl: user.avatar_url ?? null
+  });
+}
+
+async function createGoogleUser(env, googleUser) {
+  const defaultName = googleUser.name || googleUser.email.split('@')[0];
+  await env.DB.prepare(
+    `INSERT INTO users (
+      name, email, google_sub, role, avatar_url, google_avatar_url,
+      avatar_source, last_active_at
+    ) VALUES (?, ?, ?, 'player', ?, ?, 'google', CURRENT_TIMESTAMP)`
+  )
+    .bind(
+      defaultName,
+      googleUser.email,
+      googleUser.sub,
+      googleUser.picture,
+      googleUser.picture
+    )
+    .run();
+
+  return findUserByEmail(env, googleUser.email);
+}
+
+async function attachGoogleSub(env, userId, googleSub) {
+  await env.DB.prepare('UPDATE users SET google_sub = ? WHERE id = ?')
+    .bind(googleSub, userId)
+    .run();
+}
+
 async function createSession(userId, env) {
   const sessionId = generateSessionId();
-  const expiresAt = new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString();
+  const expiresAt = new Date(Date.now() + SESSION_DURATION_MS).toISOString();
   await env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(userId).run();
   await env.DB.prepare('INSERT INTO sessions (id, user_id, expires_at) VALUES (?, ?, ?)')
     .bind(sessionId, userId, expiresAt)
@@ -80,39 +157,15 @@ export async function handleGoogleLogin(request, env) {
   let user = await findUserByEmail(env, googleUser.email);
 
   if (!user) {
-    const defaultName = googleUser.name || googleUser.email.split('@')[0];
-    await env.DB.prepare(
-      `INSERT INTO users (
-        name, email, google_sub, role, avatar_url, google_avatar_url,
-        avatar_source, last_active_at
-      ) VALUES (?, ?, ?, 'player', ?, ?, 'google', CURRENT_TIMESTAMP)`
-    )
-      .bind(
-        defaultName,
-        googleUser.email,
-        googleUser.sub,
-        googleUser.picture,
-        googleUser.picture
-      )
-      .run();
-
-    user = await findUserByEmail(env, googleUser.email);
+    user = await createGoogleUser(env, googleUser);
   } else if (!user.google_sub) {
-    await env.DB.prepare('UPDATE users SET google_sub = ? WHERE id = ?')
-      .bind(googleUser.sub, user.id)
-      .run();
+    await attachGoogleSub(env, user.id, googleUser.sub);
     user.google_sub = googleUser.sub;
   } else if (user.google_sub !== googleUser.sub) {
     return jsonResponse({ error: 'Google account mismatch' }, 401, request);
   }
 
-  const effectiveAvatarUrl = resolveAvatarUrlForSource({
-    avatarSource: user.avatar_source,
-    googleAvatarUrl: googleUser.picture,
-    customAvatarUrl: user.custom_avatar_url ?? null,
-    uploadedAvatarUrl: buildUploadedAvatarUrl(user.id, user.uploaded_avatar_version),
-    fallbackAvatarUrl: user.avatar_url ?? null
-  });
+  const effectiveAvatarUrl = resolveGoogleLoginAvatarUrl(user, googleUser.picture);
 
   await env.DB.prepare(
     `UPDATE users
@@ -126,34 +179,15 @@ export async function handleGoogleLogin(request, env) {
   user = await fetchMappedUserById(env, user.id);
 
   const sessionId = await createSession(user.id, env);
-  return new Response(JSON.stringify({
-    ok: true,
-    session_id: sessionId,
-    user: {
-      id: user.id,
-      name: user.name,
-      email: user.email,
-      role: user.role,
-      bio: user.bio,
-      avatar_url: user.avatar_url,
-      google_avatar_url: user.google_avatar_url,
-      custom_avatar_url: user.custom_avatar_url,
-      avatar_source: user.avatar_source,
-      uploaded_avatar_url: user.uploaded_avatar_url,
-      uploaded_avatar_version: user.uploaded_avatar_version,
-      last_active_at: user.last_active_at,
-      theme_mode: user.theme_mode,
-      font_size_scale: user.font_size_scale,
-      locale: user.locale
-    }
-  }), {
-    status: 200,
-    headers: {
-      ...corsHeaders(request),
-      'Content-Type': 'application/json',
-      'Set-Cookie': setCookie('session_id', sessionId, 30 * 24 * 3600)
-    }
-  });
+  return authJsonResponse(
+    request,
+    {
+      ok: true,
+      session_id: sessionId,
+      user: serializedAuthUser(user)
+    },
+    sessionCookieHeader(sessionId)
+  );
 }
 
 export async function handleMe(request, env) {
@@ -170,12 +204,9 @@ export async function handleLogout(request, env) {
     await env.DB.prepare('DELETE FROM sessions WHERE id = ?').bind(sessionId).run();
   }
 
-  return new Response(JSON.stringify({ ok: true }), {
-    status: 200,
-    headers: {
-      ...corsHeaders(request),
-      'Content-Type': 'application/json',
-      'Set-Cookie': setCookie('session_id', '', 0)
-    }
-  });
+  return authJsonResponse(
+    request,
+    { ok: true },
+    sessionCookieHeader('', 0)
+  );
 }

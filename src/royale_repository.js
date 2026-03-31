@@ -1,10 +1,16 @@
 import { defaultDeckCardIds, starterCards } from './royale_cards.js';
 
+const MAX_CARD_IMAGE_BYTES = 1024 * 1024;
 const CARD_SELECT_COLUMNS = `SELECT id, name, elixir_cost, type, hp, damage, attack_range, move_speed,
         attack_speed, spawn_count, spell_radius, spell_damage, target_rule,
         effect_kind, effect_value, body_radius, name_zh_hant, name_en, name_ja,
         name_i18n, image_version
  FROM cards`;
+const CARD_WRITE_COLUMNS = `id, name, elixir_cost, type, hp, damage, attack_range, move_speed,
+      attack_speed, spawn_count, spell_radius, spell_damage, target_rule,
+      effect_kind, effect_value, body_radius, name_zh_hant, name_en, name_ja,
+      name_i18n`;
+const CARD_WRITE_PLACEHOLDERS = '?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?';
 
 function normalizeLocaleKey(locale) {
   const normalized = String(locale ?? '').trim();
@@ -122,8 +128,15 @@ function serializeCard(row) {
     effectKind: row.effect_kind || 'none',
     effectValue: Number(row.effect_value || 0),
     imageVersion,
-    imageUrl: imageVersion > 0 ? `/card-images/${encodeURIComponent(row.id)}?v=${imageVersion}` : null
+    imageUrl: cardImageUrl(row.id, imageVersion)
   };
+}
+
+function cardImageUrl(cardId, imageVersion) {
+  const version = Number(imageVersion || 0);
+  return version > 0
+    ? `/card-images/${encodeURIComponent(cardId)}?v=${version}`
+    : null;
 }
 
 function cardImageKey(cardId) {
@@ -224,43 +237,83 @@ function normalizeCardPayload(payload) {
   return card;
 }
 
+function normalizeCardId(cardId) {
+  const normalized = String(cardId ?? '').trim();
+  if (!normalized) {
+    throw new Error('Card id is required');
+  }
+  return normalized;
+}
+
+async function countRows(env, sql, ...bindings) {
+  const row = await env.DB.prepare(sql)
+    .bind(...bindings)
+    .first();
+  return Number(row?.count || 0);
+}
+
+async function cardExists(env, cardId) {
+  const existing = await env.DB.prepare('SELECT id FROM cards WHERE id = ?')
+    .bind(cardId)
+    .first();
+  return Boolean(existing);
+}
+
+function serializeDeckRow(deckRow, cards) {
+  return {
+    id: Number(deckRow.id),
+    name: deckRow.name,
+    slot: Number(deckRow.slot),
+    updatedAt: deckRow.updated_at,
+    cards
+  };
+}
+
+function bindableCardNameI18n(card) {
+  return JSON.stringify(card.nameI18n);
+}
+
+function cardWriteBindings(card) {
+  return [
+    card.id,
+    card.name,
+    card.elixirCost,
+    card.type,
+    card.hp,
+    card.damage,
+    card.attackRange,
+    card.moveSpeed,
+    card.attackSpeed,
+    card.spawnCount,
+    card.spellRadius,
+    card.spellDamage,
+    card.targetRule,
+    card.effectKind,
+    card.effectValue,
+    card.bodyRadius,
+    card.nameZhHant,
+    card.nameEn,
+    card.nameJa,
+    bindableCardNameI18n(card)
+  ];
+}
+
 async function insertStarterCards(env) {
   for (const card of starterCards) {
     await env.DB.prepare(
-      `INSERT OR IGNORE INTO cards (
-        id, name, elixir_cost, type, hp, damage, attack_range, move_speed,
-        attack_speed, spawn_count, spell_radius, spell_damage, target_rule,
-        effect_kind, effect_value, body_radius, name_zh_hant, name_en, name_ja,
-        name_i18n
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT OR IGNORE INTO cards (${CARD_WRITE_COLUMNS})
+       VALUES (${CARD_WRITE_PLACEHOLDERS})`
     ).bind(
-      card.id,
-      card.name,
-      card.elixirCost,
-      card.type,
-      card.hp,
-      card.damage,
-      card.attackRange,
-      card.moveSpeed,
-      card.attackSpeed,
-      card.spawnCount,
-      card.spellRadius,
-      card.spellDamage,
-      card.targetRule,
-      card.effectKind,
-      card.effectValue,
-      card.bodyRadius,
-      card.nameZhHant,
-      card.nameEn,
-      card.nameJa,
-      starterCardNameI18n(card)
+      ...cardWriteBindings({
+        ...card,
+        nameI18n: parseNameI18n(starterCardNameI18n(card))
+      })
     ).run();
   }
 }
 
 export async function ensureCardsSeeded(env) {
-  const existing = await env.DB.prepare('SELECT COUNT(*) AS count FROM cards').first();
-  if (!Number(existing?.count)) {
+  if (!(await countRows(env, 'SELECT COUNT(*) AS count FROM cards'))) {
     await insertStarterCards(env);
   }
 }
@@ -279,12 +332,8 @@ export async function upsertCard(env, payload) {
   const card = normalizeCardPayload(payload);
 
   await env.DB.prepare(
-    `INSERT INTO cards (
-      id, name, elixir_cost, type, hp, damage, attack_range, move_speed,
-      attack_speed, spawn_count, spell_radius, spell_damage, target_rule,
-      effect_kind, effect_value, body_radius, name_zh_hant, name_en, name_ja,
-      name_i18n
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO cards (${CARD_WRITE_COLUMNS})
+    VALUES (${CARD_WRITE_PLACEHOLDERS})
     ON CONFLICT(id) DO UPDATE SET
       name = excluded.name,
       elixir_cost = excluded.elixir_cost,
@@ -306,28 +355,7 @@ export async function upsertCard(env, payload) {
       name_ja = excluded.name_ja,
       name_i18n = excluded.name_i18n`
   )
-    .bind(
-      card.id,
-      card.name,
-      card.elixirCost,
-      card.type,
-      card.hp,
-      card.damage,
-      card.attackRange,
-      card.moveSpeed,
-      card.attackSpeed,
-      card.spawnCount,
-      card.spellRadius,
-      card.spellDamage,
-      card.targetRule,
-      card.effectKind,
-      card.effectValue,
-      card.bodyRadius,
-      card.nameZhHant,
-      card.nameEn,
-      card.nameJa,
-      JSON.stringify(card.nameI18n)
-    )
+    .bind(...cardWriteBindings(card))
     .run();
 
   return fetchCardById(env, card.id);
@@ -335,17 +363,15 @@ export async function upsertCard(env, payload) {
 
 export async function deleteCard(env, cardId) {
   await ensureCardsSeeded(env);
-  const normalizedCardId = String(cardId ?? '').trim();
-  if (!normalizedCardId) {
-    throw new Error('Card id is required');
-  }
+  const normalizedCardId = normalizeCardId(cardId);
 
-  const inUse = await env.DB.prepare(
-    'SELECT COUNT(*) AS count FROM user_deck_cards WHERE card_id = ?'
-  )
-    .bind(normalizedCardId)
-    .first();
-  if (Number(inUse?.count) > 0) {
+  if (
+    (await countRows(
+      env,
+      'SELECT COUNT(*) AS count FROM user_deck_cards WHERE card_id = ?',
+      normalizedCardId
+    )) > 0
+  ) {
     throw new Error('Card is currently used in decks and cannot be deleted');
   }
 
@@ -384,15 +410,9 @@ function allowedImageContentType(contentType) {
 }
 
 export async function uploadCardImage(env, cardId, payload) {
-  const normalizedCardId = String(cardId ?? '').trim();
-  if (!normalizedCardId) {
-    throw new Error('Card id is required');
-  }
+  const normalizedCardId = normalizeCardId(cardId);
 
-  const existing = await env.DB.prepare('SELECT id FROM cards WHERE id = ?')
-    .bind(normalizedCardId)
-    .first();
-  if (!existing) {
+  if (!(await cardExists(env, normalizedCardId))) {
     throw new Error('Card not found');
   }
 
@@ -405,7 +425,7 @@ export async function uploadCardImage(env, cardId, payload) {
   if (!bytes || !bytes.length) {
     throw new Error('Image data is required');
   }
-  if (bytes.length > 1024 * 1024) {
+  if (bytes.length > MAX_CARD_IMAGE_BYTES) {
     throw new Error('Image must be 1 MB or smaller');
   }
 
@@ -429,10 +449,7 @@ export async function uploadCardImage(env, cardId, payload) {
 }
 
 export async function removeCardImage(env, cardId) {
-  const normalizedCardId = String(cardId ?? '').trim();
-  if (!normalizedCardId) {
-    throw new Error('Card id is required');
-  }
+  const normalizedCardId = normalizeCardId(cardId);
 
   await env.STATIC_ASSETS?.delete?.(cardImageKey(normalizedCardId));
   await env.STATIC_ASSETS?.delete?.(cardImageMetaKey(normalizedCardId));
@@ -503,11 +520,13 @@ async function createStarterDeckForUser(userId, env) {
 }
 
 export async function ensureUserStarterDeck(userId, env) {
-  const row = await env.DB.prepare(
-    'SELECT COUNT(*) AS count FROM user_decks WHERE user_id = ?'
-  ).bind(userId).first();
-
-  if (!Number(row?.count)) {
+  if (
+    !(await countRows(
+      env,
+      'SELECT COUNT(*) AS count FROM user_decks WHERE user_id = ?',
+      userId
+    ))
+  ) {
     await createStarterDeckForUser(userId, env);
   }
 }
@@ -537,13 +556,12 @@ export async function listDecksForUser(userId, env) {
 
   const results = [];
   for (const deckRow of decks.results) {
-    results.push({
-      id: Number(deckRow.id),
-      name: deckRow.name,
-      slot: Number(deckRow.slot),
-      updatedAt: deckRow.updated_at,
-      cards: await loadDeckCards(deckRow.id, cardMap, env)
-    });
+    results.push(
+      serializeDeckRow(
+        deckRow,
+        await loadDeckCards(deckRow.id, cardMap, env)
+      )
+    );
   }
   return results;
 }
@@ -561,13 +579,7 @@ export async function getDeckForUser(userId, deckId, env) {
   }
 
   const cardMap = await getCardMap(env);
-  return {
-    id: Number(deck.id),
-    name: deck.name,
-    slot: Number(deck.slot),
-    updatedAt: deck.updated_at,
-    cards: await loadDeckCards(deck.id, cardMap, env)
-  };
+  return serializeDeckRow(deck, await loadDeckCards(deck.id, cardMap, env));
 }
 
 export async function saveDeckForUser(userId, payload, env) {
