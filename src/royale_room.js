@@ -241,6 +241,13 @@ export class RoyaleRoom {
 
     for (const [userId, socket] of this.sockets.entries()) {
       try {
+        if (
+          type === 'state_snapshot' &&
+          this.simulationMode() === 'host' &&
+          Number(userId) === this.hostUserId()
+        ) {
+          continue;
+        }
         const payload = {
           type,
           room: this.viewerSnapshot(Number(userId)),
