@@ -434,7 +434,7 @@ export class RoyaleRoom {
     });
 
     server.addEventListener('close', () => {
-      this.handleSocketClose(userId);
+      this.handleSocketClose(userId, server);
     });
 
     this.sendSocketPayload(server, {
@@ -534,10 +534,26 @@ export class RoyaleRoom {
     await this.broadcast('state_snapshot');
   }
 
-  handleSocketClose(userId) {
+  handleSocketClose(userId, socket) {
+    const activeSocket = this.socketForUser(userId);
+    if (activeSocket && activeSocket !== socket) {
+      return;
+    }
+
     const player = this.findPlayerByUserId(userId);
-    this.sockets.delete(String(userId));
+    this.sockets.delete(this.socketKey(userId));
     if (!player) {
+      return;
+    }
+
+    if (
+      this.room?.status === 'lobby' &&
+      player.side === 'right' &&
+      !player.isBot
+    ) {
+      delete this.room.players.right;
+      void this.persist(true);
+      void this.broadcast('room_state');
       return;
     }
 
