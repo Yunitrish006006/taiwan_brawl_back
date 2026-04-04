@@ -62,7 +62,7 @@ async function handleCreateRoom(request, env) {
       return error;
     }
     const vsBot = Boolean(body?.vsBot);
-    const simulationMode = normalizeSimulationMode(body?.simulationMode);
+    const simulationMode = vsBot ? 'host' : normalizeSimulationMode(body?.simulationMode);
 
     for (let attempt = 0; attempt < 5; attempt += 1) {
       const code = randomRoomCode();

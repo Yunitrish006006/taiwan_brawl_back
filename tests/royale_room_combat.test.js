@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { GLOBAL_MOVE_SPEED_MULTIPLIER } from '../src/royale_battle_rules.js';
 import {
   applyEquipmentEffects,
+  buildBotPayload,
   chooseBotCombo,
   drawReplacementCards,
   equipmentEffects,
@@ -69,28 +70,104 @@ test('equipmentEffects and applyEquipmentEffects aggregate boosts', () => {
 });
 
 test('chooseBotCombo prefers affordable unit-first plays', () => {
+  const room = {
+    battle: {
+      players: {
+        left: { towerHp: 3000 },
+        right: { towerHp: 3000 }
+      },
+      units: []
+    }
+  };
+  const player = {
+    deckCards: [
+      { id: 'knight', type: 'melee', elixirCost: 3, hp: 900, damage: 150, attackRange: 60, moveSpeed: 140, spawnCount: 1, targetRule: 'ground' },
+      { id: 'fireball', type: 'spell', elixirCost: 4, spellRadius: 130, spellDamage: 280 },
+      { id: 'boots', type: 'equipment', elixirCost: 1, effectKind: 'speed_boost' }
+    ]
+  };
+  const battlePlayer = {
+    hand: ['knight', 'fireball', 'boots'],
+    elixir: 4
+  };
+
+  const combo = chooseBotCombo(room, 'left', player, battlePlayer);
+
+  assert.deepEqual(
+    combo.map((card) => card.id),
+    ['knight', 'boots']
+  );
+});
+
+test('chooseBotCombo uses spells to answer clustered pressure near tower', () => {
+  const room = {
+    battle: {
+      players: {
+        left: { towerHp: 2400 },
+        right: { towerHp: 3000 }
+      },
+      units: [
+        { side: 'right', hp: 220, maxHp: 220, damage: 80, progress: 150, lateralPosition: 480, targetRule: 'ground', type: 'melee' },
+        { side: 'right', hp: 220, maxHp: 220, damage: 80, progress: 165, lateralPosition: 510, targetRule: 'ground', type: 'melee' },
+        { side: 'right', hp: 220, maxHp: 220, damage: 80, progress: 180, lateralPosition: 495, targetRule: 'ground', type: 'melee' }
+      ]
+    }
+  };
+  const player = {
+    deckCards: [
+      { id: 'knight', type: 'melee', elixirCost: 3, hp: 900, damage: 150, attackRange: 60, moveSpeed: 140, spawnCount: 1, targetRule: 'ground' },
+      { id: 'fireball', type: 'spell', elixirCost: 4, spellRadius: 130, spellDamage: 280 },
+      { id: 'boots', type: 'equipment', elixirCost: 1, effectKind: 'speed_boost' }
+    ]
+  };
+  const battlePlayer = {
+    hand: ['knight', 'fireball', 'boots'],
+    elixir: 4
+  };
+
+  const combo = chooseBotCombo(room, 'left', player, battlePlayer);
+
+  assert.deepEqual(
+    combo.map((card) => card.id),
+    ['fireball']
+  );
+});
+
+test('buildBotPayload positions defensive drops toward the highest-pressure lane', () => {
   const originalRandom = Math.random;
-  Math.random = () => 0;
+  Math.random = () => 0.5;
 
   try {
-    const player = {
-      deckCards: [
-        { id: 'knight', type: 'melee', elixirCost: 3 },
-        { id: 'fireball', type: 'spell', elixirCost: 4 },
-        { id: 'boots', type: 'equipment', elixirCost: 1 }
-      ]
-    };
-    const battlePlayer = {
-      hand: ['knight', 'fireball', 'boots'],
-      elixir: 4
+    const room = {
+      battle: {
+        players: {
+          left: { towerHp: 3000 },
+          right: { towerHp: 3000 }
+        },
+        units: [
+          {
+            side: 'right',
+            hp: 900,
+            maxHp: 900,
+            damage: 160,
+            progress: 170,
+            lateralPosition: 650,
+            targetRule: 'tower',
+            type: 'tank'
+          }
+        ]
+      }
     };
 
-    const combo = chooseBotCombo(player, battlePlayer);
-
-    assert.deepEqual(
-      combo.map((card) => card.id),
-      ['knight', 'boots']
+    const payload = buildBotPayload(
+      room,
+      'left',
+      [{ id: 'knight', type: 'melee', attackRange: 60, targetRule: 'ground' }]
     );
+
+    assert.equal(payload.lanePosition, 100);
+    assert.equal(payload.dropX, 650);
+    assert.equal(payload.dropY, 900);
   } finally {
     Math.random = originalRandom;
   }

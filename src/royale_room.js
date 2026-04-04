@@ -270,7 +270,7 @@ export class RoyaleRoom {
     this.room = {
       code: payload.code,
       status: 'lobby',
-      simulationMode: normalizeSimulationMode(payload.simulationMode),
+      simulationMode: payload.vsBot ? 'host' : normalizeSimulationMode(payload.simulationMode),
       hostUserId: Number(payload.user.id),
       createdAt: new Date().toISOString(),
       players: {
@@ -594,7 +594,7 @@ export class RoyaleRoom {
         continue;
       }
 
-      const comboCards = chooseBotCombo(player, battlePlayer);
+      const comboCards = chooseBotCombo(this.room, side, player, battlePlayer);
       battlePlayer.botThinkMs = randomBotThinkMs();
       if (comboCards.length === 0) {
         continue;
