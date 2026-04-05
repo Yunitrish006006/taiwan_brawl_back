@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [[ "${NODE_TLS_REJECT_UNAUTHORIZED:-}" == "0" ]]; then
+  echo "Clearing insecure NODE_TLS_REJECT_UNAUTHORIZED=0 override"
+  unset NODE_TLS_REJECT_UNAUTHORIZED
+fi
+
 # Optional overrides:
 # export VERSION="0.1.0"
 # export WRANGLER_VERSION="4.78.0"
