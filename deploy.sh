@@ -340,6 +340,7 @@ BACKEND_DIR="${SCRIPT_DIR}"
 ASSETS_PATH="${BACKEND_DIR}/assets.json"
 UPLOAD_SCRIPT="${BACKEND_DIR}/upload.js"
 WRANGLER_CONFIG="${BACKEND_DIR}/wrangler.jsonc"
+MIGRATIONS_DIR="${BACKEND_DIR}/migrations"
 LOCALE_GENERATOR="${FRONTEND_DIR}/tool/generate_locale_catalog.dart"
 
 VERSION="${VERSION:-}"
@@ -398,7 +399,26 @@ else
 fi
 echo
 
-echo "[4/5] Uploading static files to KV..."
+echo "[4/6] Applying D1 migrations..."
+if [[ -d "${MIGRATIONS_DIR}" ]]; then
+  DETECTED_D1_DATABASE_NAME="$(node -e "const fs=require('node:fs');const p='${WRANGLER_CONFIG}';try{const cfg=JSON.parse(fs.readFileSync(p,'utf8'));const db=(cfg.d1_databases||[])[0];process.stdout.write(db?.database_name||'');}catch{process.stdout.write('');}")"
+  D1_TARGET_DATABASE_NAME="${D1_DATABASE_NAME:-${DETECTED_D1_DATABASE_NAME}}"
+
+  if [[ -z "${D1_TARGET_DATABASE_NAME}" ]]; then
+    echo "No D1 database name found. Set D1_DATABASE_NAME or configure d1_databases in wrangler.jsonc"
+    exit 1
+  else
+    echo "databaseName: ${D1_TARGET_DATABASE_NAME}"
+    echo "Running: npm exec --package=${WRANGLER_PACKAGE} -- wrangler d1 migrations apply ${D1_TARGET_DATABASE_NAME} --remote"
+    npm exec --package="${WRANGLER_PACKAGE}" -- wrangler d1 migrations apply "${D1_TARGET_DATABASE_NAME}" --remote
+    echo "Step 4 completed"
+  fi
+else
+  echo "migrations directory not found, skipping D1 migrations"
+fi
+echo
+
+echo "[5/6] Uploading static files to KV..."
 if [[ -f "${ASSETS_PATH}" ]]; then
   DETECTED_KV_NAMESPACE_ID="$(node -e "const fs=require('node:fs');const p='${WRANGLER_CONFIG}';try{const cfg=JSON.parse(fs.readFileSync(p,'utf8'));const ns=(cfg.kv_namespaces||[]).find(n=>n.binding==='STATIC_ASSETS');process.stdout.write(ns?.id||'');}catch{process.stdout.write('');}")"
   KV_TARGET_NAMESPACE_ID="${KV_NAMESPACE_ID:-${DETECTED_KV_NAMESPACE_ID}}"
@@ -411,20 +431,20 @@ if [[ -f "${ASSETS_PATH}" ]]; then
     echo "namespaceId: ${KV_TARGET_NAMESPACE_ID}"
     echo "Running: npm exec --package=${WRANGLER_PACKAGE} -- wrangler kv bulk put ${ASSETS_PATH} --namespace-id ${KV_TARGET_NAMESPACE_ID} --remote"
     npm exec --package="${WRANGLER_PACKAGE}" -- wrangler kv bulk put "${ASSETS_PATH}" --namespace-id "${KV_TARGET_NAMESPACE_ID}" --remote
-    echo "Step 4 completed"
+    echo "Step 5 completed"
   fi
 else
   echo "assets.json not found, skipping KV upload"
 fi
 echo
 
-echo "[5/5] Deploying Workers..."
+echo "[6/6] Deploying Workers..."
 echo "Running: npm exec --package=${WRANGLER_PACKAGE} -- wrangler deploy"
 npm exec --package="${WRANGLER_PACKAGE}" -- wrangler deploy
-echo "Step 5 completed"
+echo "Step 6 completed"
 echo
 
-echo "[5.5/5] Running smoke tests..."
+echo "[6.5/6] Running smoke tests..."
 BASE_URL="${DEPLOY_BASE_URL:-https://taiwan-brawl-api.yunitrish0419.workers.dev}"
 echo "Testing base URL: ${BASE_URL}"
 

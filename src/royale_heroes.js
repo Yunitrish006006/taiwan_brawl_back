@@ -1,10 +1,8 @@
-import {
-  ELIXIR_PER_SECOND,
-  MAX_ELIXIR,
-  clamp
-} from './royale_battle_rules.js';
+import { clamp } from './royale_battle_rules.js';
 
 export const DEFAULT_HERO_ID = 'ordinary_person';
+const LEGACY_ENERGY_CAP = 10;
+const LEGACY_ENERGY_REGEN_PER_SECOND = 0.8;
 
 const HERO_DEFINITIONS = Object.freeze([
   {
@@ -163,12 +161,15 @@ function ensureBattlePlayerMeters(playerState) {
   const energyMaxTotal =
     normalizedNumber(next.maxPhysicalEnergy) + normalizedNumber(next.maxSpiritEnergy);
   if (energyMaxTotal <= 0) {
-    const legacyMaxEnergy = normalizedNumber(next.maxElixir, MAX_ELIXIR);
+    const legacyMaxEnergy = normalizedNumber(next.maxElixir, LEGACY_ENERGY_CAP);
     next.physicalEnergy = normalizedNumber(next.physicalEnergy, next.elixir);
     next.maxPhysicalEnergy = normalizedNumber(next.maxPhysicalEnergy, legacyMaxEnergy);
     next.spiritEnergy = normalizedNumber(next.spiritEnergy, 0);
     next.maxSpiritEnergy = normalizedNumber(next.maxSpiritEnergy, 0);
-    next.physicalEnergyRegen = normalizedNumber(next.physicalEnergyRegen, ELIXIR_PER_SECOND);
+    next.physicalEnergyRegen = normalizedNumber(
+      next.physicalEnergyRegen,
+      LEGACY_ENERGY_REGEN_PER_SECOND
+    );
   }
 
   next.physicalHealthRegen = normalizedNumber(next.physicalHealthRegen);
@@ -288,8 +289,6 @@ export function syncBattlePlayerTotals(playerState = {}) {
   next.money = clampMeter(next.money, next.maxMoney);
   next.towerHp = Math.max(0, roundToWhole(totalHealth(next)));
   next.maxTowerHp = Math.max(0, roundToWhole(totalMaxHealth(next)));
-  next.elixir = roundToSingleDecimal(totalEnergy(next));
-  next.maxElixir = roundToSingleDecimal(totalMaxEnergy(next));
   next.money = roundToSingleDecimal(next.money);
   next.maxMoney = roundToSingleDecimal(next.maxMoney);
   next.moneyPerSecond = roundToSingleDecimal(next.moneyPerSecond);

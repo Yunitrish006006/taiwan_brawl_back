@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  replenishBattleElixir,
+  regenerateBattleResources,
   resolveSpellEffect,
   spawnBattleUnits,
   tickBattleUnits,
@@ -10,20 +10,52 @@ import {
   winnerSideFromTowers
 } from '../src/royale_room_runtime.js';
 
-test('replenishBattleElixir increases both players and clamps to max', () => {
+test('regenerateBattleResources increases both players and clamps to max', () => {
   const room = {
     battle: {
       players: {
-        left: { elixir: 9.9 },
-        right: { elixir: 0 }
+        left: {
+          physicalEnergy: 4.9,
+          maxPhysicalEnergy: 5,
+          physicalEnergyRegen: 0.8,
+          spiritEnergy: 2,
+          maxSpiritEnergy: 3,
+          spiritEnergyRegen: 0,
+          money: 0,
+          maxMoney: 0,
+          moneyPerSecond: 0,
+          physicalHealth: 1000,
+          maxPhysicalHealth: 1000,
+          physicalHealthRegen: 0,
+          spiritHealth: 0,
+          maxSpiritHealth: 0,
+          spiritHealthRegen: 0
+        },
+        right: {
+          physicalEnergy: 0,
+          maxPhysicalEnergy: 5,
+          physicalEnergyRegen: 0.8,
+          spiritEnergy: 0,
+          maxSpiritEnergy: 3,
+          spiritEnergyRegen: 0,
+          money: 0,
+          maxMoney: 0,
+          moneyPerSecond: 0,
+          physicalHealth: 1000,
+          maxPhysicalHealth: 1000,
+          physicalHealthRegen: 0,
+          spiritHealth: 0,
+          maxSpiritHealth: 0,
+          spiritHealthRegen: 0
+        }
       }
     }
   };
 
-  replenishBattleElixir(room, 1);
+  regenerateBattleResources(room, 1);
 
-  assert.equal(room.battle.players.left.elixir, 10);
-  assert.equal(room.battle.players.right.elixir, 0.8);
+  assert.equal(room.battle.players.left.physicalEnergy, 5);
+  assert.equal(room.battle.players.right.physicalEnergy, 0.8);
 });
 
 test('resolveSpellEffect damages enemy units and tower in range', () => {

@@ -26,7 +26,7 @@ export function getEnemySide(side) {
   return side === 'left' ? 'right' : 'left';
 }
 
-export function replenishBattleElixir(room, dt) {
+export function regenerateBattleResources(room, dt) {
   for (const side of Object.keys(room.battle.players)) {
     const battlePlayer = room.battle.players[side];
     regenerateBattlePlayerResources(battlePlayer, dt);

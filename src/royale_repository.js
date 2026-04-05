@@ -126,7 +126,6 @@ function serializeCard(row) {
     ),
     energyCost,
     energyCostType,
-    elixirCost: energyCost,
     type: row.type,
     hp: Number(row.hp),
     damage: Number(row.damage),
@@ -291,7 +290,7 @@ function cardWriteBindings(card) {
   return [
     card.id,
     card.name,
-    card.elixirCost,
+    card.energyCost,
     card.energyCost,
     card.energyCostType,
     card.type,

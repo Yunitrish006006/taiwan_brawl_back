@@ -19,7 +19,7 @@ import { isJobCard, resolveJobCardEffect } from './royale_job_events.js';
 import {
   getEnemySide,
   performUnitAttack,
-  replenishBattleElixir,
+  regenerateBattleResources,
   resolveSpellEffect,
   selectUnitTarget,
   spawnBattleUnits,
@@ -659,10 +659,10 @@ export class RoyaleRoom {
 
     const physicalCost = comboCards
       .filter((card) => card.energyCostType !== 'spirit')
-      .reduce((sum, card) => sum + Number(card.energyCost || card.elixirCost || 0), 0);
+      .reduce((sum, card) => sum + Number(card.energyCost || 0), 0);
     const spiritCost = comboCards
       .filter((card) => card.energyCostType === 'spirit')
-      .reduce((sum, card) => sum + Number(card.energyCost || card.elixirCost || 0), 0);
+      .reduce((sum, card) => sum + Number(card.energyCost || 0), 0);
     if (!canSpendBattlePlayerEnergy(battlePlayer, physicalCost, 'physical')) {
       this.sendError(userId, 'Not enough Physical Energy');
       return;
@@ -692,7 +692,7 @@ export class RoyaleRoom {
     for (const card of comboCards) {
       spendBattlePlayerEnergy(
         battlePlayer,
-        Number(card.energyCost || card.elixirCost || 0),
+        Number(card.energyCost || 0),
         card.energyCostType === 'spirit' ? 'spirit' : 'physical'
       );
     }
@@ -751,7 +751,7 @@ export class RoyaleRoom {
     const dt = TICK_MS / 1000;
     this.room.battle.timeRemainingMs -= TICK_MS;
 
-    replenishBattleElixir(this.room, dt);
+    regenerateBattleResources(this.room, dt);
 
     await this.runBotTurns();
     tickBattleUnits(this.room, dt);

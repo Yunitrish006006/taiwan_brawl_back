@@ -48,7 +48,10 @@ test('build snapshots include battle state for host viewers', () => {
     isBot: false
   };
   const battlePlayer = {
-    elixir: 7.5,
+    physicalEnergy: 4.5,
+    maxPhysicalEnergy: 5,
+    spiritEnergy: 3,
+    maxSpiritEnergy: 4,
     hand: ['archer', 'knight'],
     queue: ['zap', 'giant', 'wolf'],
     towerHp: 950,
@@ -65,7 +68,8 @@ test('build snapshots include battle state for host viewers', () => {
   const snapshot = buildPlayerSnapshot(player, battlePlayer, true);
   const battleSnapshot = buildBattleSnapshot(room, player, battlePlayer);
 
-  assert.equal(snapshot.elixir, 7.5);
+  assert.equal(snapshot.physicalEnergy, 4.5);
+  assert.equal(snapshot.spiritEnergy, 3);
   assert.deepEqual(snapshot.handCardIds, ['archer', 'knight']);
   assert.equal(snapshot.towerHp, 950);
   assert.equal(battleSnapshot.yourHand[0].id, 'archer');
@@ -81,13 +85,15 @@ test('normalizeHostBattleState preserves previous startedAt and normalizes units
     timeRemainingMs: 25000,
     players: {
       left: {
-        elixir: 4.5,
+        physicalEnergy: 4.5,
+        maxPhysicalEnergy: 5,
         hand: ['knight'],
         queue: ['archer'],
         towerHp: 900
       },
       right: {
-        elixir: 3.25,
+        physicalEnergy: 3.25,
+        maxPhysicalEnergy: 5,
         hand: ['giant'],
         queue: [],
         towerHp: 870

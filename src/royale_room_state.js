@@ -78,7 +78,6 @@ export function buildPlayerSnapshot(player, battleState, includeDeckState) {
     deckName: player.deckName,
     deckCards: includeDeckState ? player.deckCards : undefined,
     hero: buildHeroSnapshot(player.heroId),
-    elixir: includeDeckState ? Number((battleState?.elixir ?? 5).toFixed(1)) : undefined,
     handCardIds: includeDeckState ? battleState?.hand ?? player.deckCardIds.slice(0, 4) : undefined,
     queueCardIds: includeDeckState ? battleState?.queue ?? player.deckCardIds.slice(4) : undefined,
     isBot: Boolean(player.isBot),
@@ -132,8 +131,6 @@ export function buildBattleSnapshot(room, viewer, battlePlayer) {
 
   return {
     timeRemainingMs: Math.max(0, Math.floor(room.battle.timeRemainingMs)),
-    yourElixir: battlePlayer ? Number(battlePlayer.elixir.toFixed(1)) : 0,
-    yourMaxElixir: battlePlayer ? Number((battlePlayer.maxElixir ?? 0).toFixed(1)) : 0,
     yourMoney: battlePlayer ? Number((battlePlayer.money ?? 0).toFixed(1)) : 0,
     yourHand: battlePlayer
       ? battlePlayer.hand
@@ -177,7 +174,6 @@ function normalizeBattleEventState(event = {}) {
 
 function normalizeBattlePlayerState(playerState = {}) {
   return syncBattlePlayerTotals({
-    elixir: Number(playerState.elixir || 0),
     hand: Array.isArray(playerState.hand) ? playerState.hand.map(String) : [],
     queue: Array.isArray(playerState.queue) ? playerState.queue.map(String) : [],
     botThinkMs: Number(playerState.botThinkMs || 0),
