@@ -12,6 +12,19 @@ import {
   sideDirection
 } from './royale_battle_rules.js';
 import { isJobCard } from './royale_job_events.js';
+import { battlePlayerEnergy, totalBattlePlayerEnergy } from './royale_heroes.js';
+
+function cardEnergyCost(card) {
+  return Number(card.energyCost || card.elixirCost || 0);
+}
+
+function cardEnergyType(card) {
+  return card.energyCostType === 'spirit' ? 'spirit' : 'physical';
+}
+
+function canAffordCard(battlePlayer, card) {
+  return battlePlayerEnergy(battlePlayer, cardEnergyType(card)) + 1e-6 >= cardEnergyCost(card);
+}
 
 function ownTowerProgress(side) {
   return side === 'left' ? LEFT_TOWER_X : RIGHT_TOWER_X;
@@ -143,7 +156,7 @@ function scorePrimaryCard(room, side, battlePlayer, card, alliedFront, threat) {
   if (isJobCard(card)) {
     const currentMoney = Number(room.battle.players[side]?.money || 0);
     const maxMoney = Math.max(1, Number(room.battle.players[side]?.maxMoney || 1));
-    let score = Number(card.effectValue || 0) * 12 - Number(card.elixirCost || 0) * 6;
+    let score = Number(card.effectValue || 0) * 12 - cardEnergyCost(card) * 6;
     if (currentMoney <= maxMoney * 0.25) {
       score += 180;
     } else if (currentMoney <= maxMoney * 0.5) {
@@ -162,7 +175,7 @@ function scorePrimaryCard(room, side, battlePlayer, card, alliedFront, threat) {
     if (!spellTarget) {
       return -220;
     }
-    let score = spellTarget.score - Number(card.elixirCost || 0) * 12;
+    let score = spellTarget.score - cardEnergyCost(card) * 12;
     if (spellTarget.kills >= 2) {
       score += 120;
     }
@@ -172,7 +185,7 @@ function scorePrimaryCard(room, side, battlePlayer, card, alliedFront, threat) {
     return score;
   }
 
-  let score = cardPowerScore(card) - Number(card.elixirCost || 0) * 32;
+  let score = cardPowerScore(card) - cardEnergyCost(card) * 32;
   if (Number(card.attackRange || 0) >= 200) {
     score += 80;
   }
@@ -182,7 +195,7 @@ function scorePrimaryCard(room, side, battlePlayer, card, alliedFront, threat) {
   if (urgentThreat) {
     score += Number(card.attackRange || 0) >= 200 ? 120 : 50;
     score += Number(card.spawnCount || 1) >= 3 ? 110 : 0;
-    score += Number(card.elixirCost || 0) <= 3 ? 70 : 0;
+    score += cardEnergyCost(card) <= 3 ? 70 : 0;
   } else {
     score += alliedFront && Number(card.attackRange || 0) >= 200 ? 130 : 0;
     score += alliedFront && card.targetRule === 'tower' ? 60 : 0;
@@ -195,7 +208,7 @@ function scorePrimaryCard(room, side, battlePlayer, card, alliedFront, threat) {
     score += card.targetRule === 'tower' ? 60 : 0;
   }
 
-  if (battlePlayer.elixir >= 8 && card.type === 'tank') {
+  if (totalBattlePlayerEnergy(battlePlayer) >= 8 && card.type === 'tank') {
     score += 40;
   }
 
@@ -203,7 +216,7 @@ function scorePrimaryCard(room, side, battlePlayer, card, alliedFront, threat) {
 }
 
 function scoreEquipmentCard(primaryCard, equipmentCard) {
-  let score = 40 - Number(equipmentCard.elixirCost || 0) * 8;
+  let score = 40 - cardEnergyCost(equipmentCard) * 8;
   switch (equipmentCard.effectKind) {
     case 'damage_boost':
       score +=
@@ -296,9 +309,7 @@ export function chooseBotCombo(room, side, player, battlePlayer) {
   const handCards = battlePlayer.hand
     .map((cardId) => player.deckCards.find((card) => card.id === cardId))
     .filter(Boolean);
-  const affordable = handCards.filter(
-    (card) => Number(card.elixirCost || 0) <= battlePlayer.elixir + 1e-6
-  );
+  const affordable = handCards.filter((card) => canAffordCard(battlePlayer, card));
   if (affordable.length === 0) {
     return [];
   }
@@ -320,7 +331,7 @@ export function chooseBotCombo(room, side, player, battlePlayer) {
       card,
       score: scorePrimaryCard(room, side, battlePlayer, card, alliedFront, threat)
     }))
-    .sort((a, b) => b.score - a.score || a.card.elixirCost - b.card.elixirCost);
+    .sort((a, b) => b.score - a.score || cardEnergyCost(a.card) - cardEnergyCost(b.card));
 
   const primaryCard = scoredCards[0]?.card ?? null;
 
@@ -330,7 +341,11 @@ export function chooseBotCombo(room, side, player, battlePlayer) {
 
   const comboCards = [primaryCard];
   if (!isJobCard(primaryCard) && primaryCard.type !== 'spell' && playableEquipment.length > 0) {
-    let remainingElixir = battlePlayer.elixir - Number(primaryCard.elixirCost || 0);
+    const remainingPools = {
+      physical: battlePlayerEnergy(battlePlayer, 'physical'),
+      spirit: battlePlayerEnergy(battlePlayer, 'spirit')
+    };
+    remainingPools[cardEnergyType(primaryCard)] -= cardEnergyCost(primaryCard);
     const scoredEquipment = playableEquipment
       .map((card) => ({
         card,
@@ -343,11 +358,11 @@ export function chooseBotCombo(room, side, player, battlePlayer) {
       if (comboCards.length >= MAX_COMBO_CARDS) {
         break;
       }
-      if (Number(entry.card.elixirCost || 0) > remainingElixir + 1e-6) {
+      if (cardEnergyCost(entry.card) > remainingPools[cardEnergyType(entry.card)] + 1e-6) {
         continue;
       }
       comboCards.push(entry.card);
-      remainingElixir -= Number(entry.card.elixirCost || 0);
+      remainingPools[cardEnergyType(entry.card)] -= cardEnergyCost(entry.card);
     }
   }
 

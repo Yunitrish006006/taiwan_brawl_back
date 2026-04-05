@@ -11,6 +11,7 @@ import {
   normalizeHeroId,
   syncBattlePlayerTotals
 } from './royale_heroes.js';
+import { normalizeCardDefinition } from './royale_cards.js';
 
 export function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -59,7 +60,7 @@ export function createPlayer(side, payload) {
     deckId: Number(payload.deck.id),
     deckName: payload.deck.name,
     deckCardIds: payload.deck.cards.map((card) => card.id),
-    deckCards: payload.deck.cards,
+    deckCards: payload.deck.cards.map((card) => normalizeCardDefinition(card)),
     heroId: normalizeHeroId(payload.heroId),
     ready: Boolean(payload.user.isBot),
     connected: Boolean(payload.user.isBot),

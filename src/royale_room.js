@@ -36,7 +36,11 @@ import {
   normalizeHostBattleState,
   nowMs
 } from './royale_room_state.js';
-import { spendBattlePlayerEnergy } from './royale_heroes.js';
+import {
+  canSpendBattlePlayerEnergy,
+  spendBattlePlayerEnergy
+} from './royale_heroes.js';
+import { normalizeCardDefinition } from './royale_cards.js';
 
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
@@ -58,6 +62,13 @@ export class RoyaleRoom {
 
   async load() {
     this.room = await this.state.storage.get('room');
+    if (this.room?.players) {
+      for (const player of Object.values(this.room.players)) {
+        player.deckCards = Array.isArray(player.deckCards)
+          ? player.deckCards.map((card) => normalizeCardDefinition(card))
+          : [];
+      }
+    }
     if (this.room?.status === 'battle') {
       this.ensureTicking();
     }
@@ -646,12 +657,18 @@ export class RoyaleRoom {
       return;
     }
 
-    const totalElixirCost = comboCards.reduce(
-      (sum, card) => sum + Number(card.elixirCost || 0),
-      0
-    );
-    if (battlePlayer.elixir + 1e-6 < totalElixirCost) {
-      this.sendError(userId, 'Not enough energy');
+    const physicalCost = comboCards
+      .filter((card) => card.energyCostType !== 'spirit')
+      .reduce((sum, card) => sum + Number(card.energyCost || card.elixirCost || 0), 0);
+    const spiritCost = comboCards
+      .filter((card) => card.energyCostType === 'spirit')
+      .reduce((sum, card) => sum + Number(card.energyCost || card.elixirCost || 0), 0);
+    if (!canSpendBattlePlayerEnergy(battlePlayer, physicalCost, 'physical')) {
+      this.sendError(userId, 'Not enough Physical Energy');
+      return;
+    }
+    if (!canSpendBattlePlayerEnergy(battlePlayer, spiritCost, 'spirit')) {
+      this.sendError(userId, 'Not enough Spirit Energy');
       return;
     }
 
@@ -675,8 +692,8 @@ export class RoyaleRoom {
     for (const card of comboCards) {
       spendBattlePlayerEnergy(
         battlePlayer,
-        Number(card.elixirCost || 0),
-        card.type === 'spell' ? 'spirit' : 'physical'
+        Number(card.energyCost || card.elixirCost || 0),
+        card.energyCostType === 'spirit' ? 'spirit' : 'physical'
       );
     }
     drawReplacementCards(battlePlayer, comboCards.map((card) => card.id));

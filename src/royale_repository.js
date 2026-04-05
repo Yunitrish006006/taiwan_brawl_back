@@ -1,16 +1,22 @@
-import { defaultDeckCardIds, starterCards } from './royale_cards.js';
+import {
+  defaultDeckCardIds,
+  normalizeCardDefinition,
+  normalizeEnergyCostType,
+  starterCards
+} from './royale_cards.js';
 
 const MAX_CARD_IMAGE_BYTES = 1024 * 1024;
-const CARD_SELECT_COLUMNS = `SELECT id, name, elixir_cost, type, hp, damage, attack_range, move_speed,
+const CARD_SELECT_COLUMNS = `SELECT id, name, elixir_cost, energy_cost, energy_cost_type, type, hp, damage, attack_range, move_speed,
         attack_speed, spawn_count, spell_radius, spell_damage, target_rule,
         effect_kind, effect_value, body_radius, name_zh_hant, name_en, name_ja,
         name_i18n, image_version
  FROM cards`;
-const CARD_WRITE_COLUMNS = `id, name, elixir_cost, type, hp, damage, attack_range, move_speed,
+const CARD_WRITE_COLUMNS = `id, name, elixir_cost, energy_cost, energy_cost_type, type, hp, damage, attack_range, move_speed,
       attack_speed, spawn_count, spell_radius, spell_damage, target_rule,
       effect_kind, effect_value, body_radius, name_zh_hant, name_en, name_ja,
       name_i18n`;
-const CARD_WRITE_PLACEHOLDERS = '?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?';
+const CARD_WRITE_PLACEHOLDERS =
+  '?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?';
 
 function normalizeLocaleKey(locale) {
   const normalized = String(locale ?? '').trim();
@@ -79,6 +85,11 @@ function localizedName(nameI18n, locale, fallbackName = '') {
 }
 
 function serializeCard(row) {
+  const energyCost = Number(row.energy_cost ?? row.elixir_cost ?? 0);
+  const energyCostType = normalizeEnergyCostType(
+    row.energy_cost_type,
+    row.type === 'spell' ? 'spirit' : 'physical'
+  );
   const nameI18n = parseNameI18n(row.name_i18n);
   const fallbackName = String(row.name ?? '').trim();
   const imageVersion = Number(row.image_version || 0);
@@ -113,7 +124,9 @@ function serializeCard(row) {
       'ja',
       fallbackName
     ),
-    elixirCost: Number(row.elixir_cost),
+    energyCost,
+    energyCostType,
+    elixirCost: energyCost,
     type: row.type,
     hp: Number(row.hp),
     damage: Number(row.damage),
@@ -189,14 +202,15 @@ function normalizeCardPayload(payload) {
   const targetRule = String(payload?.targetRule ?? '').trim();
   const effectKind = String(payload?.effectKind ?? 'none').trim() || 'none';
 
-  const card = {
+  const card = normalizeCardDefinition({
     id,
     name,
     nameI18n: mergedNameI18n,
     nameZhHant,
     nameEn,
     nameJa,
-    elixirCost: Number(payload?.elixirCost ?? 0),
+    energyCost: Number(payload?.energyCost ?? payload?.elixirCost ?? 0),
+    energyCostType: normalizeEnergyCostType(payload?.energyCostType, type === 'spell' ? 'spirit' : 'physical'),
     type,
     hp: Number(payload?.hp ?? 0),
     damage: Number(payload?.damage ?? 0),
@@ -210,7 +224,7 @@ function normalizeCardPayload(payload) {
     targetRule,
     effectKind,
     effectValue: Number(payload?.effectValue ?? 0)
-  };
+  });
 
   if (!card.id) {
     throw new Error('Card id is required');
@@ -278,6 +292,8 @@ function cardWriteBindings(card) {
     card.id,
     card.name,
     card.elixirCost,
+    card.energyCost,
+    card.energyCostType,
     card.type,
     card.hp,
     card.damage,
@@ -320,7 +336,7 @@ export async function listCards(env) {
   await ensureCardsSeeded(env);
   const rows = await env.DB.prepare(
     `${CARD_SELECT_COLUMNS}
-     ORDER BY elixir_cost ASC, name ASC`
+     ORDER BY energy_cost ASC, name ASC`
   ).all();
   return rows.results.map(serializeCard);
 }
@@ -335,6 +351,8 @@ export async function upsertCard(env, payload) {
     ON CONFLICT(id) DO UPDATE SET
       name = excluded.name,
       elixir_cost = excluded.elixir_cost,
+      energy_cost = excluded.energy_cost,
+      energy_cost_type = excluded.energy_cost_type,
       type = excluded.type,
       hp = excluded.hp,
       damage = excluded.damage,

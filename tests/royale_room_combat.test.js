@@ -81,14 +81,15 @@ test('chooseBotCombo prefers affordable unit-first plays', () => {
   };
   const player = {
     deckCards: [
-      { id: 'knight', type: 'melee', elixirCost: 3, hp: 900, damage: 150, attackRange: 60, moveSpeed: 140, spawnCount: 1, targetRule: 'ground' },
-      { id: 'fireball', type: 'spell', elixirCost: 4, spellRadius: 130, spellDamage: 280 },
-      { id: 'boots', type: 'equipment', elixirCost: 1, effectKind: 'speed_boost' }
+      { id: 'knight', type: 'melee', energyCost: 3, energyCostType: 'physical', hp: 900, damage: 150, attackRange: 60, moveSpeed: 140, spawnCount: 1, targetRule: 'ground' },
+      { id: 'fireball', type: 'spell', energyCost: 4, energyCostType: 'spirit', spellRadius: 130, spellDamage: 280 },
+      { id: 'boots', type: 'equipment', energyCost: 1, energyCostType: 'physical', effectKind: 'speed_boost' }
     ]
   };
   const battlePlayer = {
     hand: ['knight', 'fireball', 'boots'],
-    elixir: 4
+    physicalEnergy: 4,
+    spiritEnergy: 0
   };
 
   const combo = chooseBotCombo(room, 'left', player, battlePlayer);
@@ -115,14 +116,15 @@ test('chooseBotCombo uses spells to answer clustered pressure near tower', () =>
   };
   const player = {
     deckCards: [
-      { id: 'knight', type: 'melee', elixirCost: 3, hp: 900, damage: 150, attackRange: 60, moveSpeed: 140, spawnCount: 1, targetRule: 'ground' },
-      { id: 'fireball', type: 'spell', elixirCost: 4, spellRadius: 130, spellDamage: 280 },
-      { id: 'boots', type: 'equipment', elixirCost: 1, effectKind: 'speed_boost' }
+      { id: 'knight', type: 'melee', energyCost: 3, energyCostType: 'physical', hp: 900, damage: 150, attackRange: 60, moveSpeed: 140, spawnCount: 1, targetRule: 'ground' },
+      { id: 'fireball', type: 'spell', energyCost: 4, energyCostType: 'spirit', spellRadius: 130, spellDamage: 280 },
+      { id: 'boots', type: 'equipment', energyCost: 1, energyCostType: 'physical', effectKind: 'speed_boost' }
     ]
   };
   const battlePlayer = {
     hand: ['knight', 'fireball', 'boots'],
-    elixir: 4
+    physicalEnergy: 1,
+    spiritEnergy: 4
   };
 
   const combo = chooseBotCombo(room, 'left', player, battlePlayer);

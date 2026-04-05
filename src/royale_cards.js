@@ -1,7 +1,40 @@
+export function normalizeEnergyCostType(value, fallback = 'physical') {
+  const candidate = String(value ?? '').trim().toLowerCase();
+  if (candidate === 'spirit') {
+    return 'spirit';
+  }
+  if (candidate === 'physical') {
+    return 'physical';
+  }
+  return fallback === 'spirit' ? 'spirit' : 'physical';
+}
+
+export function inferCardEnergyCostType(card = {}) {
+  return String(card.type || '').trim().toLowerCase() === 'spell'
+    ? 'spirit'
+    : 'physical';
+}
+
+export function normalizeCardDefinition(card = {}) {
+  const energyCost = Number(card.energyCost ?? card.elixirCost ?? 0);
+  const energyCostType = normalizeEnergyCostType(
+    card.energyCostType,
+    inferCardEnergyCostType(card)
+  );
+
+  return {
+    ...card,
+    energyCost,
+    energyCostType,
+    elixirCost: energyCost
+  };
+}
+
 function baseCard(card) {
-  const nameZhHant = card.nameZhHant ?? card.name ?? '';
-  const nameEn = card.nameEn ?? card.name ?? '';
-  const nameJa = card.nameJa ?? card.name ?? '';
+  const normalizedCard = normalizeCardDefinition(card);
+  const nameZhHant = normalizedCard.nameZhHant ?? normalizedCard.name ?? '';
+  const nameEn = normalizedCard.nameEn ?? normalizedCard.name ?? '';
+  const nameJa = normalizedCard.nameJa ?? normalizedCard.name ?? '';
   return {
     bodyRadius: 18,
     effectKind: 'none',
@@ -14,7 +47,7 @@ function baseCard(card) {
       en: nameEn,
       ja: nameJa,
     },
-    ...card
+    ...normalizedCard
   };
 }
 
@@ -373,7 +406,7 @@ export const starterCards = [
     effectKind: 'job_day_labor',
     effectValue: 14
   })
-];
+].map(baseCard);
 
 export const defaultDeckCardIds = [
   'swordsman',

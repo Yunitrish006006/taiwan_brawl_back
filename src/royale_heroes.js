@@ -320,17 +320,41 @@ export function regenerateBattlePlayerResources(playerState, dt) {
 
 export function spendBattlePlayerEnergy(playerState, amount, preferredPool = 'physical') {
   ensureBattlePlayerMeters(playerState);
-  const total = totalEnergy(playerState);
-  if (total + 1e-6 < normalizedNumber(amount)) {
-    return false;
+  const normalizedAmount = normalizedNumber(amount);
+  if (preferredPool === 'spirit') {
+    if (normalizedNumber(playerState.spiritEnergy) + 1e-6 < normalizedAmount) {
+      return false;
+    }
+    playerState.spiritEnergy = normalizedNumber(playerState.spiritEnergy) - normalizedAmount;
+  } else {
+    if (normalizedNumber(playerState.physicalEnergy) + 1e-6 < normalizedAmount) {
+      return false;
+    }
+    playerState.physicalEnergy = normalizedNumber(playerState.physicalEnergy) - normalizedAmount;
   }
 
-  if (preferredPool === 'spirit') {
-    drainMeter(playerState, amount, 'spiritEnergy', 'physicalEnergy');
-  } else {
-    drainMeter(playerState, amount, 'physicalEnergy', 'spiritEnergy');
-  }
   syncBattlePlayerTotals(playerState);
+  return true;
+}
+
+export function battlePlayerEnergy(playerState, preferredPool = 'physical') {
+  ensureBattlePlayerMeters(playerState);
+  if (preferredPool === 'spirit') {
+    return normalizedNumber(playerState.spiritEnergy);
+  }
+  return normalizedNumber(playerState.physicalEnergy);
+}
+
+export function totalBattlePlayerEnergy(playerState) {
+  ensureBattlePlayerMeters(playerState);
+  return totalEnergy(playerState);
+}
+
+export function canSpendBattlePlayerEnergy(playerState, amount, preferredPool = 'physical') {
+  ensureBattlePlayerMeters(playerState);
+  if (battlePlayerEnergy(playerState, preferredPool) + 1e-6 < normalizedNumber(amount)) {
+    return false;
+  }
   return true;
 }
 
