@@ -86,10 +86,13 @@ function localizedName(nameI18n, locale, fallbackName = '') {
 
 function serializeCard(row) {
   const energyCost = Number(row.energy_cost ?? row.elixir_cost ?? 0);
-  const energyCostType = normalizeEnergyCostType(
-    row.energy_cost_type,
-    row.type === 'spell' ? 'spirit' : 'physical'
-  );
+  const energyCostType =
+    row.type === 'equipment'
+      ? 'money'
+      : normalizeEnergyCostType(
+          row.energy_cost_type,
+          row.type === 'spell' ? 'spirit' : 'physical'
+        );
   const nameI18n = parseNameI18n(row.name_i18n);
   const fallbackName = String(row.name ?? '').trim();
   const imageVersion = Number(row.image_version || 0);
@@ -209,7 +212,10 @@ function normalizeCardPayload(payload) {
     nameEn,
     nameJa,
     energyCost: Number(payload?.energyCost ?? payload?.elixirCost ?? 0),
-    energyCostType: normalizeEnergyCostType(payload?.energyCostType, type === 'spell' ? 'spirit' : 'physical'),
+    energyCostType: normalizeEnergyCostType(
+      payload?.energyCostType,
+      type === 'equipment' ? 'money' : type === 'spell' ? 'spirit' : 'physical'
+    ),
     type,
     hp: Number(payload?.hp ?? 0),
     damage: Number(payload?.damage ?? 0),

@@ -336,6 +336,17 @@ export function spendBattlePlayerEnergy(playerState, amount, preferredPool = 'ph
   return true;
 }
 
+export function spendBattlePlayerMoney(playerState, amount) {
+  ensureBattlePlayerMeters(playerState);
+  const normalizedAmount = normalizedNumber(amount);
+  if (normalizedNumber(playerState.money) + 1e-6 < normalizedAmount) {
+    return false;
+  }
+  playerState.money = normalizedNumber(playerState.money) - normalizedAmount;
+  syncBattlePlayerTotals(playerState);
+  return true;
+}
+
 export function battlePlayerEnergy(playerState, preferredPool = 'physical') {
   ensureBattlePlayerMeters(playerState);
   if (preferredPool === 'spirit') {
@@ -355,6 +366,11 @@ export function canSpendBattlePlayerEnergy(playerState, amount, preferredPool = 
     return false;
   }
   return true;
+}
+
+export function canSpendBattlePlayerMoney(playerState, amount) {
+  ensureBattlePlayerMeters(playerState);
+  return normalizedNumber(playerState.money) + 1e-6 >= normalizedNumber(amount);
 }
 
 export function applyBattlePlayerDamage(playerState, amount, preferredPool = 'physical') {

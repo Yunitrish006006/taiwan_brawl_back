@@ -48,6 +48,7 @@ test('handleCreate forces bot rooms into host simulation mode', async () => {
         code: 'ABC123',
         user: { id: 7, name: 'Host User' },
         deck: sampleDeck(),
+        heroId: 'low_income_household',
         vsBot: true,
         simulationMode: 'server'
       })
@@ -58,4 +59,6 @@ test('handleCreate forces bot rooms into host simulation mode', async () => {
   assert.equal(response.status, 200);
   assert.equal(payload.room.simulationMode, 'host');
   assert.equal(state.storageData.get('room').simulationMode, 'host');
+  assert.equal(state.storageData.get('room').players.left.heroId, 'low_income_household');
+  assert.equal(state.storageData.get('room').players.right.heroId, 'low_income_household');
 });

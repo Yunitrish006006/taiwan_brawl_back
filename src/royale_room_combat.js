@@ -19,11 +19,21 @@ function cardEnergyCost(card) {
 }
 
 function cardEnergyType(card) {
+  if (card.energyCostType === 'money') {
+    return 'money';
+  }
   return card.energyCostType === 'spirit' ? 'spirit' : 'physical';
 }
 
+function battlePlayerResourceForType(battlePlayer, resourceType) {
+  if (resourceType === 'money') {
+    return Number(battlePlayer?.money || 0);
+  }
+  return battlePlayerEnergy(battlePlayer, resourceType);
+}
+
 function canAffordCard(battlePlayer, card) {
-  return battlePlayerEnergy(battlePlayer, cardEnergyType(card)) + 1e-6 >= cardEnergyCost(card);
+  return battlePlayerResourceForType(battlePlayer, cardEnergyType(card)) + 1e-6 >= cardEnergyCost(card);
 }
 
 function ownTowerProgress(side) {
@@ -343,7 +353,8 @@ export function chooseBotCombo(room, side, player, battlePlayer) {
   if (!isJobCard(primaryCard) && primaryCard.type !== 'spell' && playableEquipment.length > 0) {
     const remainingPools = {
       physical: battlePlayerEnergy(battlePlayer, 'physical'),
-      spirit: battlePlayerEnergy(battlePlayer, 'spirit')
+      spirit: battlePlayerEnergy(battlePlayer, 'spirit'),
+      money: Number(battlePlayer.money || 0)
     };
     remainingPools[cardEnergyType(primaryCard)] -= cardEnergyCost(primaryCard);
     const scoredEquipment = playableEquipment

@@ -38,6 +38,8 @@ import {
 } from './royale_room_state.js';
 import {
   canSpendBattlePlayerEnergy,
+  canSpendBattlePlayerMoney,
+  spendBattlePlayerMoney,
   spendBattlePlayerEnergy
 } from './royale_heroes.js';
 import { normalizeCardDefinition } from './royale_cards.js';
@@ -298,7 +300,8 @@ export class RoyaleRoom {
           name: '基礎機器人',
           isBot: true
         },
-        deck: payload.botDeck || payload.deck
+        deck: payload.botDeck || payload.deck,
+        heroId: payload.heroId
       });
     }
     await this.persist(true);
@@ -658,10 +661,13 @@ export class RoyaleRoom {
     }
 
     const physicalCost = comboCards
-      .filter((card) => card.energyCostType !== 'spirit')
+      .filter((card) => card.energyCostType === 'physical')
       .reduce((sum, card) => sum + Number(card.energyCost || 0), 0);
     const spiritCost = comboCards
       .filter((card) => card.energyCostType === 'spirit')
+      .reduce((sum, card) => sum + Number(card.energyCost || 0), 0);
+    const moneyCost = comboCards
+      .filter((card) => card.energyCostType === 'money')
       .reduce((sum, card) => sum + Number(card.energyCost || 0), 0);
     if (!canSpendBattlePlayerEnergy(battlePlayer, physicalCost, 'physical')) {
       this.sendError(userId, 'Not enough Physical Energy');
@@ -669,6 +675,10 @@ export class RoyaleRoom {
     }
     if (!canSpendBattlePlayerEnergy(battlePlayer, spiritCost, 'spirit')) {
       this.sendError(userId, 'Not enough Spirit Energy');
+      return;
+    }
+    if (!canSpendBattlePlayerMoney(battlePlayer, moneyCost)) {
+      this.sendError(userId, 'Not enough Money');
       return;
     }
 
@@ -690,11 +700,15 @@ export class RoyaleRoom {
     const comboEquipmentEffects = equipmentEffects(comboCards);
 
     for (const card of comboCards) {
-      spendBattlePlayerEnergy(
-        battlePlayer,
-        Number(card.energyCost || 0),
-        card.energyCostType === 'spirit' ? 'spirit' : 'physical'
-      );
+      if (card.energyCostType === 'money') {
+        spendBattlePlayerMoney(battlePlayer, Number(card.energyCost || 0));
+      } else {
+        spendBattlePlayerEnergy(
+          battlePlayer,
+          Number(card.energyCost || 0),
+          card.energyCostType === 'spirit' ? 'spirit' : 'physical'
+        );
+      }
     }
     drawReplacementCards(battlePlayer, comboCards.map((card) => card.id));
 

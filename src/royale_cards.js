@@ -1,26 +1,38 @@
 export function normalizeEnergyCostType(value, fallback = 'physical') {
   const candidate = String(value ?? '').trim().toLowerCase();
+  if (candidate === 'money') {
+    return 'money';
+  }
   if (candidate === 'spirit') {
     return 'spirit';
   }
   if (candidate === 'physical') {
     return 'physical';
   }
+  if (fallback === 'money') {
+    return 'money';
+  }
   return fallback === 'spirit' ? 'spirit' : 'physical';
 }
 
 export function inferCardEnergyCostType(card = {}) {
-  return String(card.type || '').trim().toLowerCase() === 'spell'
-    ? 'spirit'
-    : 'physical';
+  const normalizedType = String(card.type || '').trim().toLowerCase();
+  if (normalizedType === 'equipment') {
+    return 'money';
+  }
+  return normalizedType === 'spell' ? 'spirit' : 'physical';
 }
 
 export function normalizeCardDefinition(card = {}) {
   const energyCost = Number(card.energyCost ?? card.elixirCost ?? 0);
-  const energyCostType = normalizeEnergyCostType(
-    card.energyCostType,
-    inferCardEnergyCostType(card)
-  );
+  const normalizedType = String(card.type || '').trim().toLowerCase();
+  const energyCostType =
+    normalizedType === 'equipment'
+      ? 'money'
+      : normalizeEnergyCostType(
+          card.energyCostType,
+          inferCardEnergyCostType(card)
+        );
 
   return {
     ...card,
