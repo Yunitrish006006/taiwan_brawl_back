@@ -732,6 +732,7 @@ export class RoyaleRoom {
         equipment: comboEquipmentEffects.map((effect) => effect.name)
       }
     });
+    await this.broadcast('state_snapshot');
 
     await this.persist();
   }

@@ -1,4 +1,4 @@
-export const TICK_MS = 100;
+export const TICK_MS = 66;
 export const MATCH_DURATION_MS = 210000;
 export const WORLD_SCALE = 1000;
 export const CENTER_LATERAL = WORLD_SCALE / 2;
