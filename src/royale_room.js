@@ -42,6 +42,7 @@ import {
   spendBattlePlayerMoney,
   spendBattlePlayerEnergy
 } from './royale_heroes.js';
+import { normalizeBotController } from './royale_llm_bot.js';
 import { normalizeCardDefinition } from './royale_cards.js';
 
 function json(data, status = 200) {
@@ -294,11 +295,13 @@ export class RoyaleRoom {
     };
 
     if (payload.vsBot) {
+      const botController = normalizeBotController(payload.botController);
       this.room.players.right = createPlayer('right', {
         user: {
           id: 0,
-          name: '基礎機器人',
-          isBot: true
+          name: botController === 'llm' ? 'LLM Bot' : 'Heuristic Bot',
+          isBot: true,
+          botController
         },
         deck: payload.botDeck || payload.deck,
         heroId: payload.heroId

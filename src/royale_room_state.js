@@ -11,6 +11,7 @@ import {
   normalizeHeroId,
   syncBattlePlayerTotals
 } from './royale_heroes.js';
+import { normalizeBotController } from './royale_llm_bot.js';
 import { normalizeCardDefinition } from './royale_cards.js';
 
 export function clone(value) {
@@ -62,6 +63,9 @@ export function createPlayer(side, payload) {
     deckCardIds: payload.deck.cards.map((card) => card.id),
     deckCards: payload.deck.cards.map((card) => normalizeCardDefinition(card)),
     heroId: normalizeHeroId(payload.heroId),
+    botController: Boolean(payload.user.isBot)
+      ? normalizeBotController(payload.user.botController)
+      : 'heuristic',
     ready: Boolean(payload.user.isBot),
     connected: Boolean(payload.user.isBot),
     isBot: Boolean(payload.user.isBot),
@@ -78,6 +82,9 @@ export function buildPlayerSnapshot(player, battleState, includeDeckState) {
     deckName: player.deckName,
     deckCards: includeDeckState ? player.deckCards : undefined,
     hero: buildHeroSnapshot(player.heroId),
+    botController: Boolean(player.isBot)
+      ? normalizeBotController(player.botController)
+      : 'heuristic',
     handCardIds: includeDeckState ? battleState?.hand ?? player.deckCardIds.slice(0, 4) : undefined,
     queueCardIds: includeDeckState ? battleState?.queue ?? player.deckCardIds.slice(4) : undefined,
     isBot: Boolean(player.isBot),

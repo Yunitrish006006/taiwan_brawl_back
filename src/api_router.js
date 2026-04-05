@@ -7,6 +7,7 @@ import {
   exactFriendsApiRouteHandler,
   handleDynamicFriendRoutes
 } from './friends_api.js';
+import { exactLlmBotApiRouteHandler } from './llm_bot_api.js';
 import {
   exactRoomsApiRouteHandler,
   handleDynamicRoomRoutes
@@ -15,6 +16,7 @@ import {
   handleDeleteAvatarImage,
   handleGetCurrentUser,
   handleUpdateCurrentUser,
+  handleUpdateLlmBotSettings,
   handleUpdateLocale,
   handleUpdateThemeMode,
   handleUpdateUiPreferences,
@@ -46,12 +48,15 @@ function exactApiRouteHandler(request, env, url) {
       return () => handleUpdateUiPreferences(request, env);
     case 'PUT /api/users/locale':
       return () => handleUpdateLocale(request, env);
+    case 'PUT /api/users/llm-bot-settings':
+      return () => handleUpdateLlmBotSettings(request, env);
     case 'POST /api/logout':
       return () => handleLogout(request, env);
     case 'POST /api/google-login':
       return () => handleGoogleLogin(request, env);
     default:
       return (
+        exactLlmBotApiRouteHandler(request, env, url) ??
         exactAdminApiRouteHandler(request, env, url) ??
         exactFriendsApiRouteHandler(request, env, url) ??
         exactRoomsApiRouteHandler(request, env, url)

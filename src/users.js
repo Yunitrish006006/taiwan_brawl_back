@@ -5,6 +5,11 @@ import {
   jsonResponse,
   resolveAvatarUrlForSource
 } from './utils.js';
+import {
+  buildLlmBotSettingsSnapshot,
+  normalizeLlmBotBaseUrl,
+  normalizeLlmBotModel
+} from './royale_llm_bot.js';
 
 const VALID_AVATAR_SOURCES = ['google', 'custom', 'upload'];
 const VALID_LOCALES = ['zh-Hant', 'en', 'ja'];
@@ -342,5 +347,72 @@ export async function handleUpdateUiPreferences(request, env) {
       .run();
 
     return jsonResponse({ ok: true }, 200, request);
+  });
+}
+
+export async function handleUpdateLlmBotSettings(request, env) {
+  return withCurrentUser(request, env, async (user) => {
+    const body = await request.json().catch(() => null);
+    if (!body || typeof body !== 'object') {
+      return jsonResponse({ error: 'Invalid body' }, 400, request);
+    }
+
+    const baseUrl = normalizeLlmBotBaseUrl(
+      body.base_url !== undefined ? body.base_url : user.llm_base_url
+    );
+    const model = normalizeLlmBotModel(
+      body.model !== undefined ? body.model : user.llm_model
+    );
+
+    if (!baseUrl.startsWith('https://') && !baseUrl.startsWith('http://')) {
+      return jsonResponse({ error: 'base_url must start with http:// or https://' }, 400, request);
+    }
+    if (!model.trim()) {
+      return jsonResponse({ error: 'model is required' }, 400, request);
+    }
+
+    let nextApiKey = undefined;
+    if (body.api_key !== undefined) {
+      const normalizedApiKey = String(body.api_key ?? '').trim();
+      nextApiKey = normalizedApiKey.length === 0 ? null : normalizedApiKey;
+    }
+
+    await env.DB.prepare(
+      `UPDATE users
+       SET llm_base_url = ?, llm_model = ?,
+           llm_api_key = COALESCE(?, llm_api_key),
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`
+    )
+      .bind(baseUrl, model, nextApiKey, user.id)
+      .run();
+
+    if (body.api_key !== undefined && String(body.api_key ?? '').trim().length === 0) {
+      await env.DB.prepare(
+        `UPDATE users
+         SET llm_api_key = NULL, updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?`
+      )
+        .bind(user.id)
+        .run();
+    }
+
+    return jsonResponse(
+      {
+        ok: true,
+        settings: buildLlmBotSettingsSnapshot({
+          llm_base_url: baseUrl,
+          llm_model: model,
+          llm_api_key:
+            nextApiKey === undefined
+              ? user.llm_has_api_key
+                ? 'configured'
+                : null
+              : nextApiKey
+        })
+      },
+      200,
+      request
+    );
   });
 }

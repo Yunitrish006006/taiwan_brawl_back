@@ -2,7 +2,8 @@ import { normalizeRole } from './permissions.js';
 
 export const USER_SELECT_COLUMNS = `SELECT id, name, email, role, bio, avatar_url, google_avatar_url,
         custom_avatar_url, avatar_source, uploaded_avatar_version,
-        last_active_at, theme_mode, font_size_scale, locale
+        last_active_at, theme_mode, font_size_scale, locale,
+        llm_base_url, llm_model, llm_api_key
  FROM users`;
 
 export function corsHeaders(request) {
@@ -103,7 +104,11 @@ export function mapUserRow(row) {
     custom_avatar_url: customAvatarUrl,
     uploaded_avatar_version: uploadedAvatarVersion,
     uploaded_avatar_url: uploadedAvatarUrl,
-    avatar_url: effectiveAvatarUrl
+    avatar_url: effectiveAvatarUrl,
+    llm_base_url: row.llm_base_url ?? null,
+    llm_model: row.llm_model ?? null,
+    llm_api_key: undefined,
+    llm_has_api_key: String(row.llm_api_key ?? '').trim().length > 0
   };
 }
 

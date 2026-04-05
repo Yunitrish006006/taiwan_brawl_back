@@ -3,6 +3,7 @@ import {
   listHeroDefinitions,
   normalizeHeroId
 } from './royale_heroes.js';
+import { normalizeBotController } from './royale_llm_bot.js';
 import {
   getDeckForUser,
   listCards,
@@ -72,6 +73,7 @@ async function handleCreateRoom(request, env) {
     const vsBot = Boolean(body?.vsBot);
     const simulationMode = vsBot ? 'host' : normalizeSimulationMode(body?.simulationMode);
     const heroId = normalizeHeroId(body?.heroId);
+    const botController = vsBot ? normalizeBotController(body?.botController) : 'heuristic';
 
     for (let attempt = 0; attempt < 5; attempt += 1) {
       const code = randomRoomCode();
@@ -87,6 +89,7 @@ async function handleCreateRoom(request, env) {
             heroId,
             vsBot,
             botDeck: deck,
+            botController,
             simulationMode
           })
         })
