@@ -313,9 +313,7 @@ async function insertStarterCards(env) {
 }
 
 export async function ensureCardsSeeded(env) {
-  if (!(await countRows(env, 'SELECT COUNT(*) AS count FROM cards'))) {
-    await insertStarterCards(env);
-  }
+  await insertStarterCards(env);
 }
 
 export async function listCards(env) {

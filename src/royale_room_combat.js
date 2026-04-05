@@ -11,6 +11,7 @@ import {
   sanitizeLateralPosition,
   sideDirection
 } from './royale_battle_rules.js';
+import { isJobCard } from './royale_job_events.js';
 
 function ownTowerProgress(side) {
   return side === 'left' ? LEFT_TOWER_X : RIGHT_TOWER_X;
@@ -138,6 +139,23 @@ function scorePrimaryCard(room, side, battlePlayer, card, alliedFront, threat) {
   const enemySide = side === 'left' ? 'right' : 'left';
   const ownTowerHp = Number(room.battle.players[side]?.towerHp || 0);
   const enemyTowerHp = Number(room.battle.players[enemySide]?.towerHp || 0);
+
+  if (isJobCard(card)) {
+    const currentMoney = Number(room.battle.players[side]?.money || 0);
+    const maxMoney = Math.max(1, Number(room.battle.players[side]?.maxMoney || 1));
+    let score = Number(card.effectValue || 0) * 12 - Number(card.elixirCost || 0) * 6;
+    if (currentMoney <= maxMoney * 0.25) {
+      score += 180;
+    } else if (currentMoney <= maxMoney * 0.5) {
+      score += 90;
+    } else {
+      score -= 40;
+    }
+    if (urgentThreat) {
+      score -= 70;
+    }
+    return score;
+  }
 
   if (card.type === 'spell') {
     const spellTarget = evaluateSpellTarget(room, side, card);
@@ -285,8 +303,9 @@ export function chooseBotCombo(room, side, player, battlePlayer) {
     return [];
   }
 
+  const playableJobs = affordable.filter((card) => isJobCard(card));
   const playableUnits = affordable.filter(
-    (card) => card.type !== 'equipment' && card.type !== 'spell'
+    (card) => !isJobCard(card) && card.type !== 'equipment' && card.type !== 'spell'
   );
   const playableSpells = affordable.filter((card) => card.type === 'spell');
   const playableEquipment = affordable.filter((card) => card.type === 'equipment');
@@ -296,7 +315,7 @@ export function chooseBotCombo(room, side, player, battlePlayer) {
   const threat = selectPriorityThreat(side, enemyUnits);
   const alliedFront = selectAlliedFront(side, alliedUnits);
 
-  const scoredCards = [...playableUnits, ...playableSpells]
+  const scoredCards = [...playableJobs, ...playableUnits, ...playableSpells]
     .map((card) => ({
       card,
       score: scorePrimaryCard(room, side, battlePlayer, card, alliedFront, threat)
@@ -310,7 +329,7 @@ export function chooseBotCombo(room, side, player, battlePlayer) {
   }
 
   const comboCards = [primaryCard];
-  if (primaryCard.type !== 'spell' && playableEquipment.length > 0) {
+  if (!isJobCard(primaryCard) && primaryCard.type !== 'spell' && playableEquipment.length > 0) {
     let remainingElixir = battlePlayer.elixir - Number(primaryCard.elixirCost || 0);
     const scoredEquipment = playableEquipment
       .map((card) => ({
@@ -364,6 +383,11 @@ export function resolveComboCards(player, battlePlayer, cardIds, sendError) {
       return null;
     }
     comboCards.push(card);
+  }
+
+  if (comboCards.some((card) => isJobCard(card)) && comboCards.length !== 1) {
+    sendError('Job cards must be played alone');
+    return null;
   }
 
   return comboCards;

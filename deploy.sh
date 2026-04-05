@@ -299,7 +299,42 @@ resolve_frontend_dir() {
   exit 1
 }
 
+resolve_flutter_bin_dir() {
+  if [[ -n "${FLUTTER_BIN_DIR:-}" && -x "${FLUTTER_BIN_DIR}/flutter" && -x "${FLUTTER_BIN_DIR}/dart" ]]; then
+    printf '%s\n' "${FLUTTER_BIN_DIR}"
+    return 0
+  fi
+
+  local resolved_flutter candidate
+  resolved_flutter="$(command -v flutter 2>/dev/null || true)"
+  local candidates=(
+    "/Volumes/DataExtended/flutter/bin"
+    "${HOME}/flutter/bin"
+    "${HOME}/development/flutter/bin"
+  )
+
+  if [[ -n "${resolved_flutter}" ]]; then
+    candidates=(
+      "$(dirname "${resolved_flutter}")"
+      "${candidates[@]}"
+    )
+  fi
+
+  for candidate in "${candidates[@]}"; do
+    if [[ -n "${candidate}" && -x "${candidate}/flutter" && -x "${candidate}/dart" ]]; then
+      printf '%s\n' "${candidate}"
+      return 0
+    fi
+  done
+
+  echo "Unable to locate Flutter SDK bin directory." >&2
+  echo "Set FLUTTER_BIN_DIR or install Flutter under /Volumes/DataExtended/flutter/bin" >&2
+  exit 1
+}
+
 FRONTEND_DIR="$(resolve_frontend_dir)"
+FLUTTER_BIN_DIR="$(resolve_flutter_bin_dir)"
+export PATH="${FLUTTER_BIN_DIR}:${PATH}"
 PUBSPEC="${FRONTEND_DIR}/pubspec.yaml"
 BACKEND_DIR="${SCRIPT_DIR}"
 ASSETS_PATH="${BACKEND_DIR}/assets.json"
@@ -329,6 +364,7 @@ echo "Taiwan Brawl Auto Deployment"
 echo "Version: ${VERSION}"
 echo "Version bump: ${RESOLVED_VERSION_BUMP} (base ${BASE_VERSION})"
 echo "Frontend: ${FRONTEND_DIR}"
+echo "Flutter SDK: ${FLUTTER_BIN_DIR}"
 echo "Wrangler: ${WRANGLER_PACKAGE}"
 echo "======================================"
 echo

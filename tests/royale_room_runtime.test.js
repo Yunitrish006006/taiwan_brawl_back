@@ -54,6 +54,9 @@ test('resolveSpellEffect damages enemy units and tower in range', () => {
 
 test('spawnBattleUnits creates localized units with effects and spacing', () => {
   const room = {
+    players: {
+      left: { heroId: 'low_income_household' }
+    },
     battle: {
       units: [],
       nextUnitId: 1
@@ -83,6 +86,7 @@ test('spawnBattleUnits creates localized units with effects and spacing', () => 
 
   assert.equal(room.battle.units.length, 2);
   assert.equal(room.battle.units[0].effects[0], 'Boots');
+  assert.equal(room.battle.units[0].damage, 35);
   assert.notEqual(room.battle.units[0].lateralPosition, room.battle.units[1].lateralPosition);
 });
 

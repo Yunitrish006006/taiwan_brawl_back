@@ -2,11 +2,15 @@ import {
   BOT_MIN_THINK_MS,
   CENTER_LATERAL,
   MATCH_DURATION_MS,
-  TOWER_HP,
   bodyRadiusForUnitType,
-  clamp,
   displayAttackReach
 } from './royale_battle_rules.js';
+import {
+  buildHeroSnapshot,
+  buildInitialBattlePlayerState,
+  normalizeHeroId,
+  syncBattlePlayerTotals
+} from './royale_heroes.js';
 
 export function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -16,11 +20,16 @@ export function nowMs() {
   return Date.now();
 }
 
+function metric(value) {
+  return Number((Number(value) || 0).toFixed(1));
+}
+
 export function createBattleState(playersBySide) {
   return {
     timeRemainingMs: MATCH_DURATION_MS,
     startedAt: new Date().toISOString(),
     units: [],
+    events: [],
     nextUnitId: 1,
     result: null,
     players: Object.fromEntries(
@@ -29,12 +38,12 @@ export function createBattleState(playersBySide) {
         return [
           side,
           {
-            elixir: 5,
+            ...buildInitialBattlePlayerState(player.heroId, {
+              isBot: Boolean(player.isBot)
+            }),
             hand: queue.splice(0, 4),
             queue,
-            botThinkMs: player.isBot ? BOT_MIN_THINK_MS : 0,
-            towerHp: TOWER_HP,
-            maxTowerHp: TOWER_HP
+            botThinkMs: player.isBot ? BOT_MIN_THINK_MS : 0
           }
         ];
       })
@@ -51,6 +60,7 @@ export function createPlayer(side, payload) {
     deckName: payload.deck.name,
     deckCardIds: payload.deck.cards.map((card) => card.id),
     deckCards: payload.deck.cards,
+    heroId: normalizeHeroId(payload.heroId),
     ready: Boolean(payload.user.isBot),
     connected: Boolean(payload.user.isBot),
     isBot: Boolean(payload.user.isBot),
@@ -66,14 +76,30 @@ export function buildPlayerSnapshot(player, battleState, includeDeckState) {
     deckId: player.deckId,
     deckName: player.deckName,
     deckCards: includeDeckState ? player.deckCards : undefined,
+    hero: buildHeroSnapshot(player.heroId),
     elixir: includeDeckState ? Number((battleState?.elixir ?? 5).toFixed(1)) : undefined,
     handCardIds: includeDeckState ? battleState?.hand ?? player.deckCardIds.slice(0, 4) : undefined,
     queueCardIds: includeDeckState ? battleState?.queue ?? player.deckCardIds.slice(4) : undefined,
     isBot: Boolean(player.isBot),
     ready: player.ready,
     connected: player.connected,
-    towerHp: battleState?.towerHp ?? TOWER_HP,
-    maxTowerHp: battleState?.maxTowerHp ?? TOWER_HP
+    physicalHealth: metric(battleState?.physicalHealth),
+    maxPhysicalHealth: metric(battleState?.maxPhysicalHealth),
+    physicalHealthRegen: metric(battleState?.physicalHealthRegen),
+    spiritHealth: metric(battleState?.spiritHealth),
+    maxSpiritHealth: metric(battleState?.maxSpiritHealth),
+    spiritHealthRegen: metric(battleState?.spiritHealthRegen),
+    physicalEnergy: metric(battleState?.physicalEnergy),
+    maxPhysicalEnergy: metric(battleState?.maxPhysicalEnergy),
+    physicalEnergyRegen: metric(battleState?.physicalEnergyRegen),
+    spiritEnergy: metric(battleState?.spiritEnergy),
+    maxSpiritEnergy: metric(battleState?.maxSpiritEnergy),
+    spiritEnergyRegen: metric(battleState?.spiritEnergyRegen),
+    money: metric(battleState?.money),
+    maxMoney: metric(battleState?.maxMoney),
+    moneyPerSecond: metric(battleState?.moneyPerSecond),
+    towerHp: battleState?.towerHp ?? 0,
+    maxTowerHp: battleState?.maxTowerHp ?? 0
   };
 }
 
@@ -106,6 +132,8 @@ export function buildBattleSnapshot(room, viewer, battlePlayer) {
   return {
     timeRemainingMs: Math.max(0, Math.floor(room.battle.timeRemainingMs)),
     yourElixir: battlePlayer ? Number(battlePlayer.elixir.toFixed(1)) : 0,
+    yourMaxElixir: battlePlayer ? Number((battlePlayer.maxElixir ?? 0).toFixed(1)) : 0,
+    yourMoney: battlePlayer ? Number((battlePlayer.money ?? 0).toFixed(1)) : 0,
     yourHand: battlePlayer
       ? battlePlayer.hand
           .map((cardId) => viewer.deckCards.find((card) => card.id === cardId))
@@ -113,19 +141,61 @@ export function buildBattleSnapshot(room, viewer, battlePlayer) {
       : [],
     nextCardId: battlePlayer?.queue?.[0] ?? null,
     units: room.battle.units.map((unit) => buildUnitSnapshot(unit)),
+    events: Array.isArray(room.battle.events) ? room.battle.events.map(clone) : [],
     result: room.battle.result
   };
 }
 
-function normalizeBattlePlayerState(playerState = {}) {
+function normalizeBattleEventState(event = {}) {
   return {
+    id: String(event.id || ''),
+    kind: String(event.kind || 'job_outcome'),
+    side: event.side === 'right' ? 'right' : 'left',
+    cardId: String(event.cardId || ''),
+    cardName: String(event.cardName || ''),
+    cardNameZhHant: String(event.cardNameZhHant || event.cardName || ''),
+    cardNameEn: String(event.cardNameEn || event.cardName || ''),
+    cardNameJa: String(event.cardNameJa || event.cardName || ''),
+    title: String(event.title || event.titleEn || ''),
+    titleZhHant: String(event.titleZhHant || event.title || ''),
+    titleEn: String(event.titleEn || event.title || ''),
+    titleJa: String(event.titleJa || event.title || ''),
+    description: String(event.description || event.descriptionEn || ''),
+    descriptionZhHant: String(event.descriptionZhHant || event.description || ''),
+    descriptionEn: String(event.descriptionEn || event.description || ''),
+    descriptionJa: String(event.descriptionJa || event.description || ''),
+    tone: String(event.tone || 'mixed'),
+    mentalStage: Number(event.mentalStage || 0),
+    moneyDelta: metric(event.moneyDelta),
+    physicalHealthDelta: metric(event.physicalHealthDelta),
+    spiritHealthDelta: metric(event.spiritHealthDelta),
+    physicalEnergyDelta: metric(event.physicalEnergyDelta),
+    spiritEnergyDelta: metric(event.spiritEnergyDelta)
+  };
+}
+
+function normalizeBattlePlayerState(playerState = {}) {
+  return syncBattlePlayerTotals({
     elixir: Number(playerState.elixir || 0),
     hand: Array.isArray(playerState.hand) ? playerState.hand.map(String) : [],
     queue: Array.isArray(playerState.queue) ? playerState.queue.map(String) : [],
     botThinkMs: Number(playerState.botThinkMs || 0),
-    towerHp: clamp(Number(playerState.towerHp || TOWER_HP), 0, TOWER_HP),
-    maxTowerHp: Number(playerState.maxTowerHp || TOWER_HP)
-  };
+    physicalHealth: Number(playerState.physicalHealth || playerState.towerHp || 0),
+    maxPhysicalHealth: Number(playerState.maxPhysicalHealth || playerState.maxTowerHp || 0),
+    physicalHealthRegen: Number(playerState.physicalHealthRegen || 0),
+    spiritHealth: Number(playerState.spiritHealth || 0),
+    maxSpiritHealth: Number(playerState.maxSpiritHealth || 0),
+    spiritHealthRegen: Number(playerState.spiritHealthRegen || 0),
+    physicalEnergy: Number(playerState.physicalEnergy || playerState.elixir || 0),
+    maxPhysicalEnergy: Number(playerState.maxPhysicalEnergy || playerState.maxElixir || playerState.elixir || 0),
+    physicalEnergyRegen: Number(playerState.physicalEnergyRegen || 0),
+    spiritEnergy: Number(playerState.spiritEnergy || 0),
+    maxSpiritEnergy: Number(playerState.maxSpiritEnergy || 0),
+    spiritEnergyRegen: Number(playerState.spiritEnergyRegen || 0),
+    money: Number(playerState.money || 0),
+    maxMoney: Number(playerState.maxMoney || 0),
+    moneyPerSecond: Number(playerState.moneyPerSecond || 0)
+  });
 }
 
 function normalizeBattleUnitState(unit = {}) {
@@ -164,6 +234,7 @@ export function normalizeHostBattleState(previousBattle, state) {
       left: normalizeBattlePlayerState(state.players?.left),
       right: normalizeBattlePlayerState(state.players?.right)
     },
-    units: Array.isArray(state.units) ? state.units.map(normalizeBattleUnitState) : []
+    units: Array.isArray(state.units) ? state.units.map(normalizeBattleUnitState) : [],
+    events: Array.isArray(state.events) ? state.events.map(normalizeBattleEventState) : []
   });
 }

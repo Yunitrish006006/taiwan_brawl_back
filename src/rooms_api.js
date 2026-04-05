@@ -1,5 +1,9 @@
 import { normalizeSimulationMode } from './royale_battle_rules.js';
 import {
+  listHeroDefinitions,
+  normalizeHeroId
+} from './royale_heroes.js';
+import {
   getDeckForUser,
   listCards,
   listDecksForUser,
@@ -19,6 +23,10 @@ import { jsonResponse } from './utils.js';
 async function handleListCards(request, env) {
   const cards = await listCards(env);
   return jsonResponse({ ok: true, cards }, 200, request);
+}
+
+async function handleListHeroes(request) {
+  return jsonResponse({ ok: true, heroes: listHeroDefinitions() }, 200, request);
 }
 
 async function handleListDecks(request, env) {
@@ -63,6 +71,7 @@ async function handleCreateRoom(request, env) {
     }
     const vsBot = Boolean(body?.vsBot);
     const simulationMode = vsBot ? 'host' : normalizeSimulationMode(body?.simulationMode);
+    const heroId = normalizeHeroId(body?.heroId);
 
     for (let attempt = 0; attempt < 5; attempt += 1) {
       const code = randomRoomCode();
@@ -75,6 +84,7 @@ async function handleCreateRoom(request, env) {
             code,
             user: { id: user.id, name: user.name },
             deck,
+            heroId,
             vsBot,
             botDeck: deck,
             simulationMode
@@ -104,7 +114,8 @@ async function handleJoinRoom(request, env, code) {
 
     return proxyRoomAction(request, env, code, '/internal/join', async () => ({
       user: { id: user.id, name: user.name },
-      deck
+      deck,
+      heroId: normalizeHeroId(body?.heroId)
     }));
   });
 }
@@ -174,6 +185,8 @@ export function exactRoomsApiRouteHandler(request, env, url) {
   switch (`${request.method} ${url.pathname}`) {
     case 'GET /api/cards':
       return () => handleListCards(request, env);
+    case 'GET /api/heroes':
+      return () => handleListHeroes(request);
     case 'GET /api/decks':
       return () => handleListDecks(request, env);
     case 'POST /api/decks':

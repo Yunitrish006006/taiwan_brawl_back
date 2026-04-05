@@ -1,7 +1,6 @@
 import { recordMatchHistory } from './royale_repository.js';
 import {
   DISCONNECT_GRACE_MS,
-  MAX_ELIXIR,
   PERSIST_INTERVAL_MS,
   TICK_MS,
   clamp,
@@ -16,6 +15,7 @@ import {
   equipmentEffects,
   resolveComboCards
 } from './royale_room_combat.js';
+import { isJobCard, resolveJobCardEffect } from './royale_job_events.js';
 import {
   getEnemySide,
   performUnitAttack,
@@ -36,6 +36,7 @@ import {
   normalizeHostBattleState,
   nowMs
 } from './royale_room_state.js';
+import { spendBattlePlayerEnergy } from './royale_heroes.js';
 
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
@@ -650,32 +651,41 @@ export class RoyaleRoom {
       0
     );
     if (battlePlayer.elixir + 1e-6 < totalElixirCost) {
-      this.sendError(userId, 'Not enough elixir');
+      this.sendError(userId, 'Not enough energy');
       return;
     }
 
     const equipmentCards = comboCards.filter((card) => card.type === 'equipment');
+    const jobCards = comboCards.filter((card) => isJobCard(card));
     const unitCards = comboCards.filter(
-      (card) => card.type !== 'equipment' && card.type !== 'spell'
+      (card) => card.type !== 'equipment' && card.type !== 'spell' && !isJobCard(card)
     );
     if (equipmentCards.length > 0 && unitCards.length === 0) {
       this.sendError(userId, 'Equipment cards need at least one unit in the same cast');
       return;
     }
+    if (jobCards.length > 0 && comboCards.length !== 1) {
+      this.sendError(userId, 'Job cards must be played alone');
+      return;
+    }
 
-    const dropPoint = normalizeDropPoint(player.side, payload);
+    const dropPoint = jobCards.length > 0 ? null : normalizeDropPoint(player.side, payload);
     const comboEquipmentEffects = equipmentEffects(comboCards);
 
-    battlePlayer.elixir = clamp(
-      battlePlayer.elixir - totalElixirCost,
-      0,
-      MAX_ELIXIR
-    );
+    for (const card of comboCards) {
+      spendBattlePlayerEnergy(
+        battlePlayer,
+        Number(card.elixirCost || 0),
+        card.type === 'spell' ? 'spirit' : 'physical'
+      );
+    }
     drawReplacementCards(battlePlayer, comboCards.map((card) => card.id));
 
     for (const card of comboCards) {
       if (card.type === 'spell') {
         this.resolveSpell(player.side, card, dropPoint);
+      } else if (isJobCard(card)) {
+        resolveJobCardEffect(this.room, player.side, card);
       } else if (card.type !== 'equipment') {
         this.spawnUnits(player.side, card, dropPoint, comboEquipmentEffects);
       }
@@ -686,8 +696,8 @@ export class RoyaleRoom {
         type: 'combo_cast',
         side: player.side,
         cardIds: comboCards.map((card) => card.id),
-        progress: dropPoint.progress,
-        lateralPosition: dropPoint.lateralPosition,
+        progress: dropPoint?.progress ?? null,
+        lateralPosition: dropPoint?.lateralPosition ?? null,
         equipment: comboEquipmentEffects.map((effect) => effect.name)
       }
     });

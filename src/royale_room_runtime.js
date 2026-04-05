@@ -1,14 +1,11 @@
 import {
   CENTER_LATERAL,
-  ELIXIR_PER_SECOND,
   FIELD_ASPECT_RATIO,
   GLOBAL_ATTACK_SPEED_MULTIPLIER,
   LEFT_TOWER_X,
-  MAX_ELIXIR,
   MAX_FIELD_PROGRESS,
   MIN_FIELD_PROGRESS,
   RIGHT_TOWER_X,
-  TOWER_HP,
   bodyRadiusForUnitType,
   clamp,
   distanceBetweenPoints,
@@ -17,6 +14,12 @@ import {
   sanitizeLateralPosition,
   sideDirection
 } from './royale_battle_rules.js';
+import {
+  applyBattlePlayerDamage,
+  heroBonusMultiplier,
+  heroTraitValue,
+  regenerateBattlePlayerResources
+} from './royale_heroes.js';
 import { applyEquipmentEffects } from './royale_room_combat.js';
 
 export function getEnemySide(side) {
@@ -26,17 +29,19 @@ export function getEnemySide(side) {
 export function replenishBattleElixir(room, dt) {
   for (const side of Object.keys(room.battle.players)) {
     const battlePlayer = room.battle.players[side];
-    battlePlayer.elixir = clamp(
-      battlePlayer.elixir + ELIXIR_PER_SECOND * dt,
-      0,
-      MAX_ELIXIR
-    );
+    regenerateBattlePlayerResources(battlePlayer, dt);
   }
 }
 
 export function resolveSpellEffect(room, side, card, dropPoint) {
   const enemySide = getEnemySide(side);
   const enemyBattleState = room.battle.players[enemySide];
+  const caster = room.players?.[side];
+  const spellDamageMultiplier = heroBonusMultiplier(
+    caster?.heroId,
+    'spell_damage_multiplier'
+  );
+  const spellDamage = Math.round(Number(card.spellDamage || 0) * spellDamageMultiplier);
 
   for (const unit of room.battle.units) {
     if (unit.side === side) {
@@ -50,7 +55,7 @@ export function resolveSpellEffect(room, side, card, dropPoint) {
         dropPoint.lateralPosition
       ) <= card.spellRadius
     ) {
-      unit.hp -= card.spellDamage;
+      unit.hp -= spellDamage;
     }
   }
 
@@ -64,7 +69,7 @@ export function resolveSpellEffect(room, side, card, dropPoint) {
     ) <=
     card.spellRadius + 50
   ) {
-    enemyBattleState.towerHp = Math.max(0, enemyBattleState.towerHp - card.spellDamage);
+    applyBattlePlayerDamage(enemyBattleState, spellDamage, 'spirit');
   }
 }
 
@@ -72,6 +77,14 @@ export function spawnBattleUnits(room, side, card, dropPoint, equipmentEffects =
   const count = Math.max(1, card.spawnCount);
   const spacing = count === 1 ? 0 : 30 / FIELD_ASPECT_RATIO;
   const stats = applyEquipmentEffects(card, equipmentEffects);
+  const caster = room.players?.[side];
+  const unitHpMultiplier = heroBonusMultiplier(
+    caster?.heroId,
+    'unit_hp_multiplier'
+  );
+  const boostedHp = Math.max(1, Math.round(stats.hp * unitHpMultiplier));
+  const unitDamageMultiplier = heroTraitValue(caster?.heroId, 'unitDamageMultiplier', 1);
+  const boostedDamage = Math.max(1, Math.round(stats.damage * unitDamageMultiplier));
   for (let index = 0; index < count; index += 1) {
     const offset = (index - (count - 1) / 2) * spacing;
     room.battle.units.push({
@@ -86,9 +99,9 @@ export function spawnBattleUnits(room, side, card, dropPoint, equipmentEffects =
       side,
       progress: dropPoint.progress,
       lateralPosition: sanitizeLateralPosition(dropPoint.lateralPosition + offset),
-      hp: stats.hp,
-      maxHp: stats.hp,
-      damage: stats.damage,
+      hp: boostedHp,
+      maxHp: boostedHp,
+      damage: boostedDamage,
       attackRange: Number(card.attackRange || 0),
       bodyRadius: Number(card.bodyRadius ?? bodyRadiusForUnitType(card.type)),
       moveSpeed: stats.moveSpeed,
@@ -166,7 +179,7 @@ export function performUnitAttack(room, unit, target) {
   }
 
   const enemyBattleState = room.battle.players[target.target];
-  enemyBattleState.towerHp = Math.max(0, enemyBattleState.towerHp - unit.damage);
+  applyBattlePlayerDamage(enemyBattleState, unit.damage, 'physical');
 }
 
 export function tickBattleUnits(room, dt) {
@@ -209,8 +222,8 @@ export function tickBattleUnits(room, dt) {
 
 export function towerHitPoints(room) {
   return {
-    leftTowerHp: room.battle.players.left?.towerHp ?? TOWER_HP,
-    rightTowerHp: room.battle.players.right?.towerHp ?? TOWER_HP
+    leftTowerHp: room.battle.players.left?.towerHp ?? 0,
+    rightTowerHp: room.battle.players.right?.towerHp ?? 0
   };
 }
 
