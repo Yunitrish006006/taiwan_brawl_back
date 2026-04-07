@@ -23,6 +23,17 @@ export const GLOBAL_ATTACK_SPEED_MULTIPLIER = 1.18;
 export const FIELD_ASPECT_RATIO = 0.62;
 export const TOWER_BODY_RADIUS = 30;
 
+// Status effect constants
+export const BRUISE_DAMAGE_PER_SECOND = 20;
+export const BLEED_DAMAGE_PER_SECOND = 50;
+export const BRUISE_DURATION_MS = 3000;
+export const BLEED_DURATION_MS = 4000;
+export const MENTAL_ILLNESS_DURATION_MS = 5000;
+export const MENTAL_ILLNESS_ATTACK_PENALTY = 0.40;
+export const STUN_DURATION_MS = 900;
+export const SLOW_DURATION_MS = 2000;
+export const SLOW_SPEED_FACTOR = 0.70;
+
 export function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }

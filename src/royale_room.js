@@ -700,7 +700,10 @@ export class RoyaleRoom {
     }
 
     const dropPoint = jobCards.length > 0 ? null : normalizeDropPoint(player.side, payload);
-    const comboEquipmentEffects = equipmentEffects(comboCards);
+    const comboEquipmentEffects = equipmentEffects(comboCards, {
+      battleState: this.room.battle,
+      side: player.side
+    });
 
     for (const card of comboCards) {
       if (card.energyCostType === 'money') {

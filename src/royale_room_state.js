@@ -34,6 +34,7 @@ export function createBattleState(playersBySide) {
     events: [],
     nextUnitId: 1,
     result: null,
+    cardMentalBonus: {},
     players: Object.fromEntries(
       Object.entries(playersBySide).map(([side, player]) => {
         const queue = player.deckCardIds.slice();
@@ -127,7 +128,10 @@ export function buildUnitSnapshot(unit) {
     maxHp: unit.maxHp,
     attackRange: Math.round(displayAttackReach(unit)),
     bodyRadius: Math.round(unit.bodyRadius ?? 0),
-    effects: unit.effects ?? []
+    effects: unit.effects ?? [],
+    statusEffects: (unit.statusEffects ?? [])
+      .filter((e) => e.remainingMs > 0)
+      .map((e) => e.kind)
   };
 }
 
@@ -224,7 +228,18 @@ function normalizeBattleUnitState(unit = {}) {
     attackSpeed: Number(unit.attackSpeed || 1),
     targetRule: String(unit.targetRule || 'ground'),
     cooldown: Number(unit.cooldown || 0),
-    effects: Array.isArray(unit.effects) ? unit.effects.map(String) : []
+    effects: Array.isArray(unit.effects) ? unit.effects.map(String) : [],
+    statusEffects: Array.isArray(unit.statusEffects)
+      ? unit.statusEffects
+          .filter((e) => e && Number(e.remainingMs) > 0)
+          .map((e) => ({ kind: String(e.kind), remainingMs: Number(e.remainingMs) }))
+      : [],
+    procChances:
+      unit.procChances && typeof unit.procChances === 'object' && !Array.isArray(unit.procChances)
+        ? Object.fromEntries(
+            Object.entries(unit.procChances).map(([k, v]) => [k, Number(v)])
+          )
+        : undefined
   };
 }
 
@@ -234,6 +249,12 @@ export function normalizeHostBattleState(previousBattle, state) {
     startedAt: previousBattle?.startedAt || new Date().toISOString(),
     nextUnitId: Number(state.nextUnitId || previousBattle?.nextUnitId || 1),
     result: state.result ?? null,
+    cardMentalBonus:
+      state.cardMentalBonus && typeof state.cardMentalBonus === 'object' && !Array.isArray(state.cardMentalBonus)
+        ? Object.fromEntries(
+            Object.entries(state.cardMentalBonus).map(([k, v]) => [k, Number(v)])
+          )
+        : previousBattle?.cardMentalBonus ?? {},
     players: {
       left: normalizeBattlePlayerState(state.players?.left),
       right: normalizeBattlePlayerState(state.players?.right)

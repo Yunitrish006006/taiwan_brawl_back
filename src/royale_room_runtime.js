@@ -6,6 +6,15 @@ import {
   MAX_FIELD_PROGRESS,
   MIN_FIELD_PROGRESS,
   RIGHT_TOWER_X,
+  BRUISE_DAMAGE_PER_SECOND,
+  BLEED_DAMAGE_PER_SECOND,
+  BRUISE_DURATION_MS,
+  BLEED_DURATION_MS,
+  MENTAL_ILLNESS_DURATION_MS,
+  MENTAL_ILLNESS_ATTACK_PENALTY,
+  STUN_DURATION_MS,
+  SLOW_DURATION_MS,
+  SLOW_SPEED_FACTOR,
   bodyRadiusForUnitType,
   clamp,
   distanceBetweenPoints,
@@ -85,6 +94,16 @@ export function spawnBattleUnits(room, side, card, dropPoint, equipmentEffects =
   const boostedHp = Math.max(1, Math.round(stats.hp * unitHpMultiplier));
   const unitDamageMultiplier = heroTraitValue(caster?.heroId, 'unitDamageMultiplier', 1);
   const boostedDamage = Math.max(1, Math.round(stats.damage * unitDamageMultiplier));
+
+  const aggregatedProcs = {};
+  for (const effect of equipmentEffects) {
+    if (!effect.procChances) continue;
+    for (const [kind, chance] of Object.entries(effect.procChances)) {
+      aggregatedProcs[kind] = (aggregatedProcs[kind] || 0) + chance;
+    }
+  }
+  const hasProcChances = Object.keys(aggregatedProcs).length > 0;
+
   for (let index = 0; index < count; index += 1) {
     const offset = (index - (count - 1) / 2) * spacing;
     room.battle.units.push({
@@ -105,10 +124,12 @@ export function spawnBattleUnits(room, side, card, dropPoint, equipmentEffects =
       attackRange: Number(card.attackRange || 0),
       bodyRadius: Number(card.bodyRadius ?? bodyRadiusForUnitType(card.type)),
       moveSpeed: stats.moveSpeed,
-      attackSpeed: (card.attackSpeed || 1) * GLOBAL_ATTACK_SPEED_MULTIPLIER,
+      attackSpeed: (card.attackSpeed || 1) * GLOBAL_ATTACK_SPEED_MULTIPLIER * (stats.attackSpeedMultiplier ?? 1),
       targetRule: card.targetRule,
       cooldown: 0,
-      effects: equipmentEffects.map((effect) => effect.name)
+      effects: equipmentEffects.map((effect) => effect.name),
+      procChances: hasProcChances ? { ...aggregatedProcs } : undefined,
+      statusEffects: []
     });
   }
 }
@@ -172,9 +193,42 @@ export function selectUnitTarget(room, unit) {
   return enemyUnit && enemyUnit.forwardDistance < 120 ? enemyUnit : null;
 }
 
+function applyStatusEffect(unit, kind) {
+  const durations = {
+    bruise: BRUISE_DURATION_MS,
+    bleed: BLEED_DURATION_MS,
+    mental_illness: MENTAL_ILLNESS_DURATION_MS,
+    stun: STUN_DURATION_MS,
+    slow: SLOW_DURATION_MS
+  };
+  const duration = durations[kind] ?? 3000;
+  if (!unit.statusEffects) unit.statusEffects = [];
+  const existing = unit.statusEffects.find((e) => e.kind === kind);
+  if (existing) {
+    existing.remainingMs = Math.max(existing.remainingMs, duration);
+  } else {
+    unit.statusEffects.push({ kind, remainingMs: duration });
+  }
+}
+
+function rollStatusEffectProcs(attacker, targetUnit) {
+  const procs = attacker.procChances;
+  if (!procs) return;
+  if (procs.bruise > 0 && Math.random() < procs.bruise) applyStatusEffect(targetUnit, 'bruise');
+  if (procs.bleed > 0 && Math.random() < procs.bleed) applyStatusEffect(targetUnit, 'bleed');
+  if (procs.mental > 0 && Math.random() < procs.mental) applyStatusEffect(targetUnit, 'mental_illness');
+  if (procs.stun > 0 && Math.random() < procs.stun) applyStatusEffect(targetUnit, 'stun');
+  if (procs.slow > 0 && Math.random() < procs.slow) applyStatusEffect(targetUnit, 'slow');
+}
+
 export function performUnitAttack(room, unit, target) {
+  if (Number(unit.procChances?.miss) > 0 && Math.random() < unit.procChances.miss) {
+    return;
+  }
+
   if (target.kind === 'unit') {
     target.target.hp -= unit.damage;
+    rollStatusEffectProcs(unit, target.target);
     return;
   }
 
@@ -183,12 +237,36 @@ export function performUnitAttack(room, unit, target) {
 }
 
 export function tickBattleUnits(room, dt) {
+  // Phase 1: tick status effect DoT and expiry
+  for (const unit of room.battle.units) {
+    if (!unit.statusEffects?.length) continue;
+    const keepEffects = [];
+    for (const effect of unit.statusEffects) {
+      effect.remainingMs -= dt * 1000;
+      if (effect.remainingMs > 0) {
+        if (effect.kind === 'bruise') unit.hp -= BRUISE_DAMAGE_PER_SECOND * dt;
+        else if (effect.kind === 'bleed') unit.hp -= BLEED_DAMAGE_PER_SECOND * dt;
+        keepEffects.push(effect);
+      }
+    }
+    unit.statusEffects = keepEffects;
+  }
+
+  // Phase 2: movement and combat
   for (const unit of room.battle.units) {
     if (unit.hp <= 0) {
       continue;
     }
 
+    const isStunned = unit.statusEffects?.some((e) => e.kind === 'stun') ?? false;
     unit.cooldown = Math.max(0, unit.cooldown - dt);
+
+    if (isStunned) continue;
+
+    const hasSlow = unit.statusEffects?.some((e) => e.kind === 'slow') ?? false;
+    const hasMentalIllness = unit.statusEffects?.some((e) => e.kind === 'mental_illness') ?? false;
+    const effectiveMoveSpeed = hasSlow ? unit.moveSpeed * SLOW_SPEED_FACTOR : unit.moveSpeed;
+
     const target = selectUnitTarget(room, unit);
     const attackReach =
       !target
@@ -199,18 +277,20 @@ export function tickBattleUnits(room, dt) {
     if (target && target.distance <= attackReach) {
       if (unit.cooldown <= 0) {
         performUnitAttack(room, unit, target);
-        unit.cooldown = unit.attackSpeed;
+        unit.cooldown = hasMentalIllness
+          ? unit.attackSpeed * (1 + MENTAL_ILLNESS_ATTACK_PENALTY)
+          : unit.attackSpeed;
       }
     } else {
       unit.progress = clamp(
-        unit.progress + sideDirection(unit.side) * unit.moveSpeed * dt,
+        unit.progress + sideDirection(unit.side) * effectiveMoveSpeed * dt,
         MIN_FIELD_PROGRESS,
         MAX_FIELD_PROGRESS
       );
       const desiredLateral =
         target?.kind === 'unit' ? target.target.lateralPosition : CENTER_LATERAL;
       const lateralDelta = desiredLateral - unit.lateralPosition;
-      const lateralStep = (unit.moveSpeed * 0.45 * dt) / FIELD_ASPECT_RATIO;
+      const lateralStep = (effectiveMoveSpeed * 0.45 * dt) / FIELD_ASPECT_RATIO;
       unit.lateralPosition = sanitizeLateralPosition(
         unit.lateralPosition + clamp(lateralDelta, -lateralStep, lateralStep)
       );

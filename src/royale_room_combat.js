@@ -240,6 +240,24 @@ function scoreEquipmentCard(primaryCard, equipmentCard) {
       score += Number(primaryCard.moveSpeed || 0) * 0.18;
       score += primaryCard.targetRule === 'tower' ? 90 : 20;
       break;
+    case 'hanger_strike':
+      score += Number(primaryCard.damage || 0) * 0.10 + 15;
+      break;
+    case 'cane_strike':
+      score += Number(primaryCard.damage || 0) * 0.16 + 20;
+      break;
+    case 'bottle_strike':
+      score += Number(primaryCard.damage || 0) * 0.12 + 15 + (primaryCard.type === 'tank' ? -30 : 0);
+      break;
+    case 'western_med':
+      score += 20;
+      break;
+    case 'eastern_med':
+      score += 15 + (Number(primaryCard.moveSpeed || 0) > 160 ? 20 : 0);
+      break;
+    case 'electric_shock':
+      score += 10 + (Number(primaryCard.spawnCount || 1) > 1 ? 25 : 0);
+      break;
     default:
       score -= 40;
       break;
@@ -437,35 +455,73 @@ export function drawReplacementCards(battlePlayer, cardIds) {
   }
 }
 
-export function equipmentEffects(cards) {
+const MENTAL_STACK_KINDS = new Set(['hanger_strike', 'cane_strike']);
+const STRIKE_DAMAGE_KINDS = new Set(['hanger_strike', 'cane_strike', 'bottle_strike']);
+
+export function equipmentEffects(cards, opts = {}) {
+  const { battleState, side } = opts;
   return cards
     .filter((card) => card.type === 'equipment')
-    .map((card) => ({
-      id: card.id,
-      name: card.name,
-      kind: card.effectKind,
-      value: Number(card.effectValue || 0)
-    }));
+    .map((card) => {
+      let currentMentalBonus = 0;
+      if (battleState && side && MENTAL_STACK_KINDS.has(card.effectKind) && Number(card.mentalStackRate) > 0) {
+        if (!battleState.cardMentalBonus) battleState.cardMentalBonus = {};
+        const key = `${side}:${card.id}`;
+        currentMentalBonus = Number(battleState.cardMentalBonus[key] || 0);
+        battleState.cardMentalBonus[key] = currentMentalBonus + Number(card.mentalStackRate);
+      }
+
+      const procChances = {};
+      if (Number(card.bruiseChance) > 0) procChances.bruise = Number(card.bruiseChance);
+      if (Number(card.bleedChance) > 0) procChances.bleed = Number(card.bleedChance);
+      if (Number(card.missChance) > 0) procChances.miss = Number(card.missChance);
+      const mentalTotal = Number(card.mentalChance || 0) + currentMentalBonus;
+      if (mentalTotal > 0) procChances.mental = mentalTotal;
+      if (card.effectKind === 'electric_shock') procChances.stun = Number(card.effectValue || 0);
+      if (card.effectKind === 'eastern_med') procChances.slow = Number(card.effectValue || 0);
+
+      return {
+        id: card.id,
+        name: card.name,
+        kind: card.effectKind,
+        value: Number(card.effectValue || 0),
+        procChances: Object.keys(procChances).length > 0 ? procChances : undefined,
+        westernMedRoll: card.effectKind === 'western_med' ? Math.random() : undefined
+      };
+    });
 }
 
 export function applyEquipmentEffects(card, effects) {
   let hp = card.hp;
   let damage = card.damage;
   let moveSpeed = card.moveSpeed * GLOBAL_MOVE_SPEED_MULTIPLIER;
+  let attackSpeedMultiplier = 1;
 
   for (const effect of effects) {
-    if (effect.kind === 'damage_boost') {
+    if (effect.kind === 'damage_boost' || STRIKE_DAMAGE_KINDS.has(effect.kind)) {
       damage += effect.value;
     } else if (effect.kind === 'health_boost') {
       hp += effect.value;
     } else if (effect.kind === 'speed_boost') {
       moveSpeed *= 1 + effect.value;
+    } else if (effect.kind === 'western_med') {
+      const roll = effect.westernMedRoll ?? Math.random();
+      if (roll < 0.40) {
+        hp += 120;
+      } else if (roll < 0.70) {
+        damage += 20;
+      } else if (roll < 0.90) {
+        hp = Math.max(1, hp - 60);
+      } else {
+        attackSpeedMultiplier *= 0.72;
+      }
     }
   }
 
   return {
     hp: Math.round(hp),
     damage: Math.round(damage),
-    moveSpeed: Number(moveSpeed.toFixed(4))
+    moveSpeed: Number(moveSpeed.toFixed(4)),
+    attackSpeedMultiplier
   };
 }
