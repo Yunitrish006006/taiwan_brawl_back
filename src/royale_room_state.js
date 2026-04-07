@@ -13,6 +13,7 @@ import {
 } from './royale_heroes.js';
 import { normalizeBotController } from './royale_llm_bot.js';
 import { normalizeCardDefinition } from './royale_cards.js';
+import { initFieldState, getFieldStateSnapshot } from './royale_field_events.js';
 
 export function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -35,6 +36,7 @@ export function createBattleState(playersBySide) {
     nextUnitId: 1,
     result: null,
     cardMentalBonus: {},
+    fieldState: initFieldState(),
     players: Object.fromEntries(
       Object.entries(playersBySide).map(([side, player]) => {
         const queue = player.deckCardIds.slice();
@@ -151,7 +153,8 @@ export function buildBattleSnapshot(room, viewer, battlePlayer) {
     nextCardId: battlePlayer?.queue?.[0] ?? null,
     units: room.battle.units.map((unit) => buildUnitSnapshot(unit)),
     events: Array.isArray(room.battle.events) ? room.battle.events.map(clone) : [],
-    result: room.battle.result
+    result: room.battle.result,
+    fieldState: getFieldStateSnapshot(room.battle)
   };
 }
 
@@ -243,6 +246,28 @@ function normalizeBattleUnitState(unit = {}) {
   };
 }
 
+function normalizeFieldState(fs) {
+  if (!fs || typeof fs !== 'object') return null;
+  return {
+    nextEventMs: Math.max(0, Number(fs.nextEventMs || 0)),
+    activeEffects: Array.isArray(fs.activeEffects)
+      ? fs.activeEffects
+        .filter((e) => e && Number(e.remainingMs) > 0)
+        .map((e) => ({
+          kind: String(e.kind),
+          remainingMs: Number(e.remainingMs),
+          value: Number(e.value || 0),
+          scope: String(e.scope || 'both'),
+          side: e.side ? String(e.side) : null,
+        }))
+      : [],
+    shields: {
+      left: Boolean(fs.shields?.left),
+      right: Boolean(fs.shields?.right),
+    },
+  };
+}
+
 export function normalizeHostBattleState(previousBattle, state) {
   return clone({
     timeRemainingMs: Math.max(0, Number(state.timeRemainingMs || 0)),
@@ -260,6 +285,7 @@ export function normalizeHostBattleState(previousBattle, state) {
       right: normalizeBattlePlayerState(state.players?.right)
     },
     units: Array.isArray(state.units) ? state.units.map(normalizeBattleUnitState) : [],
-    events: Array.isArray(state.events) ? state.events.map(normalizeBattleEventState) : []
+    events: Array.isArray(state.events) ? state.events.map(normalizeBattleEventState) : [],
+    fieldState: normalizeFieldState(state.fieldState) ?? previousBattle?.fieldState ?? initFieldState()
   });
 }

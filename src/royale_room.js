@@ -16,6 +16,7 @@ import {
   resolveComboCards
 } from './royale_room_combat.js';
 import { isJobCard, resolveJobCardEffect } from './royale_job_events.js';
+import { tickFieldEvents } from './royale_field_events.js';
 import {
   getEnemySide,
   performUnitAttack,
@@ -776,6 +777,7 @@ export class RoyaleRoom {
 
     await this.runBotTurns();
     tickBattleUnits(this.room, dt);
+    tickFieldEvents(this.room, dt);
     const { leftTowerHp, rightTowerHp } = towerHitPoints(this.room);
 
     if (leftTowerHp <= 0 || rightTowerHp <= 0) {

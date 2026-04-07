@@ -291,6 +291,25 @@ export const starterCards = [
     spellDamage: 0,
     targetRule: 'ground'
   }),
+  baseCard({
+    id: 'asian_parent',
+    name: '亞洲家長',
+    nameZhHant: '亞洲家長',
+    nameEn: 'Asian Parent',
+    nameJa: 'アジアの親',
+    energyCost: 4,
+    type: 'tank',
+    hp: 1100,
+    damage: 165,
+    attackRange: 60,
+    bodyRadius: 22,
+    moveSpeed: 130,
+    attackSpeed: 1.05,
+    spawnCount: 1,
+    spellRadius: 0,
+    spellDamage: 0,
+    targetRule: 'ground'
+  }),
   {
     id: 'iron_blade',
     name: '鋼刃',
