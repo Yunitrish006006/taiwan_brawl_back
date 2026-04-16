@@ -37,6 +37,7 @@ async function handleStaticAssetRequest(request, env, url) {
 }
 
 export { RoyaleRoom };
+export { ChatRoom } from './chat_room.js';
 
 export default {
   async fetch(request, env) {

@@ -11,6 +11,10 @@
 			{
 				"name": "ROYALE_ROOM",
 				"class_name": "RoyaleRoom"
+			},
+			{
+				"name": "CHAT_ROOM",
+				"class_name": "ChatRoom"
 			}
 		]
 	},
@@ -18,6 +22,12 @@
 		{
 			"tag": "v1",
 			"new_sqlite_classes": ["RoyaleRoom"]
+		},
+		{
+			"tag": "v2",
+			"new_sqlite_classes": [
+				"ChatRoom"
+			]
 		}
 	],
 	"d1_databases": [

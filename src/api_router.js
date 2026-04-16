@@ -3,6 +3,7 @@ import {
   exactAdminApiRouteHandler,
   handleDynamicAdminRoutes
 } from './admin_api.js';
+import { handleDynamicChatRoutes } from './chat_api.js';
 import {
   exactFriendsApiRouteHandler,
   handleDynamicFriendRoutes
@@ -73,7 +74,8 @@ export async function handleApiRequest(request, env, url) {
   const dynamicHandlers = [
     handleDynamicFriendRoutes,
     handleDynamicRoomRoutes,
-    handleDynamicAdminRoutes
+    handleDynamicAdminRoutes,
+    handleDynamicChatRoutes
   ];
 
   for (const handler of dynamicHandlers) {
