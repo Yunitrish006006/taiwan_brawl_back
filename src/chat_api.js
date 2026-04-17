@@ -109,7 +109,7 @@ async function handleGetPending(request, env) {
   if (!user) return jsonResponse({ error: 'Not logged in' }, 401, request);
 
   const rows = await env.DB.prepare(
-    'SELECT id, sender_id, receiver_id, text, created_at FROM pending_messages WHERE receiver_id = ?1 ORDER BY created_at ASC'
+    'SELECT id, sender_id, receiver_id, text, created_at, type FROM pending_messages WHERE receiver_id = ?1 ORDER BY created_at ASC'
   )
     .bind(user.id)
     .all();
@@ -135,10 +135,33 @@ async function handleAckPending(request, env) {
   return jsonResponse({ ok: true, deleted: result.meta?.changes ?? 0 }, 200, request);
 }
 
+async function handleRecallMessage(request, env, friendId) {
+  const user = await requireUser(request, env);
+  if (!user) return jsonResponse({ error: 'Not logged in' }, 401, request);
+
+  const friends = await areFriends(user.id, friendId, env);
+  if (!friends) return jsonResponse({ error: 'Not friends' }, 403, request);
+
+  const body = await request.json().catch(() => null);
+  const messageKey = String(body?.messageKey ?? '').trim();
+  if (!messageKey) return jsonResponse({ error: 'Missing messageKey' }, 400, request);
+
+  const createdAt = new Date().toISOString();
+
+  // Insert a recall notification into pending_messages for the receiver to pick up
+  await env.DB.prepare(
+    'INSERT INTO pending_messages (sender_id, receiver_id, text, created_at, type) VALUES (?1, ?2, ?3, ?4, \'recall\')'
+  )
+    .bind(user.id, friendId, messageKey, createdAt)
+    .run();
+
+  return jsonResponse({ ok: true }, 200, request);
+}
+
 // ── exports ───────────────────────────────────────────────────────────────────
 
 export function matchChatDmRoute(pathname) {
-  const match = pathname.match(/^\/api\/chat\/dm\/(\d+)\/(history|ws|send)$/) ??
+  const match = pathname.match(/^\/api\/chat\/dm\/(\d+)\/(history|ws|send|recall)$/) ??
     pathname.match(/^\/api\/chat\/dm\/(pending|ack)$/);
   if (!match) return null;
 
@@ -161,6 +184,8 @@ export async function handleDynamicChatRoutes(request, env, url) {
       return handleDmWebSocket(request, env, route.friendId);
     case 'POST send':
       return handleSendPending(request, env, route.friendId);
+    case 'POST recall':
+      return handleRecallMessage(request, env, route.friendId);
     case 'GET pending':
       return handleGetPending(request, env);
     case 'POST ack':
