@@ -81,30 +81,90 @@ async function handleDmWebSocket(request, env, friendId) {
   );
 }
 
+// ── offline relay handlers ────────────────────────────────────────────────────
+
+async function handleSendPending(request, env, friendId) {
+  const user = await requireUser(request, env);
+  if (!user) return jsonResponse({ error: 'Not logged in' }, 401, request);
+
+  const friends = await areFriends(user.id, friendId, env);
+  if (!friends) return jsonResponse({ error: 'Not friends' }, 403, request);
+
+  const body = await request.json().catch(() => null);
+  const text = String(body?.text ?? '').trim();
+  if (!text) return jsonResponse({ error: 'Empty message' }, 400, request);
+
+  const createdAt = new Date().toISOString();
+  await env.DB.prepare(
+    'INSERT INTO pending_messages (sender_id, receiver_id, text, created_at) VALUES (?1, ?2, ?3, ?4)'
+  )
+    .bind(user.id, friendId, text, createdAt)
+    .run();
+
+  return jsonResponse({ ok: true, createdAt }, 201, request);
+}
+
+async function handleGetPending(request, env) {
+  const user = await requireUser(request, env);
+  if (!user) return jsonResponse({ error: 'Not logged in' }, 401, request);
+
+  const rows = await env.DB.prepare(
+    'SELECT id, sender_id, receiver_id, text, created_at FROM pending_messages WHERE receiver_id = ?1 ORDER BY created_at ASC'
+  )
+    .bind(user.id)
+    .all();
+
+  return jsonResponse({ messages: rows.results }, 200, request);
+}
+
+async function handleAckPending(request, env) {
+  const user = await requireUser(request, env);
+  if (!user) return jsonResponse({ error: 'Not logged in' }, 401, request);
+
+  const body = await request.json().catch(() => null);
+  const ids = Array.isArray(body?.ids) ? body.ids.map(Number).filter(Boolean) : [];
+  if (ids.length === 0) return jsonResponse({ ok: true, deleted: 0 }, 200, request);
+
+  const placeholders = ids.map((_, i) => `?${i + 2}`).join(',');
+  const result = await env.DB.prepare(
+    `DELETE FROM pending_messages WHERE receiver_id = ?1 AND id IN (${placeholders})`
+  )
+    .bind(user.id, ...ids)
+    .run();
+
+  return jsonResponse({ ok: true, deleted: result.meta?.changes ?? 0 }, 200, request);
+}
+
 // ── exports ───────────────────────────────────────────────────────────────────
 
 export function matchChatDmRoute(pathname) {
-  const match = pathname.match(/^\/api\/chat\/dm\/(\d+)\/(history|ws)$/);
-  if (!match) {
-    return null;
+  const match = pathname.match(/^\/api\/chat\/dm\/(\d+)\/(history|ws|send)$/) ??
+    pathname.match(/^\/api\/chat\/dm\/(pending|ack)$/);
+  if (!match) return null;
+
+  // Shared pending/ack routes (no friendId)
+  if (match[1] === 'pending' || match[1] === 'ack') {
+    return { action: match[1], friendId: null };
   }
-  return {
-    friendId: Number(match[1]),
-    action: match[2]
-  };
+
+  return { friendId: Number(match[1]), action: match[2] };
 }
 
 export async function handleDynamicChatRoutes(request, env, url) {
   const route = matchChatDmRoute(url.pathname);
-  if (!route) {
-    return null;
-  }
+  if (!route) return null;
 
   switch (`${request.method} ${route.action}`) {
     case 'GET history':
       return handleDmHistory(request, env, route.friendId);
     case 'GET ws':
       return handleDmWebSocket(request, env, route.friendId);
+    case 'POST send':
+      return handleSendPending(request, env, route.friendId);
+    case 'GET pending':
+      return handleGetPending(request, env);
+    case 'POST ack':
+      return handleAckPending(request, env);
     default:
       return null;
   }

@@ -15,6 +15,10 @@
 			{
 				"name": "CHAT_ROOM",
 				"class_name": "ChatRoom"
+			},
+			{
+				"name": "SIGNAL_ROOM",
+				"class_name": "SignalRoom"
 			}
 		]
 	},
@@ -27,6 +31,12 @@
 			"tag": "v2",
 			"new_sqlite_classes": [
 				"ChatRoom"
+			]
+		},
+		{
+			"tag": "v3",
+			"new_sqlite_classes": [
+				"SignalRoom"
 			]
 		}
 	],
