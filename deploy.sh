@@ -267,6 +267,7 @@ resolve_wrangler_package() {
 }
 
 WRANGLER_PACKAGE="$(resolve_wrangler_package)"
+REQUIRED_BACKEND_PACKAGES=("@cloudflare/kv-asset-handler" "web-push")
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RULES_FILE="${SCRIPT_DIR}/conventional_commit_rules.sh"
@@ -330,6 +331,29 @@ resolve_flutter_bin_dir() {
   echo "Unable to locate Flutter SDK bin directory." >&2
   echo "Set FLUTTER_BIN_DIR or install Flutter under /Volumes/DataExtended/flutter/bin" >&2
   exit 1
+}
+
+backend_dependencies_installed() {
+  npm ls --depth=0 "${REQUIRED_BACKEND_PACKAGES[@]}" >/dev/null 2>&1
+}
+
+ensure_backend_dependencies() {
+  if backend_dependencies_installed; then
+    echo "Backend dependencies already installed"
+    return 0
+  fi
+
+  local install_cmd
+  if [[ -f "${BACKEND_DIR}/package-lock.json" ]]; then
+    install_cmd="npm ci"
+  else
+    install_cmd="npm install"
+  fi
+
+  echo "[3.5/6] Installing backend dependencies..."
+  echo "Running: ${install_cmd}"
+  ${install_cmd}
+  echo "Backend dependencies ready"
 }
 
 FRONTEND_DIR="$(resolve_frontend_dir)"
@@ -397,6 +421,9 @@ if [[ -f "${UPLOAD_SCRIPT}" ]]; then
 else
   echo "upload.js not found, skipping asset generation"
 fi
+echo
+
+ensure_backend_dependencies
 echo
 
 echo "[4/6] Applying D1 migrations..."
