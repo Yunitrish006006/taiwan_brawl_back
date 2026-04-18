@@ -1,0 +1,20 @@
+# Local dependencies
+node_modules/
+
+# Local Wrangler / Miniflare state
+.wrangler/
+
+# Generated deployment artifact
+assets.json
+
+# Local editor settings
+.vscode/
+
+# Local environment files
+.env
+.env.*
+.dev.vars
+
+# OS / log noise
+.DS_Store
+*.log
