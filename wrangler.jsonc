@@ -3,7 +3,9 @@
 	"name": "taiwan-brawl-api",
 	"main": "src/index.js",
 	"compatibility_date": "2026-03-11",
-	"compatibility_flags": ["nodejs_compat"],
+	"compatibility_flags": [
+		"nodejs_compat"
+	],
 	"observability": {
 		"enabled": true
 	},
@@ -26,7 +28,9 @@
 	"migrations": [
 		{
 			"tag": "v1",
-			"new_sqlite_classes": ["RoyaleRoom"]
+			"new_sqlite_classes": [
+				"RoyaleRoom"
+			]
 		},
 		{
 			"tag": "v2",
@@ -53,6 +57,10 @@
 		{
 			"binding": "STATIC_ASSETS",
 			"id": "cfea84655a1f4b298bb92466317201b2"
+		},
+		{
+			"binding": "CHAT_SYNC",
+			"id": "e03f7c3739f6492287dd13b3fb6429eb"
 		}
 	]
 }

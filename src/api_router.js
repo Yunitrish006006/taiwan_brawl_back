@@ -4,6 +4,7 @@ import {
   handleDynamicAdminRoutes
 } from './admin_api.js';
 import { handleDynamicChatRoutes } from './chat_api.js';
+import { handleSyncUpload, handleSyncDownload } from './chat_sync_api.js';
 import { handleDynamicSignalRoutes } from './signal_api.js';
 import {
   exactFriendsApiRouteHandler,
@@ -57,6 +58,10 @@ function exactApiRouteHandler(request, env, url) {
       return () => handleLogout(request, env);
     case 'POST /api/google-login':
       return () => handleGoogleLogin(request, env);
+    case 'POST /api/chat/sync/upload':
+      return () => handleSyncUpload(request, env);
+    case 'GET /api/chat/sync/download':
+      return () => handleSyncDownload(request, env);
     default:
       return (
         exactLlmBotApiRouteHandler(request, env, url) ??
