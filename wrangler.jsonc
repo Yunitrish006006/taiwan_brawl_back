@@ -3,6 +3,7 @@
 	"name": "taiwan-brawl-api",
 	"main": "src/index.js",
 	"compatibility_date": "2026-03-11",
+	"compatibility_flags": ["nodejs_compat"],
 	"observability": {
 		"enabled": true
 	},

@@ -13,7 +13,8 @@
     "commit:suggest:front": "bash tool/suggest_commit_message.sh --repo ../taiwan_brawl_front"
   },
   "dependencies": {
-    "@cloudflare/kv-asset-handler": "^0.4.0"
+    "@cloudflare/kv-asset-handler": "^0.4.0",
+    "web-push": "^3.6.7"
   },
   "devDependencies": {
     "wrangler": "^4.62.0"

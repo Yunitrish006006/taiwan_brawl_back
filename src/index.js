@@ -41,7 +41,7 @@ export { ChatRoom } from './chat_room.js';
 export { SignalRoom } from './signal_room.js';
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
     if (request.method === 'OPTIONS') {
@@ -55,7 +55,7 @@ export default {
 
     if (url.pathname.startsWith('/api/')) {
       try {
-        return await handleApiRequest(request, env, url);
+        return await handleApiRequest(request, env, url, ctx);
       } catch (error) {
         return jsonResponse(
           { error: 'Internal server error', detail: error.message },

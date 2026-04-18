@@ -10,6 +10,7 @@ import {
   handleDynamicFriendRoutes
 } from './friends_api.js';
 import { exactLlmBotApiRouteHandler } from './llm_bot_api.js';
+import { exactNotificationsApiRouteHandler } from './notifications_api.js';
 import {
   exactRoomsApiRouteHandler,
   handleDynamicRoomRoutes
@@ -59,6 +60,7 @@ function exactApiRouteHandler(request, env, url) {
     default:
       return (
         exactLlmBotApiRouteHandler(request, env, url) ??
+        exactNotificationsApiRouteHandler(request, env, url) ??
         exactAdminApiRouteHandler(request, env, url) ??
         exactFriendsApiRouteHandler(request, env, url) ??
         exactRoomsApiRouteHandler(request, env, url)
@@ -66,7 +68,7 @@ function exactApiRouteHandler(request, env, url) {
   }
 }
 
-export async function handleApiRequest(request, env, url) {
+export async function handleApiRequest(request, env, url, ctx) {
   const exactRouteHandler = exactApiRouteHandler(request, env, url);
   if (exactRouteHandler) {
     return exactRouteHandler();
@@ -81,7 +83,7 @@ export async function handleApiRequest(request, env, url) {
   ];
 
   for (const handler of dynamicHandlers) {
-    const response = await handler(request, env, url);
+    const response = await handler(request, env, url, ctx);
     if (response) {
       return response;
     }

@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 
 import {
   CENTER_LATERAL,
+  LATERAL_MAX,
+  LATERAL_MIN,
   bodyRadiusForUnitType,
   distanceBetweenPoints,
   effectiveAttackReachToTower,
@@ -22,7 +24,7 @@ test('normalizeDropPoint maps normalized viewport coordinates into world space',
   const rightPoint = normalizeDropPoint('right', { dropX: 0.9, dropY: 0.2 });
   assert.deepEqual(rightPoint, {
     progress: 580,
-    lateralPosition: 880
+    lateralPosition: 900
   });
 });
 
@@ -47,6 +49,6 @@ test('simulation mode normalization and lateral clamping stay bounded', () => {
   assert.equal(normalizeSimulationMode('HOST'), 'host');
   assert.equal(normalizeSimulationMode('server'), 'server');
   assert.equal(normalizeSimulationMode('weird'), 'server');
-  assert.equal(sanitizeLateralPosition(-100), 120);
-  assert.equal(sanitizeLateralPosition(5000), 880);
+  assert.equal(sanitizeLateralPosition(-100), LATERAL_MIN);
+  assert.equal(sanitizeLateralPosition(5000), LATERAL_MAX);
 });

@@ -1,4 +1,5 @@
 import { requireUser } from './request_helpers.js';
+import { sendDirectMessagePush } from './push_notifications.js';
 import { jsonResponse } from './utils.js';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -83,7 +84,15 @@ async function handleDmWebSocket(request, env, friendId) {
 
 // ── offline relay handlers ────────────────────────────────────────────────────
 
-async function handleSendPending(request, env, friendId) {
+function runBackgroundTask(ctx, promise) {
+  if (ctx?.waitUntil) {
+    ctx.waitUntil(promise);
+    return;
+  }
+  return promise;
+}
+
+async function handleSendPending(request, env, friendId, ctx) {
   const user = await requireUser(request, env);
   if (!user) return jsonResponse({ error: 'Not logged in' }, 401, request);
 
@@ -100,6 +109,18 @@ async function handleSendPending(request, env, friendId) {
   )
     .bind(user.id, friendId, text, createdAt)
     .run();
+
+  await runBackgroundTask(
+    ctx,
+    sendDirectMessagePush(env, {
+      senderId: user.id,
+      senderName: user.name,
+      receiverId: friendId,
+      text,
+      kind: 'message',
+      appOrigin: new URL(request.url).origin,
+    })
+  );
 
   return jsonResponse({ ok: true, createdAt }, 201, request);
 }
@@ -135,7 +156,7 @@ async function handleAckPending(request, env) {
   return jsonResponse({ ok: true, deleted: result.meta?.changes ?? 0 }, 200, request);
 }
 
-async function handleRecallMessage(request, env, friendId) {
+async function handleRecallMessage(request, env, friendId, ctx) {
   const user = await requireUser(request, env);
   if (!user) return jsonResponse({ error: 'Not logged in' }, 401, request);
 
@@ -155,6 +176,18 @@ async function handleRecallMessage(request, env, friendId) {
     .bind(user.id, friendId, messageKey, createdAt)
     .run();
 
+  await runBackgroundTask(
+    ctx,
+    sendDirectMessagePush(env, {
+      senderId: user.id,
+      senderName: user.name,
+      receiverId: friendId,
+      text: '',
+      kind: 'recall',
+      appOrigin: new URL(request.url).origin,
+    })
+  );
+
   return jsonResponse({ ok: true }, 200, request);
 }
 
@@ -173,7 +206,7 @@ export function matchChatDmRoute(pathname) {
   return { friendId: Number(match[1]), action: match[2] };
 }
 
-export async function handleDynamicChatRoutes(request, env, url) {
+export async function handleDynamicChatRoutes(request, env, url, ctx) {
   const route = matchChatDmRoute(url.pathname);
   if (!route) return null;
 
@@ -183,9 +216,9 @@ export async function handleDynamicChatRoutes(request, env, url) {
     case 'GET ws':
       return handleDmWebSocket(request, env, route.friendId);
     case 'POST send':
-      return handleSendPending(request, env, route.friendId);
+      return handleSendPending(request, env, route.friendId, ctx);
     case 'POST recall':
-      return handleRecallMessage(request, env, route.friendId);
+      return handleRecallMessage(request, env, route.friendId, ctx);
     case 'GET pending':
       return handleGetPending(request, env);
     case 'POST ack':
