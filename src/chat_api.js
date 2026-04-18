@@ -1,6 +1,7 @@
 import { requireUser } from './request_helpers.js';
 import { sendDirectMessagePush } from './push_notifications.js';
 import { jsonResponse } from './utils.js';
+import { handleSyncUpload, handleSyncDownload } from './chat_sync_api.js';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -195,6 +196,7 @@ async function handleRecallMessage(request, env, friendId, ctx) {
 
 export function matchChatDmRoute(pathname) {
   const match = pathname.match(/^\/api\/chat\/dm\/(\d+)\/(history|ws|send|recall)$/) ??
+    pathname.match(/^\/api\/chat\/dm\/(\d+)\/(sync-upload|sync-download)$/) ??
     pathname.match(/^\/api\/chat\/dm\/(pending|ack)$/);
   if (!match) return null;
 
@@ -223,6 +225,10 @@ export async function handleDynamicChatRoutes(request, env, url, ctx) {
       return handleGetPending(request, env);
     case 'POST ack':
       return handleAckPending(request, env);
+    case 'POST sync-upload':
+      return handleSyncUpload(request, env, route.friendId);
+    case 'GET sync-download':
+      return handleSyncDownload(request, env, route.friendId);
     default:
       return null;
   }
