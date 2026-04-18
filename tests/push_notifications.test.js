@@ -43,6 +43,18 @@ test('localizedChatText returns localized recall copy', () => {
   );
 });
 
+test('buildPushNotificationId normalizes UUIDs into topic-safe unique ids', () => {
+  assert.equal(
+    __testables.buildPushNotificationId(() => '123e4567-e89b-12d3-a456-426614174000'),
+    '123e4567e89b12d3a456426614174000'
+  );
+
+  assert.equal(
+    __testables.buildPushNotificationId(() => 'ABC-123'),
+    'abc123'
+  );
+});
+
 test('parseWebSubscription accepts valid subscription JSON and rejects bad payloads', () => {
   assert.deepEqual(
     __testables.parseWebSubscription({

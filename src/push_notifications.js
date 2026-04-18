@@ -332,6 +332,19 @@ export function localizedChatText({ locale, senderName, text, kind }) {
   return { title: safeSenderName, body: trimString(text) || '新訊息' };
 }
 
+export function buildPushNotificationId(
+  randomUuid = () => crypto.randomUUID()
+) {
+  const normalized = trimString(randomUuid()).toLowerCase().replace(/[^a-z0-9]/g, '');
+  if (normalized) {
+    return normalized.slice(0, 32);
+  }
+
+  return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 14)}`
+    .replace(/[^a-z0-9]/g, '')
+    .slice(0, 32);
+}
+
 function base64UrlEncodeBytes(bytes) {
   let binary = '';
   for (const byte of bytes) {
@@ -509,7 +522,7 @@ async function sendWebPushNotification(env, registration, messagePayload) {
     body: messagePayload.body,
     icon: '/icons/Icon-192.png',
     badge: '/icons/Icon-192.png',
-    tag: messagePayload.type,
+    tag: `${messagePayload.type}-${messagePayload.notificationId}`,
     data: {
       type: messagePayload.type,
       conversationUserId: messagePayload.conversationUserId,
@@ -522,7 +535,7 @@ async function sendWebPushNotification(env, registration, messagePayload) {
     await webpush.sendNotification(subscription, payload, {
       TTL: 60,
       urgency: 'high',
-      topic: `dm-${messagePayload.conversationUserId}`.slice(0, 32),
+      topic: messagePayload.notificationId,
       vapidDetails: {
         subject: trimString(env.WEB_PUSH_SUBJECT),
         publicKey: trimString(env.WEB_PUSH_PUBLIC_KEY),
@@ -557,6 +570,7 @@ export async function sendDirectMessagePush(
 
   await Promise.allSettled(
     registrations.map(async (registration) => {
+      const notificationId = buildPushNotificationId();
       const messageText = localizedChatText({
         locale: registration.locale,
         senderName,
@@ -566,6 +580,7 @@ export async function sendDirectMessagePush(
       const messagePayload = {
         ...messageText,
         type: kind === 'recall' ? 'dm_recall' : 'dm_message',
+        notificationId,
         conversationUserId: senderId,
         senderId,
         appOrigin,
@@ -585,6 +600,7 @@ export async function sendDirectMessagePush(
 
 export const __testables = {
   buildPublicPushConfig,
+  buildPushNotificationId,
   hasApnsDeliveryConfig,
   hasWebPushDeliveryConfig,
   localizedChatText,
