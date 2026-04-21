@@ -84,6 +84,19 @@ export function matchManagedCardCharacterImageRoute(pathname) {
   return match[1];
 }
 
+export function matchManagedCardCharacterImageDirectionRoute(pathname) {
+  const match = pathname.match(
+    /^\/api\/admin\/cards\/([a-zA-Z0-9_]+)\/character-images\/(front|back|left|right)$/
+  );
+  if (!match) {
+    return null;
+  }
+  return {
+    cardId: match[1],
+    direction: match[2]
+  };
+}
+
 export function matchManagedCardBgImageRoute(pathname) {
   const match = pathname.match(/^\/api\/admin\/cards\/([a-zA-Z0-9_]+)\/bg-image$/);
   if (!match) {
@@ -106,6 +119,19 @@ export function matchCardCharacterImagePath(pathname) {
     return null;
   }
   return match[1];
+}
+
+export function matchCardCharacterImageDirectionPath(pathname) {
+  const match = pathname.match(
+    /^\/card-character-images\/([a-zA-Z0-9_]+)\/(front|back|left|right)$/
+  );
+  if (!match) {
+    return null;
+  }
+  return {
+    cardId: match[1],
+    direction: match[2]
+  };
 }
 
 export function matchCardBgImagePath(pathname) {

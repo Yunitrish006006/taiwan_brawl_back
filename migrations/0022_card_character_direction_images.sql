@@ -1,0 +1,3 @@
+ALTER TABLE cards ADD COLUMN char_image_back_version INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE cards ADD COLUMN char_image_left_version INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE cards ADD COLUMN char_image_right_version INTEGER NOT NULL DEFAULT 0;

@@ -1,6 +1,11 @@
-import { getCardImageResponse, getCardCharacterImageResponse, getCardBgImageResponse } from './royale_repository.js';
+import {
+  getCardImageResponse,
+  getCardCharacterImageResponse,
+  getCardBgImageResponse
+} from './royale_repository.js';
 import {
   matchCardImagePath,
+  matchCardCharacterImageDirectionPath,
   matchCardCharacterImagePath,
   matchCardBgImagePath,
   matchUserAvatarPath
@@ -12,6 +17,17 @@ export async function handleMediaRequest(request, env, url) {
   const cardImageId = matchCardImagePath(url.pathname);
   if (cardImageId && request.method === 'GET') {
     const response = await getCardImageResponse(env, cardImageId);
+    return response ?? jsonResponse({ error: 'Not Found' }, 404, request);
+  }
+
+  const cardDirectionalCharImage =
+    matchCardCharacterImageDirectionPath(url.pathname);
+  if (cardDirectionalCharImage && request.method === 'GET') {
+    const response = await getCardCharacterImageResponse(
+      env,
+      cardDirectionalCharImage.cardId,
+      cardDirectionalCharImage.direction
+    );
     return response ?? jsonResponse({ error: 'Not Found' }, 404, request);
   }
 

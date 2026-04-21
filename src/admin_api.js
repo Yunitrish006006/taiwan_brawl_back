@@ -13,6 +13,7 @@ import {
 import {
   matchAdminUserRoleRoute,
   matchManagedCardImageRoute,
+  matchManagedCardCharacterImageDirectionRoute,
   matchManagedCardCharacterImageRoute,
   matchManagedCardBgImageRoute,
   matchManagedCardRoute
@@ -76,17 +77,27 @@ async function handleDeleteManagedCardImage(request, env, cardId) {
   });
 }
 
-async function handleUploadManagedCardCharacterImage(request, env, cardId) {
+async function handleUploadManagedCardCharacterImage(
+  request,
+  env,
+  cardId,
+  direction = 'front'
+) {
   return withCardManagerBadRequest(request, env, async () => {
     const body = await readJsonBody(request);
-    const card = await uploadCardCharacterImage(env, cardId, body);
+    const card = await uploadCardCharacterImage(env, cardId, body, direction);
     return jsonResponse({ ok: true, card }, 200, request);
   });
 }
 
-async function handleDeleteManagedCardCharacterImage(request, env, cardId) {
+async function handleDeleteManagedCardCharacterImage(
+  request,
+  env,
+  cardId,
+  direction = 'front'
+) {
   return withCardManagerBadRequest(request, env, async () => {
-    const card = await removeCardCharacterImage(env, cardId);
+    const card = await removeCardCharacterImage(env, cardId, direction);
     return jsonResponse({ ok: true, card }, 200, request);
   });
 }
@@ -129,6 +140,25 @@ export async function handleDynamicAdminRoutes(request, env, url) {
   }
   if (managedCardImageId && request.method === 'DELETE') {
     return handleDeleteManagedCardImage(request, env, managedCardImageId);
+  }
+
+  const managedCardDirectionalCharImage =
+    matchManagedCardCharacterImageDirectionRoute(url.pathname);
+  if (managedCardDirectionalCharImage && request.method === 'POST') {
+    return handleUploadManagedCardCharacterImage(
+      request,
+      env,
+      managedCardDirectionalCharImage.cardId,
+      managedCardDirectionalCharImage.direction
+    );
+  }
+  if (managedCardDirectionalCharImage && request.method === 'DELETE') {
+    return handleDeleteManagedCardCharacterImage(
+      request,
+      env,
+      managedCardDirectionalCharImage.cardId,
+      managedCardDirectionalCharImage.direction
+    );
   }
 
   const managedCardCharImageId = matchManagedCardCharacterImageRoute(url.pathname);

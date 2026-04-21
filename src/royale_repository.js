@@ -6,10 +6,12 @@ import {
 } from './royale_cards.js';
 
 const MAX_CARD_IMAGE_BYTES = 1024 * 1024;
+const CARD_CHARACTER_IMAGE_DIRECTIONS = ['front', 'back', 'left', 'right'];
 const CARD_SELECT_COLUMNS = `SELECT id, name, elixir_cost, energy_cost, energy_cost_type, type, hp, damage, attack_range, move_speed,
         attack_speed, spawn_count, spell_radius, spell_damage, target_rule,
         effect_kind, effect_value, body_radius, name_zh_hant, name_en, name_ja,
-        name_i18n, image_version, char_image_version, bg_image_version
+        name_i18n, image_version, char_image_version, char_image_back_version,
+        char_image_left_version, char_image_right_version, bg_image_version
  FROM cards`;
 const CARD_WRITE_COLUMNS = `id, name, elixir_cost, energy_cost, energy_cost_type, type, hp, damage, attack_range, move_speed,
       attack_speed, spawn_count, spell_radius, spell_damage, target_rule,
@@ -97,7 +99,30 @@ function serializeCard(row) {
   const fallbackName = String(row.name ?? '').trim();
   const imageVersion = Number(row.image_version || 0);
   const charImageVersion = Number(row.char_image_version || 0);
+  const charImageBackVersion = Number(row.char_image_back_version || 0);
+  const charImageLeftVersion = Number(row.char_image_left_version || 0);
+  const charImageRightVersion = Number(row.char_image_right_version || 0);
   const bgImageVersion = Number(row.bg_image_version || 0);
+  const characterFrontImageUrl = cardCharacterImageUrl(
+    row.id,
+    charImageVersion,
+    'front'
+  );
+  const characterBackImageUrl = cardCharacterImageUrl(
+    row.id,
+    charImageBackVersion,
+    'back'
+  );
+  const characterLeftImageUrl = cardCharacterImageUrl(
+    row.id,
+    charImageLeftVersion,
+    'left'
+  );
+  const characterRightImageUrl = cardCharacterImageUrl(
+    row.id,
+    charImageRightVersion,
+    'right'
+  );
   return {
     id: row.id,
     name: firstAvailableName(nameI18n, fallbackName),
@@ -145,10 +170,23 @@ function serializeCard(row) {
     effectKind: row.effect_kind || 'none',
     effectValue: Number(row.effect_value || 0),
     imageVersion,
-    imageUrl: cardCharacterImageUrl(row.id, charImageVersion),
-    characterImageUrl: cardCharacterImageUrl(row.id, charImageVersion),
+    imageUrl: characterFrontImageUrl,
+    characterImageUrl: characterFrontImageUrl,
+    characterFrontImageUrl,
+    characterBackImageUrl,
+    characterLeftImageUrl,
+    characterRightImageUrl,
+    characterImageUrls: {
+      front: characterFrontImageUrl,
+      back: characterBackImageUrl,
+      left: characterLeftImageUrl,
+      right: characterRightImageUrl
+    },
     bgImageUrl: cardBgImageUrl(row.id, bgImageVersion),
     charImageVersion,
+    charImageBackVersion,
+    charImageLeftVersion,
+    charImageRightVersion,
     bgImageVersion
   };
 }
@@ -160,10 +198,12 @@ function cardImageUrl(cardId, imageVersion) {
     : null;
 }
 
-function cardCharacterImageUrl(cardId, charImageVersion) {
+function cardCharacterImageUrl(cardId, charImageVersion, direction = 'front') {
   const version = Number(charImageVersion || 0);
   return version > 0
-    ? `/card-character-images/${encodeURIComponent(cardId)}?v=${version}`
+    ? `/card-character-images/${encodeURIComponent(cardId)}/${normalizeCharacterImageDirection(
+        direction
+      )}?v=${version}`
     : null;
 }
 
@@ -182,12 +222,45 @@ function cardImageMetaKey(cardId) {
   return `card-image-meta:${cardId}`;
 }
 
-function cardCharImageKey(cardId) {
-  return `card-char-image:${cardId}`;
+function normalizeCharacterImageDirection(direction = 'front') {
+  const normalized = String(direction ?? 'front').trim().toLowerCase();
+  if (CARD_CHARACTER_IMAGE_DIRECTIONS.includes(normalized)) {
+    return normalized;
+  }
+  throw new Error(
+    'Character image direction must be front, back, left, or right'
+  );
 }
 
-function cardCharImageMetaKey(cardId) {
-  return `card-char-image-meta:${cardId}`;
+function cardCharImageVersionColumn(direction = 'front') {
+  switch (normalizeCharacterImageDirection(direction)) {
+    case 'front':
+      return 'char_image_version';
+    case 'back':
+      return 'char_image_back_version';
+    case 'left':
+      return 'char_image_left_version';
+    case 'right':
+      return 'char_image_right_version';
+    default:
+      throw new Error(
+        'Character image direction must be front, back, left, or right'
+      );
+  }
+}
+
+function cardCharImageKey(cardId, direction = 'front') {
+  const normalizedDirection = normalizeCharacterImageDirection(direction);
+  return normalizedDirection === 'front'
+    ? `card-char-image:${cardId}`
+    : `card-char-image:${cardId}:${normalizedDirection}`;
+}
+
+function cardCharImageMetaKey(cardId, direction = 'front') {
+  const normalizedDirection = normalizeCharacterImageDirection(direction);
+  return normalizedDirection === 'front'
+    ? `card-char-image-meta:${cardId}`
+    : `card-char-image-meta:${cardId}:${normalizedDirection}`;
 }
 
 function cardBgImageKey(cardId) {
@@ -438,8 +511,14 @@ export async function deleteCard(env, cardId) {
 
   await env.STATIC_ASSETS?.delete?.(`card-image:${normalizedCardId}`);
   await env.STATIC_ASSETS?.delete?.(`card-image-meta:${normalizedCardId}`);
-  await env.STATIC_ASSETS?.delete?.(cardCharImageKey(normalizedCardId));
-  await env.STATIC_ASSETS?.delete?.(cardCharImageMetaKey(normalizedCardId));
+  for (const direction of CARD_CHARACTER_IMAGE_DIRECTIONS) {
+    await env.STATIC_ASSETS?.delete?.(
+      cardCharImageKey(normalizedCardId, direction)
+    );
+    await env.STATIC_ASSETS?.delete?.(
+      cardCharImageMetaKey(normalizedCardId, direction)
+    );
+  }
   await env.STATIC_ASSETS?.delete?.(cardBgImageKey(normalizedCardId));
   await env.STATIC_ASSETS?.delete?.(cardBgImageMetaKey(normalizedCardId));
 }
@@ -558,7 +637,14 @@ export async function getCardImageResponse(env, cardId) {
   });
 }
 
-async function _uploadCardLayerImage(env, normalizedCardId, payload, imageKey, metaKey, versionColumn) {
+async function _uploadCardLayerImage(
+  env,
+  normalizedCardId,
+  payload,
+  imageKey,
+  metaKey,
+  versionColumn
+) {
   const contentType = allowedImageContentType(payload?.contentType);
   if (!contentType) {
     throw new Error('Only PNG, JPEG, WEBP, and GIF images are supported');
@@ -624,8 +710,14 @@ async function _getCardLayerImageResponse(env, cardId, imageKey, metaKey) {
   });
 }
 
-export async function uploadCardCharacterImage(env, cardId, payload) {
+export async function uploadCardCharacterImage(
+  env,
+  cardId,
+  payload,
+  direction = 'front'
+) {
   const normalizedCardId = normalizeCardId(cardId);
+  const normalizedDirection = normalizeCharacterImageDirection(direction);
   if (!(await cardExists(env, normalizedCardId))) {
     throw new Error('Card not found');
   }
@@ -633,24 +725,39 @@ export async function uploadCardCharacterImage(env, cardId, payload) {
     env,
     normalizedCardId,
     payload,
-    cardCharImageKey(normalizedCardId),
-    cardCharImageMetaKey(normalizedCardId),
-    'char_image_version'
+    cardCharImageKey(normalizedCardId, normalizedDirection),
+    cardCharImageMetaKey(normalizedCardId, normalizedDirection),
+    cardCharImageVersionColumn(normalizedDirection)
   );
 }
 
-export async function removeCardCharacterImage(env, cardId) {
+export async function removeCardCharacterImage(env, cardId, direction = 'front') {
   const normalizedCardId = normalizeCardId(cardId);
-  await env.STATIC_ASSETS?.delete?.(cardCharImageKey(normalizedCardId));
-  await env.STATIC_ASSETS?.delete?.(cardCharImageMetaKey(normalizedCardId));
-  await env.DB.prepare('UPDATE cards SET char_image_version = 0 WHERE id = ?')
+  const normalizedDirection = normalizeCharacterImageDirection(direction);
+  await env.STATIC_ASSETS?.delete?.(
+    cardCharImageKey(normalizedCardId, normalizedDirection)
+  );
+  await env.STATIC_ASSETS?.delete?.(
+    cardCharImageMetaKey(normalizedCardId, normalizedDirection)
+  );
+  await env.DB.prepare(
+    `UPDATE cards SET ${cardCharImageVersionColumn(
+      normalizedDirection
+    )} = 0 WHERE id = ?`
+  )
     .bind(normalizedCardId)
     .run();
   return fetchCardById(env, normalizedCardId);
 }
 
-export async function getCardCharacterImageResponse(env, cardId) {
-  return _getCardLayerImageResponse(env, cardId, cardCharImageKey, cardCharImageMetaKey);
+export async function getCardCharacterImageResponse(env, cardId, direction = 'front') {
+  const normalizedDirection = normalizeCharacterImageDirection(direction);
+  return _getCardLayerImageResponse(
+    env,
+    cardId,
+    (normalizedCardId) => cardCharImageKey(normalizedCardId, normalizedDirection),
+    (normalizedCardId) => cardCharImageMetaKey(normalizedCardId, normalizedDirection)
+  );
 }
 
 export async function uploadCardBgImage(env, cardId, payload) {

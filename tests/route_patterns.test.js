@@ -3,10 +3,12 @@ import assert from 'node:assert/strict';
 
 import {
   matchAdminUserRoleRoute,
+  matchCardCharacterImageDirectionPath,
   matchBlockedUserRoute,
   matchCardImagePath,
   matchFriendRequestRoute,
   matchFriendRoute,
+  matchManagedCardCharacterImageDirectionRoute,
   matchManagedCardImageRoute,
   matchManagedCardRoute,
   matchRoomInviteRoute,
@@ -38,7 +40,17 @@ test('resource matchers parse entity identifiers', () => {
     matchManagedCardImageRoute('/api/admin/cards/delinquent/image'),
     'delinquent'
   );
+  assert.deepEqual(
+    matchManagedCardCharacterImageDirectionRoute(
+      '/api/admin/cards/delinquent/character-images/back'
+    ),
+    { cardId: 'delinquent', direction: 'back' }
+  );
   assert.equal(matchCardImagePath('/card-images/delinquent'), 'delinquent');
+  assert.deepEqual(
+    matchCardCharacterImageDirectionPath('/card-character-images/delinquent/left'),
+    { cardId: 'delinquent', direction: 'left' }
+  );
   assert.equal(matchUserAvatarPath('/user-avatars/21'), 21);
 });
 
@@ -46,5 +58,11 @@ test('matchers reject unrelated paths', () => {
   assert.equal(matchRoomRoute('/api/rooms/not-valid/join'), null);
   assert.equal(matchFriendRequestRoute('/api/friends/requests/not-a-number/accept'), null);
   assert.equal(matchManagedCardRoute('/api/admin/cards/'), null);
+  assert.equal(
+    matchManagedCardCharacterImageDirectionRoute(
+      '/api/admin/cards/delinquent/character-images/sideways'
+    ),
+    null
+  );
   assert.equal(matchCardImagePath('/user-avatars/21'), null);
 });

@@ -122,6 +122,26 @@ export function buildUnitSnapshot(unit) {
     nameEn: unit.nameEn || unit.name,
     nameJa: unit.nameJa || unit.name,
     imageUrl: unit.imageUrl || null,
+    characterImageUrl: unit.characterImageUrl || unit.imageUrl || null,
+    characterFrontImageUrl:
+      unit.characterFrontImageUrl ||
+      unit.characterImageUrl ||
+      unit.imageUrl ||
+      null,
+    characterBackImageUrl: unit.characterBackImageUrl || null,
+    characterLeftImageUrl: unit.characterLeftImageUrl || null,
+    characterRightImageUrl: unit.characterRightImageUrl || null,
+    characterImageUrls: {
+      front:
+        unit.characterFrontImageUrl ||
+        unit.characterImageUrl ||
+        unit.imageUrl ||
+        null,
+      back: unit.characterBackImageUrl || null,
+      left: unit.characterLeftImageUrl || null,
+      right: unit.characterRightImageUrl || null
+    },
+    facingDirection: unit.facingDirection || 'forward',
     side: unit.side,
     type: unit.type,
     progress: Math.round(unit.progress),
@@ -218,6 +238,20 @@ function normalizeBattleUnitState(unit = {}) {
     nameEn: String(unit.nameEn || unit.name || ''),
     nameJa: String(unit.nameJa || unit.name || ''),
     imageUrl: unit.imageUrl || null,
+    characterImageUrl: unit.characterImageUrl || unit.imageUrl || null,
+    characterFrontImageUrl:
+      unit.characterFrontImageUrl ||
+      unit.characterImageUrl ||
+      unit.imageUrl ||
+      null,
+    characterBackImageUrl: unit.characterBackImageUrl || null,
+    characterLeftImageUrl: unit.characterLeftImageUrl || null,
+    characterRightImageUrl: unit.characterRightImageUrl || null,
+    facingDirection: ['forward', 'front', 'back', 'left', 'right'].includes(
+      unit.facingDirection
+    )
+      ? unit.facingDirection
+      : 'forward',
     type: String(unit.type || 'melee'),
     side: unit.side === 'right' ? 'right' : 'left',
     progress: Number(unit.progress || 0),

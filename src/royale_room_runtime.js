@@ -35,6 +35,41 @@ export function getEnemySide(side) {
   return side === 'left' ? 'right' : 'left';
 }
 
+function getTowerProgressForSide(side) {
+  return side === 'left' ? LEFT_TOWER_X : RIGHT_TOWER_X;
+}
+
+function facingDirectionForVector(progressDelta, lateralDelta) {
+  const weightedLateralDelta = lateralDelta * FIELD_ASPECT_RATIO;
+  if (
+    Math.abs(weightedLateralDelta) >
+    Math.max(16, Math.abs(progressDelta) * 0.35)
+  ) {
+    return lateralDelta < 0 ? 'left' : 'right';
+  }
+  return 'forward';
+}
+
+function updateUnitFacing(unit, target) {
+  if (!target) {
+    unit.facingDirection = 'forward';
+    return;
+  }
+
+  const targetProgress =
+    target.kind === 'unit'
+      ? target.target.progress
+      : getTowerProgressForSide(target.target);
+  const targetLateral =
+    target.kind === 'unit'
+      ? target.target.lateralPosition
+      : CENTER_LATERAL;
+  unit.facingDirection = facingDirectionForVector(
+    targetProgress - unit.progress,
+    targetLateral - unit.lateralPosition
+  );
+}
+
 export function regenerateBattleResources(room, dt) {
   for (const side of Object.keys(room.battle.players)) {
     const battlePlayer = room.battle.players[side];
@@ -82,7 +117,13 @@ export function resolveSpellEffect(room, side, card, dropPoint) {
   }
 }
 
-export function spawnBattleUnits(room, side, card, dropPoint, equipmentEffects = []) {
+export function spawnBattleUnits(
+  room,
+  side,
+  card,
+  dropPoint,
+  equipmentEffects = []
+) {
   const count = Math.max(1, card.spawnCount);
   const spacing = count === 1 ? 0 : 30 / FIELD_ASPECT_RATIO;
   const stats = applyEquipmentEffects(card, equipmentEffects);
@@ -92,7 +133,11 @@ export function spawnBattleUnits(room, side, card, dropPoint, equipmentEffects =
     'unit_hp_multiplier'
   );
   const boostedHp = Math.max(1, Math.round(stats.hp * unitHpMultiplier));
-  const unitDamageMultiplier = heroTraitValue(caster?.heroId, 'unitDamageMultiplier', 1);
+  const unitDamageMultiplier = heroTraitValue(
+    caster?.heroId,
+    'unitDamageMultiplier',
+    1
+  );
   const boostedDamage = Math.max(1, Math.round(stats.damage * unitDamageMultiplier));
 
   const aggregatedProcs = {};
@@ -114,8 +159,18 @@ export function spawnBattleUnits(room, side, card, dropPoint, equipmentEffects =
       nameEn: card.nameEn || card.name,
       nameJa: card.nameJa || card.name,
       imageUrl: card.imageUrl || null,
+      characterImageUrl: card.characterImageUrl || card.imageUrl || null,
+      characterFrontImageUrl:
+        card.characterFrontImageUrl ||
+        card.characterImageUrl ||
+        card.imageUrl ||
+        null,
+      characterBackImageUrl: card.characterBackImageUrl || null,
+      characterLeftImageUrl: card.characterLeftImageUrl || null,
+      characterRightImageUrl: card.characterRightImageUrl || null,
       type: card.type,
       side,
+      facingDirection: 'forward',
       progress: dropPoint.progress,
       lateralPosition: sanitizeLateralPosition(dropPoint.lateralPosition + offset),
       hp: boostedHp,
@@ -124,7 +179,10 @@ export function spawnBattleUnits(room, side, card, dropPoint, equipmentEffects =
       attackRange: Number(card.attackRange || 0),
       bodyRadius: Number(card.bodyRadius ?? bodyRadiusForUnitType(card.type)),
       moveSpeed: stats.moveSpeed,
-      attackSpeed: (card.attackSpeed || 1) * GLOBAL_ATTACK_SPEED_MULTIPLIER * (stats.attackSpeedMultiplier ?? 1),
+      attackSpeed:
+        (card.attackSpeed || 1) *
+        GLOBAL_ATTACK_SPEED_MULTIPLIER *
+        (stats.attackSpeedMultiplier ?? 1),
       targetRule: card.targetRule,
       cooldown: 0,
       effects: equipmentEffects.map((effect) => effect.name),
@@ -216,7 +274,9 @@ function rollStatusEffectProcs(attacker, targetUnit) {
   if (!procs) return;
   if (procs.bruise > 0 && Math.random() < procs.bruise) applyStatusEffect(targetUnit, 'bruise');
   if (procs.bleed > 0 && Math.random() < procs.bleed) applyStatusEffect(targetUnit, 'bleed');
-  if (procs.mental > 0 && Math.random() < procs.mental) applyStatusEffect(targetUnit, 'mental_illness');
+  if (procs.mental > 0 && Math.random() < procs.mental) {
+    applyStatusEffect(targetUnit, 'mental_illness');
+  }
   if (procs.stun > 0 && Math.random() < procs.stun) applyStatusEffect(targetUnit, 'stun');
   if (procs.slow > 0 && Math.random() < procs.slow) applyStatusEffect(targetUnit, 'slow');
 }
@@ -275,6 +335,7 @@ export function tickBattleUnits(room, dt) {
           ? effectiveAttackReachToUnit(unit, target.target)
           : effectiveAttackReachToTower(unit);
     if (target && target.distance <= attackReach) {
+      updateUnitFacing(unit, target);
       if (unit.cooldown <= 0) {
         performUnitAttack(room, unit, target);
         unit.cooldown = hasMentalIllness
@@ -282,14 +343,16 @@ export function tickBattleUnits(room, dt) {
           : unit.attackSpeed;
       }
     } else {
-      unit.progress = clamp(
-        unit.progress + sideDirection(unit.side) * effectiveMoveSpeed * dt,
-        MIN_FIELD_PROGRESS,
-        MAX_FIELD_PROGRESS
-      );
+      const progressDelta = sideDirection(unit.side) * effectiveMoveSpeed * dt;
       const desiredLateral =
         target?.kind === 'unit' ? target.target.lateralPosition : CENTER_LATERAL;
       const lateralDelta = desiredLateral - unit.lateralPosition;
+      unit.facingDirection = facingDirectionForVector(progressDelta, lateralDelta);
+      unit.progress = clamp(
+        unit.progress + progressDelta,
+        MIN_FIELD_PROGRESS,
+        MAX_FIELD_PROGRESS
+      );
       const lateralStep = (effectiveMoveSpeed * 0.45 * dt) / FIELD_ASPECT_RATIO;
       unit.lateralPosition = sanitizeLateralPosition(
         unit.lateralPosition + clamp(lateralDelta, -lateralStep, lateralStep)
