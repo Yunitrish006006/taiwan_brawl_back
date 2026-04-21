@@ -9,7 +9,7 @@ const MAX_CARD_IMAGE_BYTES = 1024 * 1024;
 const CARD_SELECT_COLUMNS = `SELECT id, name, elixir_cost, energy_cost, energy_cost_type, type, hp, damage, attack_range, move_speed,
         attack_speed, spawn_count, spell_radius, spell_damage, target_rule,
         effect_kind, effect_value, body_radius, name_zh_hant, name_en, name_ja,
-        name_i18n, image_version
+        name_i18n, image_version, char_image_version, bg_image_version
  FROM cards`;
 const CARD_WRITE_COLUMNS = `id, name, elixir_cost, energy_cost, energy_cost_type, type, hp, damage, attack_range, move_speed,
       attack_speed, spawn_count, spell_radius, spell_damage, target_rule,
@@ -96,6 +96,8 @@ function serializeCard(row) {
   const nameI18n = parseNameI18n(row.name_i18n);
   const fallbackName = String(row.name ?? '').trim();
   const imageVersion = Number(row.image_version || 0);
+  const charImageVersion = Number(row.char_image_version || 0);
+  const bgImageVersion = Number(row.bg_image_version || 0);
   return {
     id: row.id,
     name: firstAvailableName(nameI18n, fallbackName),
@@ -143,7 +145,11 @@ function serializeCard(row) {
     effectKind: row.effect_kind || 'none',
     effectValue: Number(row.effect_value || 0),
     imageVersion,
-    imageUrl: cardImageUrl(row.id, imageVersion)
+    imageUrl: cardCharacterImageUrl(row.id, charImageVersion),
+    characterImageUrl: cardCharacterImageUrl(row.id, charImageVersion),
+    bgImageUrl: cardBgImageUrl(row.id, bgImageVersion),
+    charImageVersion,
+    bgImageVersion
   };
 }
 
@@ -154,12 +160,42 @@ function cardImageUrl(cardId, imageVersion) {
     : null;
 }
 
+function cardCharacterImageUrl(cardId, charImageVersion) {
+  const version = Number(charImageVersion || 0);
+  return version > 0
+    ? `/card-character-images/${encodeURIComponent(cardId)}?v=${version}`
+    : null;
+}
+
+function cardBgImageUrl(cardId, bgImageVersion) {
+  const version = Number(bgImageVersion || 0);
+  return version > 0
+    ? `/card-bg-images/${encodeURIComponent(cardId)}?v=${version}`
+    : null;
+}
+
 function cardImageKey(cardId) {
   return `card-image:${cardId}`;
 }
 
 function cardImageMetaKey(cardId) {
   return `card-image-meta:${cardId}`;
+}
+
+function cardCharImageKey(cardId) {
+  return `card-char-image:${cardId}`;
+}
+
+function cardCharImageMetaKey(cardId) {
+  return `card-char-image-meta:${cardId}`;
+}
+
+function cardBgImageKey(cardId) {
+  return `card-bg-image:${cardId}`;
+}
+
+function cardBgImageMetaKey(cardId) {
+  return `card-bg-image-meta:${cardId}`;
 }
 
 async function fetchCardRow(env, cardId) {
@@ -402,6 +438,10 @@ export async function deleteCard(env, cardId) {
 
   await env.STATIC_ASSETS?.delete?.(`card-image:${normalizedCardId}`);
   await env.STATIC_ASSETS?.delete?.(`card-image-meta:${normalizedCardId}`);
+  await env.STATIC_ASSETS?.delete?.(cardCharImageKey(normalizedCardId));
+  await env.STATIC_ASSETS?.delete?.(cardCharImageMetaKey(normalizedCardId));
+  await env.STATIC_ASSETS?.delete?.(cardBgImageKey(normalizedCardId));
+  await env.STATIC_ASSETS?.delete?.(cardBgImageMetaKey(normalizedCardId));
 }
 
 function decodeBase64(value) {
@@ -516,6 +556,130 @@ export async function getCardImageResponse(env, cardId) {
       'Cache-Control': 'public, max-age=31536000, immutable'
     }
   });
+}
+
+async function _uploadCardLayerImage(env, normalizedCardId, payload, imageKey, metaKey, versionColumn) {
+  const contentType = allowedImageContentType(payload?.contentType);
+  if (!contentType) {
+    throw new Error('Only PNG, JPEG, WEBP, and GIF images are supported');
+  }
+
+  const bytes = decodeBase64(payload?.bytesBase64);
+  if (!bytes || !bytes.length) {
+    throw new Error('Image data is required');
+  }
+  if (bytes.length > MAX_CARD_IMAGE_BYTES) {
+    throw new Error('Image must be 1 MB or smaller');
+  }
+
+  await env.STATIC_ASSETS.put(imageKey, bytes);
+  await env.STATIC_ASSETS.put(
+    metaKey,
+    JSON.stringify({
+      contentType,
+      uploadedAt: new Date().toISOString()
+    })
+  );
+
+  const imageVersion = Date.now();
+  await env.DB.prepare(`UPDATE cards SET ${versionColumn} = ? WHERE id = ?`)
+    .bind(imageVersion, normalizedCardId)
+    .run();
+
+  return fetchCardById(env, normalizedCardId);
+}
+
+async function _getCardLayerImageResponse(env, cardId, imageKey, metaKey) {
+  const normalizedCardId = String(cardId ?? '').trim();
+  if (!normalizedCardId) {
+    return null;
+  }
+
+  const [bytes, metaRaw] = await Promise.all([
+    env.STATIC_ASSETS.get(imageKey(normalizedCardId), 'arrayBuffer'),
+    env.STATIC_ASSETS.get(metaKey(normalizedCardId))
+  ]);
+  if (!bytes) {
+    return null;
+  }
+
+  let contentType = 'application/octet-stream';
+  if (metaRaw) {
+    try {
+      const meta = JSON.parse(metaRaw);
+      if (typeof meta?.contentType === 'string' && meta.contentType) {
+        contentType = meta.contentType;
+      }
+    } catch (_) {
+      // ignore invalid metadata
+    }
+  }
+
+  return new Response(bytes, {
+    status: 200,
+    headers: {
+      'Content-Type': contentType,
+      'Cache-Control': 'public, max-age=31536000, immutable'
+    }
+  });
+}
+
+export async function uploadCardCharacterImage(env, cardId, payload) {
+  const normalizedCardId = normalizeCardId(cardId);
+  if (!(await cardExists(env, normalizedCardId))) {
+    throw new Error('Card not found');
+  }
+  return _uploadCardLayerImage(
+    env,
+    normalizedCardId,
+    payload,
+    cardCharImageKey(normalizedCardId),
+    cardCharImageMetaKey(normalizedCardId),
+    'char_image_version'
+  );
+}
+
+export async function removeCardCharacterImage(env, cardId) {
+  const normalizedCardId = normalizeCardId(cardId);
+  await env.STATIC_ASSETS?.delete?.(cardCharImageKey(normalizedCardId));
+  await env.STATIC_ASSETS?.delete?.(cardCharImageMetaKey(normalizedCardId));
+  await env.DB.prepare('UPDATE cards SET char_image_version = 0 WHERE id = ?')
+    .bind(normalizedCardId)
+    .run();
+  return fetchCardById(env, normalizedCardId);
+}
+
+export async function getCardCharacterImageResponse(env, cardId) {
+  return _getCardLayerImageResponse(env, cardId, cardCharImageKey, cardCharImageMetaKey);
+}
+
+export async function uploadCardBgImage(env, cardId, payload) {
+  const normalizedCardId = normalizeCardId(cardId);
+  if (!(await cardExists(env, normalizedCardId))) {
+    throw new Error('Card not found');
+  }
+  return _uploadCardLayerImage(
+    env,
+    normalizedCardId,
+    payload,
+    cardBgImageKey(normalizedCardId),
+    cardBgImageMetaKey(normalizedCardId),
+    'bg_image_version'
+  );
+}
+
+export async function removeCardBgImage(env, cardId) {
+  const normalizedCardId = normalizeCardId(cardId);
+  await env.STATIC_ASSETS?.delete?.(cardBgImageKey(normalizedCardId));
+  await env.STATIC_ASSETS?.delete?.(cardBgImageMetaKey(normalizedCardId));
+  await env.DB.prepare('UPDATE cards SET bg_image_version = 0 WHERE id = ?')
+    .bind(normalizedCardId)
+    .run();
+  return fetchCardById(env, normalizedCardId);
+}
+
+export async function getCardBgImageResponse(env, cardId) {
+  return _getCardLayerImageResponse(env, cardId, cardBgImageKey, cardBgImageMetaKey);
 }
 
 export async function getCardMap(env) {

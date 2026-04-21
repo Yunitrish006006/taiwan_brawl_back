@@ -76,8 +76,40 @@ export function matchManagedCardImageRoute(pathname) {
   return match[1];
 }
 
+export function matchManagedCardCharacterImageRoute(pathname) {
+  const match = pathname.match(/^\/api\/admin\/cards\/([a-zA-Z0-9_]+)\/character-image$/);
+  if (!match) {
+    return null;
+  }
+  return match[1];
+}
+
+export function matchManagedCardBgImageRoute(pathname) {
+  const match = pathname.match(/^\/api\/admin\/cards\/([a-zA-Z0-9_]+)\/bg-image$/);
+  if (!match) {
+    return null;
+  }
+  return match[1];
+}
+
 export function matchCardImagePath(pathname) {
   const match = pathname.match(/^\/card-images\/([a-zA-Z0-9_]+)$/);
+  if (!match) {
+    return null;
+  }
+  return match[1];
+}
+
+export function matchCardCharacterImagePath(pathname) {
+  const match = pathname.match(/^\/card-character-images\/([a-zA-Z0-9_]+)$/);
+  if (!match) {
+    return null;
+  }
+  return match[1];
+}
+
+export function matchCardBgImagePath(pathname) {
+  const match = pathname.match(/^\/card-bg-images\/([a-zA-Z0-9_]+)$/);
   if (!match) {
     return null;
   }

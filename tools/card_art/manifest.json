@@ -1,0 +1,86 @@
+[
+  {
+    "id": "guardian",
+    "name": "護衛",
+    "type": "melee",
+    "characterPrompt": "a Taiwan street guardian, black tactical gear, baton in both hands, protective stance, strong silhouette, full body, centered",
+    "backgroundPrompt": "an urban alley checkpoint in Taipei at night, damp pavement, steel barricades, cool blue security lights, no characters"
+  },
+  {
+    "id": "punk",
+    "name": "八加九",
+    "type": "melee",
+    "characterPrompt": "a brash Taiwanese street punk fighter, dyed hair, flashy streetwear, gold chain, aggressive swagger, taped fists, full body, centered",
+    "backgroundPrompt": "a neon-lit scooter lane beside a convenience store in Taipei, graffiti shutters, humid night glow, no characters"
+  },
+  {
+    "id": "swordsman",
+    "name": "劍士",
+    "type": "melee",
+    "characterPrompt": "a modern Taiwanese swordsman, agile light armor, one-handed blade ready, disciplined duelist pose, full body, centered",
+    "backgroundPrompt": "a temple courtyard after rain, stone tiles, drifting incense haze, warm lantern accents, no characters"
+  },
+  {
+    "id": "asian_parent",
+    "name": "亞洲家長",
+    "type": "tank",
+    "characterPrompt": "an imposing Taiwanese parent archetype, stern face, practical home clothes with apron layered like armor, sandal in one hand as weapon, intimidating tank presence, full body, centered",
+    "backgroundPrompt": "a cramped apartment living room in Taiwan, fluorescent light, family shrine shelf, plastic stools, no characters"
+  },
+  {
+    "id": "giant",
+    "name": "巨人",
+    "type": "tank",
+    "characterPrompt": "a massive urban giant inspired by Taiwanese construction culture, heavy frame, work gloves, reinforced vest, slow unstoppable posture, full body, centered",
+    "backgroundPrompt": "a night construction site in Taipei, scaffolding, warning lights, concrete dust in the air, no characters"
+  },
+  {
+    "id": "knight",
+    "name": "騎士",
+    "type": "tank",
+    "characterPrompt": "a modern knight fused with Taiwanese street-defense style, plated armor with blue accents, shield and short sword, heroic tank posture, full body, centered",
+    "backgroundPrompt": "a civic plaza under dramatic evening sky, wet stone, distant city skyline, blue banners, no characters"
+  },
+  {
+    "id": "archer",
+    "name": "弓手",
+    "type": "ranged",
+    "characterPrompt": "a sharp-eyed Taiwanese archer, agile outfit, compact recurve bow, ready to fire, full body, centered",
+    "backgroundPrompt": "a rooftop overlooking dense Taipei streets, laundry lines, distant signs, windy dusk atmosphere, no characters"
+  },
+  {
+    "id": "bomber",
+    "name": "投彈兵",
+    "type": "ranged",
+    "characterPrompt": "a chaotic Taiwanese bomber unit, satchel of improvised bombs, protective goggles, playful dangerous grin, full body, centered",
+    "backgroundPrompt": "a night market service lane with stacked crates, hanging bulbs, smoky air, sparks and scorch marks, no characters"
+  },
+  {
+    "id": "healer",
+    "name": "祭司",
+    "type": "ranged",
+    "characterPrompt": "a Taiwanese healer-priest, ceremonial robes mixed with practical modern layers, prayer beads, gentle but focused expression, full body, centered",
+    "backgroundPrompt": "a quiet shrine interior with soft incense haze, gold-red light, offering table glow, no characters"
+  },
+  {
+    "id": "musketeer",
+    "name": "火槍手",
+    "type": "ranged",
+    "characterPrompt": "a disciplined Taiwanese musketeer, long firearm, fitted coat and tactical straps, balanced firing stance, full body, centered",
+    "backgroundPrompt": "a harbor warehouse district at blue hour, corrugated steel, sodium lamps, subtle mist, no characters"
+  },
+  {
+    "id": "goblin_team",
+    "name": "哥布林小隊",
+    "type": "swarm",
+    "characterPrompt": "a small mischievous goblin squad with Taiwan street-gang styling, four varied goblins, improvised weapons, grouped composition, full body, centered",
+    "backgroundPrompt": "a cluttered back alley hideout with scooters, stacked baskets, green neon spill, no characters"
+  },
+  {
+    "id": "wolf_pack",
+    "name": "狼群",
+    "type": "swarm",
+    "characterPrompt": "a pack of three fierce wolves adapted to urban Taiwan, lean bodies, alert eyes, dynamic grouped pose, full body, centered",
+    "backgroundPrompt": "a foggy mountain roadside above the city, guardrail, wet asphalt, moonlit blue atmosphere, no characters"
+  }
+]

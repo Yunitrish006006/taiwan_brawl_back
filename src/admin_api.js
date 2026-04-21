@@ -4,11 +4,17 @@ import {
   deleteCard,
   removeCardImage,
   uploadCardImage,
+  uploadCardCharacterImage,
+  removeCardCharacterImage,
+  uploadCardBgImage,
+  removeCardBgImage,
   upsertCard
 } from './royale_repository.js';
 import {
   matchAdminUserRoleRoute,
   matchManagedCardImageRoute,
+  matchManagedCardCharacterImageRoute,
+  matchManagedCardBgImageRoute,
   matchManagedCardRoute
 } from './route_patterns.js';
 import {
@@ -70,6 +76,36 @@ async function handleDeleteManagedCardImage(request, env, cardId) {
   });
 }
 
+async function handleUploadManagedCardCharacterImage(request, env, cardId) {
+  return withCardManagerBadRequest(request, env, async () => {
+    const body = await readJsonBody(request);
+    const card = await uploadCardCharacterImage(env, cardId, body);
+    return jsonResponse({ ok: true, card }, 200, request);
+  });
+}
+
+async function handleDeleteManagedCardCharacterImage(request, env, cardId) {
+  return withCardManagerBadRequest(request, env, async () => {
+    const card = await removeCardCharacterImage(env, cardId);
+    return jsonResponse({ ok: true, card }, 200, request);
+  });
+}
+
+async function handleUploadManagedCardBgImage(request, env, cardId) {
+  return withCardManagerBadRequest(request, env, async () => {
+    const body = await readJsonBody(request);
+    const card = await uploadCardBgImage(env, cardId, body);
+    return jsonResponse({ ok: true, card }, 200, request);
+  });
+}
+
+async function handleDeleteManagedCardBgImage(request, env, cardId) {
+  return withCardManagerBadRequest(request, env, async () => {
+    const card = await removeCardBgImage(env, cardId);
+    return jsonResponse({ ok: true, card }, 200, request);
+  });
+}
+
 export function exactAdminApiRouteHandler(request, env, url) {
   switch (`${request.method} ${url.pathname}`) {
     case 'GET /api/admin/users':
@@ -93,6 +129,22 @@ export async function handleDynamicAdminRoutes(request, env, url) {
   }
   if (managedCardImageId && request.method === 'DELETE') {
     return handleDeleteManagedCardImage(request, env, managedCardImageId);
+  }
+
+  const managedCardCharImageId = matchManagedCardCharacterImageRoute(url.pathname);
+  if (managedCardCharImageId && request.method === 'POST') {
+    return handleUploadManagedCardCharacterImage(request, env, managedCardCharImageId);
+  }
+  if (managedCardCharImageId && request.method === 'DELETE') {
+    return handleDeleteManagedCardCharacterImage(request, env, managedCardCharImageId);
+  }
+
+  const managedCardBgImageId = matchManagedCardBgImageRoute(url.pathname);
+  if (managedCardBgImageId && request.method === 'POST') {
+    return handleUploadManagedCardBgImage(request, env, managedCardBgImageId);
+  }
+  if (managedCardBgImageId && request.method === 'DELETE') {
+    return handleDeleteManagedCardBgImage(request, env, managedCardBgImageId);
   }
 
   const managedCardId = matchManagedCardRoute(url.pathname);
