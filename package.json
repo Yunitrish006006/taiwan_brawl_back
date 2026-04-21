@@ -10,7 +10,8 @@
     "assets:generate": "node upload.js",
     "kv:upload": "wrangler kv bulk put assets.json --binding=STATIC_ASSETS --remote",
     "commit:suggest": "bash tool/suggest_commit_message.sh",
-    "commit:suggest:front": "bash tool/suggest_commit_message.sh --repo ../taiwan_brawl_front"
+    "commit:suggest:front": "bash tool/suggest_commit_message.sh --repo ../taiwan_brawl_front",
+    "android:build": "bash tool/build_android.sh"
   },
   "dependencies": {
     "@cloudflare/kv-asset-handler": "^0.4.0",

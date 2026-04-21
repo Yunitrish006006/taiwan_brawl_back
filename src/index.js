@@ -2,6 +2,7 @@ import { getAssetFromKV } from '@cloudflare/kv-asset-handler';
 
 import { handleApiRequest } from './api_router.js';
 import { handleMediaRequest } from './media_api.js';
+import { handlePrivacyPolicy } from './privacy_policy.js';
 import { RoyaleRoom } from './royale_room.js';
 import { corsHeaders, jsonResponse } from './utils.js';
 
@@ -46,6 +47,10 @@ export default {
 
     if (request.method === 'OPTIONS') {
       return new Response(null, { status: 204, headers: corsHeaders(request) });
+    }
+
+    if (url.pathname === '/privacy') {
+      return handlePrivacyPolicy(request);
     }
 
     const mediaResponse = await handleMediaRequest(request, env, url);
