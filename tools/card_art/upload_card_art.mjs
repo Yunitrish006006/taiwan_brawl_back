@@ -5,7 +5,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 
 const rootDir = process.cwd();
-const defaultArtDir = path.join(rootDir, 'generated', 'card_art');
+const defaultArtDir = path.join(rootDir, 'generated', 'card_art_pixel');
 const artDir = path.resolve(process.argv[2] || defaultArtDir);
 
 function run(command, args) {
