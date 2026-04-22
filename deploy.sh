@@ -266,6 +266,55 @@ resolve_wrangler_package() {
   fi
 }
 
+run_wrangler() {
+  npm exec --package="${WRANGLER_PACKAGE}" -- wrangler "$@"
+}
+
+looks_like_auth_expired() {
+  local message="$1"
+  local lower
+  lower="$(printf '%s' "${message}" | tr '[:upper:]' '[:lower:]')"
+
+  case "${lower}" in
+    *"token"*"expired"*|*"authentication"*|*"unauthorized"*|*"not logged in"*|*"login required"*|*"invalid api token"*)
+      return 0
+      ;;
+  esac
+
+  return 1
+}
+
+ensure_cloudflare_auth() {
+  local whoami_output
+  if whoami_output="$(run_wrangler whoami 2>&1)"; then
+    echo "Cloudflare auth check passed"
+    return 0
+  fi
+
+  if ! looks_like_auth_expired "${whoami_output}"; then
+    echo "Cloudflare auth check failed for a non-auth reason:"
+    echo "${whoami_output}"
+    return 1
+  fi
+
+  if [[ ! -f "${LOGOUT_LOGIN_SCRIPT}" ]]; then
+    echo "Cloudflare token appears expired, but ${LOGOUT_LOGIN_SCRIPT} was not found."
+    return 1
+  fi
+
+  echo "Cloudflare token appears expired. Re-authenticating via logout_and_login.sh..."
+  bash "${LOGOUT_LOGIN_SCRIPT}"
+
+  if whoami_output="$(run_wrangler whoami 2>&1)"; then
+    echo "Cloudflare re-authentication succeeded"
+    return 0
+  fi
+
+  echo "Cloudflare re-authentication failed:"
+  echo "${whoami_output}"
+  return 1
+}
+
 WRANGLER_PACKAGE="$(resolve_wrangler_package)"
 REQUIRED_BACKEND_PACKAGES=("@cloudflare/kv-asset-handler" "web-push")
 
@@ -275,6 +324,7 @@ if [[ -f "${RULES_FILE}" ]]; then
   # shellcheck disable=SC1090
   source "${RULES_FILE}"
 fi
+LOGOUT_LOGIN_SCRIPT="${SCRIPT_DIR}/logout_and_login.sh"
 
 resolve_frontend_dir() {
   if [[ -n "${FRONTEND_DIR:-}" ]]; then
@@ -356,6 +406,25 @@ ensure_backend_dependencies() {
   echo "Backend dependencies ready"
 }
 
+ensure_workspace_and_environment() {
+  if [[ ! -f "${BACKEND_DIR}/package.json" || ! -f "${BACKEND_DIR}/wrangler.jsonc" ]]; then
+    echo "Backend repo check failed. Expected package.json and wrangler.jsonc in ${BACKEND_DIR}"
+    exit 1
+  fi
+
+  if [[ ! -f "${FRONTEND_DIR}/pubspec.yaml" ]]; then
+    echo "Frontend repo check failed. Expected pubspec.yaml in ${FRONTEND_DIR}"
+    exit 1
+  fi
+
+  if [[ ! -x "${FLUTTER_BIN_DIR}/flutter" || ! -x "${FLUTTER_BIN_DIR}/dart" ]]; then
+    echo "Flutter SDK check failed. Expected flutter and dart in ${FLUTTER_BIN_DIR}"
+    exit 1
+  fi
+
+  echo "Workspace check passed: backend + frontend + Flutter environment"
+}
+
 FRONTEND_DIR="$(resolve_frontend_dir)"
 FLUTTER_BIN_DIR="$(resolve_flutter_bin_dir)"
 export PATH="${FLUTTER_BIN_DIR}:${PATH}"
@@ -392,6 +461,12 @@ echo "Frontend: ${FRONTEND_DIR}"
 echo "Flutter SDK: ${FLUTTER_BIN_DIR}"
 echo "Wrangler: ${WRANGLER_PACKAGE}"
 echo "======================================"
+echo
+
+echo "[0/6] Running preflight checks..."
+ensure_workspace_and_environment
+ensure_cloudflare_auth
+echo "Preflight checks completed"
 echo
 
 echo "[1/5] Generating locale catalog..."
@@ -437,7 +512,7 @@ if [[ -d "${MIGRATIONS_DIR}" ]]; then
   else
     echo "databaseName: ${D1_TARGET_DATABASE_NAME}"
     echo "Running: npm exec --package=${WRANGLER_PACKAGE} -- wrangler d1 migrations apply ${D1_TARGET_DATABASE_NAME} --remote"
-    npm exec --package="${WRANGLER_PACKAGE}" -- wrangler d1 migrations apply "${D1_TARGET_DATABASE_NAME}" --remote
+    run_wrangler d1 migrations apply "${D1_TARGET_DATABASE_NAME}" --remote
     echo "Step 4 completed"
   fi
 else
@@ -457,7 +532,7 @@ if [[ -f "${ASSETS_PATH}" ]]; then
     echo "assetsPath: ${ASSETS_PATH}"
     echo "namespaceId: ${KV_TARGET_NAMESPACE_ID}"
     echo "Running: npm exec --package=${WRANGLER_PACKAGE} -- wrangler kv bulk put ${ASSETS_PATH} --namespace-id ${KV_TARGET_NAMESPACE_ID} --remote"
-    npm exec --package="${WRANGLER_PACKAGE}" -- wrangler kv bulk put "${ASSETS_PATH}" --namespace-id "${KV_TARGET_NAMESPACE_ID}" --remote
+    run_wrangler kv bulk put "${ASSETS_PATH}" --namespace-id "${KV_TARGET_NAMESPACE_ID}" --remote
     echo "Step 5 completed"
   fi
 else
@@ -467,7 +542,7 @@ echo
 
 echo "[6/6] Deploying Workers..."
 echo "Running: npm exec --package=${WRANGLER_PACKAGE} -- wrangler deploy"
-npm exec --package="${WRANGLER_PACKAGE}" -- wrangler deploy
+run_wrangler deploy
 echo "Step 6 completed"
 echo
 
