@@ -49,6 +49,8 @@ Before deploy actions, the agent must also implement:
 - Cloudflare auth preflight via `wrangler whoami`
 - automatic re-auth flow when token/session is expired by invoking `logout_and_login.sh`
 - workspace preflight checks ensuring backend repo, frontend repo, and Flutter SDK environment are all present
+- optional post-deploy auto commit for backend and frontend repositories
+- optional post-deploy auto push for repositories committed in this run
 
 ### Mandatory Validation
 
@@ -98,6 +100,11 @@ The final response must include:
 	- `VERSION`
 	- `VERSION_BUMP=auto|major|minor|patch|none`
 	- `WRANGLER_VERSION`
+	- `AUTO_COMMIT=0|1` (default `0`)
+	- `AUTO_COMMIT_BACKEND_MESSAGE`
+	- `AUTO_COMMIT_FRONTEND_MESSAGE`
+	- `AUTO_PUSH=0|1` (default `0`, requires `AUTO_COMMIT=1`)
+	- `EXIT_PROMPT=0|1`
 	- `FRONTEND_DIR`
 	- `FLUTTER_BIN_DIR`
 	- `D1_DATABASE_NAME`
@@ -159,6 +166,14 @@ The deploy log style intentionally uses fractional step numbers.
 	 - `GET /` => HTTP 200
 	 - `GET /login` => HTTP 200
 	 - `GET /api/health` response contains `"ok":true`
+10. `[7/6]` Optional auto commit:
+	 - only when `AUTO_COMMIT=1`
+	 - commit backend and frontend repos independently when changes exist
+	 - use `AUTO_COMMIT_BACKEND_MESSAGE` and `AUTO_COMMIT_FRONTEND_MESSAGE` when provided
+11. `[7.5/6]` Optional auto push:
+	 - only when `AUTO_PUSH=1`
+	 - requires `AUTO_COMMIT=1`
+	 - push only repos that were auto committed in this deploy run
 
 After success, write semver back into the first `version:` key in `pubspec.yaml` using `awk` + temp file + `mv`.
 

@@ -10,9 +10,17 @@ fi
 # export VERSION="0.1.0"
 # export WRANGLER_VERSION="4.78.0"
 # export VERSION_BUMP="auto" # auto|major|minor|patch|none
+# export AUTO_COMMIT="1" # 1=true, 0=false
+# export AUTO_COMMIT_BACKEND_MESSAGE="chore(deploy): release 0.1.0"
+# export AUTO_COMMIT_FRONTEND_MESSAGE="chore(app): release 0.1.0"
+# export AUTO_PUSH="1" # 1=true, 0=false (requires AUTO_COMMIT=1)
+# export EXIT_PROMPT="0" # 1=show final Enter prompt, 0=skip
 
 WRANGLER_VERSION="${WRANGLER_VERSION:-latest}"
 VERSION_BUMP="${VERSION_BUMP:-auto}"
+AUTO_COMMIT="${AUTO_COMMIT:-0}"
+AUTO_PUSH="${AUTO_PUSH:-0}"
+EXIT_PROMPT="${EXIT_PROMPT:-1}"
 CC_MINOR_TYPES=(feat)
 CC_PATCH_TYPES=(fix perf refactor)
 CC_NONE_TYPES=(docs test build ci chore style revert)
@@ -45,6 +53,13 @@ normalize_version_bump() {
   case "$1" in
     auto|major|minor|patch|none) printf '%s\n' "$1" ;;
     *) printf 'auto\n' ;;
+  esac
+}
+
+is_truthy() {
+  case "${1,,}" in
+    1|true|yes|y|on) return 0 ;;
+    *) return 1 ;;
   esac
 }
 
@@ -425,6 +440,86 @@ ensure_workspace_and_environment() {
   echo "Workspace check passed: backend + frontend + Flutter environment"
 }
 
+auto_commit_repo_if_needed() {
+  local repo_dir="$1"
+  local commit_message="$2"
+  local repo_label="$3"
+  local git_root status_output
+
+  git_root="$(resolve_git_root "${repo_dir}")"
+  if [[ -z "${git_root}" ]]; then
+    echo "Skip ${repo_label} auto commit: not a git repository (${repo_dir})"
+    return 0
+  fi
+
+  status_output="$(git -C "${git_root}" status --short --untracked-files=all)"
+  if [[ -z "${status_output}" ]]; then
+    echo "Skip ${repo_label} auto commit: no changes"
+    return 0
+  fi
+
+  echo "Auto committing ${repo_label} changes at ${git_root}"
+  git -C "${git_root}" add -A
+
+  if git -C "${git_root}" diff --cached --quiet; then
+    echo "Skip ${repo_label} auto commit: no staged changes"
+    return 0
+  fi
+
+  git -C "${git_root}" commit -m "${commit_message}"
+
+  case "${repo_label}" in
+    backend)
+      BACKEND_AUTO_COMMITTED=1
+      BACKEND_GIT_ROOT="${git_root}"
+      ;;
+    frontend)
+      FRONTEND_AUTO_COMMITTED=1
+      FRONTEND_GIT_ROOT="${git_root}"
+      ;;
+  esac
+}
+
+auto_commit_after_deploy() {
+  if ! is_truthy "${AUTO_COMMIT}"; then
+    echo "Auto commit disabled (set AUTO_COMMIT=1 to enable)"
+    return 0
+  fi
+
+  local backend_message frontend_message
+  backend_message="${AUTO_COMMIT_BACKEND_MESSAGE:-chore(deploy): release ${VERSION}}"
+  frontend_message="${AUTO_COMMIT_FRONTEND_MESSAGE:-chore(app): release ${VERSION}}"
+
+  auto_commit_repo_if_needed "${BACKEND_DIR}" "${backend_message}" "backend"
+  auto_commit_repo_if_needed "${FRONTEND_DIR}" "${frontend_message}" "frontend"
+}
+
+auto_push_after_deploy() {
+  if ! is_truthy "${AUTO_PUSH}"; then
+    echo "Auto push disabled (set AUTO_PUSH=1 to enable)"
+    return 0
+  fi
+
+  if ! is_truthy "${AUTO_COMMIT}"; then
+    echo "Skip auto push: AUTO_PUSH requires AUTO_COMMIT=1"
+    return 0
+  fi
+
+  if [[ "${BACKEND_AUTO_COMMITTED:-0}" == "1" && -n "${BACKEND_GIT_ROOT:-}" ]]; then
+    echo "Auto pushing backend changes from ${BACKEND_GIT_ROOT}"
+    git -C "${BACKEND_GIT_ROOT}" push
+  else
+    echo "Skip backend auto push: no backend commit created in this deploy"
+  fi
+
+  if [[ "${FRONTEND_AUTO_COMMITTED:-0}" == "1" && -n "${FRONTEND_GIT_ROOT:-}" ]]; then
+    echo "Auto pushing frontend changes from ${FRONTEND_GIT_ROOT}"
+    git -C "${FRONTEND_GIT_ROOT}" push
+  else
+    echo "Skip frontend auto push: no frontend commit created in this deploy"
+  fi
+}
+
 FRONTEND_DIR="$(resolve_frontend_dir)"
 FLUTTER_BIN_DIR="$(resolve_flutter_bin_dir)"
 export PATH="${FLUTTER_BIN_DIR}:${PATH}"
@@ -437,6 +532,10 @@ MIGRATIONS_DIR="${BACKEND_DIR}/migrations"
 LOCALE_GENERATOR="${FRONTEND_DIR}/tool/generate_locale_catalog.dart"
 
 VERSION="${VERSION:-}"
+BACKEND_AUTO_COMMITTED=0
+FRONTEND_AUTO_COMMITTED=0
+BACKEND_GIT_ROOT=""
+FRONTEND_GIT_ROOT=""
 FULL_VER="$(sed -nE 's/^version:[[:space:]]*([^[:space:]]+).*/\1/p' "${PUBSPEC}" | head -n1)"
 if [[ -z "${FULL_VER}" ]]; then
   echo "Failed to read version from ${PUBSPEC}"
@@ -602,4 +701,14 @@ mv "${TMP_FILE}" "${PUBSPEC}"
 
 echo "Pubspec version is now: ${VERSION}"
 echo
-read -r -p "Press Enter to exit" _
+echo "[7/6] Auto commit after deploy..."
+auto_commit_after_deploy
+echo
+
+echo "[7.5/6] Auto push after deploy..."
+auto_push_after_deploy
+echo
+
+if [[ -t 0 ]] && is_truthy "${EXIT_PROMPT}"; then
+  read -r -p "Press Enter to exit" _
+fi
