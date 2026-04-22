@@ -70,6 +70,15 @@ function updateUnitFacing(unit, target) {
   );
 }
 
+function triggerUnitAnimationEvent(unit, animation) {
+  const nextId = Number(unit.animationEventId || unit.animationEvent?.id || 0) + 1;
+  unit.animationEventId = nextId;
+  unit.animationEvent = {
+    animation,
+    id: nextId
+  };
+}
+
 export function regenerateBattleResources(room, dt) {
   for (const side of Object.keys(room.battle.players)) {
     const battlePlayer = room.battle.players[side];
@@ -168,9 +177,15 @@ export function spawnBattleUnits(
       characterBackImageUrl: card.characterBackImageUrl || null,
       characterLeftImageUrl: card.characterLeftImageUrl || null,
       characterRightImageUrl: card.characterRightImageUrl || null,
+      characterAssets: Array.isArray(card.characterAssets)
+        ? card.characterAssets
+        : [],
       type: card.type,
       side,
       facingDirection: 'forward',
+      animationState: 'move',
+      animationEvent: null,
+      animationEventId: 0,
       progress: dropPoint.progress,
       lateralPosition: sanitizeLateralPosition(dropPoint.lateralPosition + offset),
       hp: boostedHp,
@@ -321,7 +336,10 @@ export function tickBattleUnits(room, dt) {
     const isStunned = unit.statusEffects?.some((e) => e.kind === 'stun') ?? false;
     unit.cooldown = Math.max(0, unit.cooldown - dt);
 
-    if (isStunned) continue;
+    if (isStunned) {
+      unit.animationState = 'idle';
+      continue;
+    }
 
     const hasSlow = unit.statusEffects?.some((e) => e.kind === 'slow') ?? false;
     const hasMentalIllness = unit.statusEffects?.some((e) => e.kind === 'mental_illness') ?? false;
@@ -336,13 +354,16 @@ export function tickBattleUnits(room, dt) {
           : effectiveAttackReachToTower(unit);
     if (target && target.distance <= attackReach) {
       updateUnitFacing(unit, target);
+      unit.animationState = 'idle';
       if (unit.cooldown <= 0) {
         performUnitAttack(room, unit, target);
+        triggerUnitAnimationEvent(unit, 'attack');
         unit.cooldown = hasMentalIllness
           ? unit.attackSpeed * (1 + MENTAL_ILLNESS_ATTACK_PENALTY)
           : unit.attackSpeed;
       }
     } else {
+      unit.animationState = 'move';
       const progressDelta = sideDirection(unit.side) * effectiveMoveSpeed * dt;
       const desiredLateral =
         target?.kind === 'unit' ? target.target.lateralPosition : CENTER_LATERAL;

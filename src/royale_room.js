@@ -189,14 +189,43 @@ export class RoyaleRoom {
     return Number(this.room?.hostUserId || this.room?.players?.left?.userId || 0);
   }
 
-  hasAllPlayersReady() {
+  isLocalHostBotRoom() {
+    return (
+      normalizeSimulationMode(this.room?.simulationMode) === 'host' &&
+      Boolean(this.room?.players?.right?.isBot)
+    );
+  }
+
+  playerHasEnteredGame(player) {
+    if (!player) {
+      return false;
+    }
+    if (player.isBot || player.connected) {
+      return true;
+    }
+    return this.isLocalHostBotRoom() && player.side === 'left' && player.ready;
+  }
+
+  canStartBattle() {
     if (!this.room) {
       return false;
     }
     return (
+      this.room.status === 'lobby' &&
       Object.keys(this.room.players).length === 2 &&
-      Object.values(this.room.players).every((player) => player.ready)
+      Object.values(this.room.players).every(
+        (player) => player.ready && this.playerHasEnteredGame(player)
+      )
     );
+  }
+
+  async startBattleIfReady() {
+    if (!this.canStartBattle()) {
+      return false;
+    }
+    this.startBattle();
+    await this.broadcast('battle_started');
+    return true;
   }
 
   okRoom(userId) {
@@ -216,10 +245,7 @@ export class RoyaleRoom {
 
     player.ready = true;
     await this.persistAndBroadcast('room_state');
-    if (this.hasAllPlayersReady()) {
-      this.startBattle();
-      await this.broadcast('battle_started');
-    }
+    await this.startBattleIfReady();
     return true;
   }
 
@@ -239,13 +265,15 @@ export class RoyaleRoom {
       simulationMode,
       hostUserId: this.hostUserId(),
       viewerSide: viewer?.side ?? null,
-      players: Object.values(this.room.players).map((player) =>
-        buildPlayerSnapshot(
+      players: Object.values(this.room.players).map((player) => {
+        const includeDeckState =
+          player.side === viewer?.side || includeHostDecks;
+        return buildPlayerSnapshot(
           player,
           this.room.battle?.players[player.side],
-          includeHostDecks
-        )
-      ),
+          includeDeckState
+        );
+      }),
       battle: buildBattleSnapshot(this.room, viewer, battlePlayer)
     };
   }
@@ -459,6 +487,11 @@ export class RoyaleRoom {
     this.sendSocketPayload(server, {
       type: 'room_state',
       room: this.viewerSnapshot(userId)
+    });
+    void this.startBattleIfReady().then((started) => {
+      if (!started) {
+        void this.broadcast('room_state');
+      }
     });
     return new Response(null, { status: 101, webSocket: client });
   }

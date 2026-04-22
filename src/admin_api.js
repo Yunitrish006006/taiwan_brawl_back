@@ -4,6 +4,8 @@ import {
   deleteCard,
   removeCardImage,
   uploadCardImage,
+  uploadCardCharacterAsset,
+  removeCardCharacterAsset,
   uploadCardCharacterImage,
   removeCardCharacterImage,
   uploadCardBgImage,
@@ -12,6 +14,7 @@ import {
 } from './royale_repository.js';
 import {
   matchAdminUserRoleRoute,
+  matchManagedCardCharacterAssetRoute,
   matchManagedCardImageRoute,
   matchManagedCardCharacterImageDirectionRoute,
   matchManagedCardCharacterImageRoute,
@@ -102,6 +105,31 @@ async function handleDeleteManagedCardCharacterImage(
   });
 }
 
+async function handleUploadManagedCardCharacterAsset(
+  request,
+  env,
+  cardId,
+  assetId
+) {
+  return withCardManagerBadRequest(request, env, async () => {
+    const body = await readJsonBody(request);
+    const card = await uploadCardCharacterAsset(env, cardId, assetId, body);
+    return jsonResponse({ ok: true, card }, 200, request);
+  });
+}
+
+async function handleDeleteManagedCardCharacterAsset(
+  request,
+  env,
+  cardId,
+  assetId
+) {
+  return withCardManagerBadRequest(request, env, async () => {
+    const card = await removeCardCharacterAsset(env, cardId, assetId);
+    return jsonResponse({ ok: true, card }, 200, request);
+  });
+}
+
 async function handleUploadManagedCardBgImage(request, env, cardId) {
   return withCardManagerBadRequest(request, env, async () => {
     const body = await readJsonBody(request);
@@ -140,6 +168,26 @@ export async function handleDynamicAdminRoutes(request, env, url) {
   }
   if (managedCardImageId && request.method === 'DELETE') {
     return handleDeleteManagedCardImage(request, env, managedCardImageId);
+  }
+
+  const managedCardCharacterAsset = matchManagedCardCharacterAssetRoute(
+    url.pathname
+  );
+  if (managedCardCharacterAsset && request.method === 'POST') {
+    return handleUploadManagedCardCharacterAsset(
+      request,
+      env,
+      managedCardCharacterAsset.cardId,
+      managedCardCharacterAsset.assetId
+    );
+  }
+  if (managedCardCharacterAsset && request.method === 'DELETE') {
+    return handleDeleteManagedCardCharacterAsset(
+      request,
+      env,
+      managedCardCharacterAsset.cardId,
+      managedCardCharacterAsset.assetId
+    );
   }
 
   const managedCardDirectionalCharImage =

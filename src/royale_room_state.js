@@ -27,6 +27,20 @@ function metric(value) {
   return Number((Number(value) || 0).toFixed(1));
 }
 
+function normalizeAnimationEvent(event) {
+  if (!event || typeof event !== 'object' || Array.isArray(event)) {
+    return null;
+  }
+  const animation = String(event.animation || event.type || '')
+    .trim()
+    .toLowerCase();
+  const id = Math.round(Number(event.id || event.sequence || 0));
+  if (!/^[a-z0-9_-]{1,32}$/.test(animation) || id <= 0) {
+    return null;
+  }
+  return { animation, id };
+}
+
 export function createBattleState(playersBySide) {
   return {
     timeRemainingMs: MATCH_DURATION_MS,
@@ -114,6 +128,7 @@ export function buildPlayerSnapshot(player, battleState, includeDeckState) {
 }
 
 export function buildUnitSnapshot(unit) {
+  const animationEvent = normalizeAnimationEvent(unit.animationEvent);
   return {
     id: unit.id,
     cardId: unit.cardId,
@@ -141,7 +156,12 @@ export function buildUnitSnapshot(unit) {
       left: unit.characterLeftImageUrl || null,
       right: unit.characterRightImageUrl || null
     },
+    characterAssets: Array.isArray(unit.characterAssets)
+      ? unit.characterAssets
+      : [],
     facingDirection: unit.facingDirection || 'forward',
+    animationState: unit.animationState || 'move',
+    animationEvent,
     side: unit.side,
     type: unit.type,
     progress: Math.round(unit.progress),
@@ -230,6 +250,7 @@ function normalizeBattlePlayerState(playerState = {}) {
 }
 
 function normalizeBattleUnitState(unit = {}) {
+  const animationEvent = normalizeAnimationEvent(unit.animationEvent);
   return {
     id: String(unit.id),
     cardId: String(unit.cardId),
@@ -247,11 +268,22 @@ function normalizeBattleUnitState(unit = {}) {
     characterBackImageUrl: unit.characterBackImageUrl || null,
     characterLeftImageUrl: unit.characterLeftImageUrl || null,
     characterRightImageUrl: unit.characterRightImageUrl || null,
+    characterAssets: Array.isArray(unit.characterAssets)
+      ? unit.characterAssets
+      : [],
     facingDirection: ['forward', 'front', 'back', 'left', 'right'].includes(
       unit.facingDirection
     )
       ? unit.facingDirection
       : 'forward',
+    animationState: ['idle', 'move', 'attack'].includes(unit.animationState)
+      ? unit.animationState
+      : 'move',
+    animationEvent,
+    animationEventId: Math.max(
+      0,
+      Math.round(Number(unit.animationEventId || animationEvent?.id || 0))
+    ),
     type: String(unit.type || 'melee'),
     side: unit.side === 'right' ? 'right' : 'left',
     progress: Number(unit.progress || 0),

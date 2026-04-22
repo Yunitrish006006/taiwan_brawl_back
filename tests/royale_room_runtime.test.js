@@ -168,6 +168,23 @@ test('tickBattleUnits moves units and resolves attacks', () => {
 
   assert.equal(room.battle.units[1].hp, 60);
   assert.equal(room.battle.units[0].hp, 70);
+  assert.equal(room.battle.units[0].animationState, 'idle');
+  assert.equal(room.battle.units[1].animationState, 'idle');
+  assert.deepEqual(room.battle.units[0].animationEvent, {
+    animation: 'attack',
+    id: 1
+  });
+  assert.deepEqual(room.battle.units[1].animationEvent, {
+    animation: 'attack',
+    id: 1
+  });
+
+  tickBattleUnits(room, 0.1);
+
+  assert.equal(room.battle.units[1].hp, 60);
+  assert.equal(room.battle.units[0].hp, 70);
+  assert.equal(room.battle.units[0].animationEvent.id, 1);
+  assert.equal(room.battle.units[1].animationEvent.id, 1);
 });
 
 test('towerHitPoints and winnerSideFromTowers summarize battle state', () => {

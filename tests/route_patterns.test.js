@@ -3,11 +3,13 @@ import assert from 'node:assert/strict';
 
 import {
   matchAdminUserRoleRoute,
+  matchCardCharacterAssetPath,
   matchCardCharacterImageDirectionPath,
   matchBlockedUserRoute,
   matchCardImagePath,
   matchFriendRequestRoute,
   matchFriendRoute,
+  matchManagedCardCharacterAssetRoute,
   matchManagedCardCharacterImageDirectionRoute,
   matchManagedCardImageRoute,
   matchManagedCardRoute,
@@ -46,10 +48,20 @@ test('resource matchers parse entity identifiers', () => {
     ),
     { cardId: 'delinquent', direction: 'back' }
   );
+  assert.deepEqual(
+    matchManagedCardCharacterAssetRoute(
+      '/api/admin/cards/delinquent/character-assets/move_back_01'
+    ),
+    { cardId: 'delinquent', assetId: 'move_back_01' }
+  );
   assert.equal(matchCardImagePath('/card-images/delinquent'), 'delinquent');
   assert.deepEqual(
     matchCardCharacterImageDirectionPath('/card-character-images/delinquent/left'),
     { cardId: 'delinquent', direction: 'left' }
+  );
+  assert.deepEqual(
+    matchCardCharacterAssetPath('/card-character-assets/delinquent/attack-0'),
+    { cardId: 'delinquent', assetId: 'attack-0' }
   );
   assert.equal(matchUserAvatarPath('/user-avatars/21'), 21);
 });

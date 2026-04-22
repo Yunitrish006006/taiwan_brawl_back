@@ -7,6 +7,8 @@ import {
 
 const MAX_CARD_IMAGE_BYTES = 1024 * 1024;
 const CARD_CHARACTER_IMAGE_DIRECTIONS = ['front', 'back', 'left', 'right'];
+const CARD_CHARACTER_ANIMATION_FALLBACK = 'idle';
+const MAX_CHARACTER_ASSETS_PER_CARD = 80;
 const CARD_SELECT_COLUMNS = `SELECT id, name, elixir_cost, energy_cost, energy_cost_type, type, hp, damage, attack_range, move_speed,
         attack_speed, spawn_count, spell_radius, spell_damage, target_rule,
         effect_kind, effect_value, body_radius, name_zh_hant, name_en, name_ja,
@@ -86,7 +88,7 @@ function localizedName(nameI18n, locale, fallbackName = '') {
   );
 }
 
-function serializeCard(row) {
+function serializeCard(row, characterAssets = []) {
   const energyCost = Number(row.energy_cost ?? row.elixir_cost ?? 0);
   const energyCostType =
     row.type === 'equipment'
@@ -182,6 +184,7 @@ function serializeCard(row) {
       left: characterLeftImageUrl,
       right: characterRightImageUrl
     },
+    characterAssets,
     bgImageUrl: cardBgImageUrl(row.id, bgImageVersion),
     charImageVersion,
     charImageBackVersion,
@@ -263,12 +266,166 @@ function cardCharImageMetaKey(cardId, direction = 'front') {
     : `card-char-image-meta:${cardId}:${normalizedDirection}`;
 }
 
+function normalizeCharacterAssetId(assetId) {
+  const normalized = String(assetId ?? '').trim();
+  if (!normalized) {
+    throw new Error('Character asset id is required');
+  }
+  if (!/^[a-zA-Z0-9_-]{1,64}$/.test(normalized)) {
+    throw new Error(
+      'Character asset id must be 1-64 letters, numbers, underscores, or dashes'
+    );
+  }
+  return normalized;
+}
+
+function normalizeCharacterAssetToken(value, fallback) {
+  const normalized = String(value ?? fallback).trim().toLowerCase();
+  if (!/^[a-z0-9_-]{1,32}$/.test(normalized)) {
+    throw new Error(
+      'Character asset animation and direction must be 1-32 letters, numbers, underscores, or dashes'
+    );
+  }
+  return normalized;
+}
+
+function normalizeCharacterAssetDirection(direction) {
+  const normalized = normalizeCharacterAssetToken(direction, 'front');
+  if (CARD_CHARACTER_IMAGE_DIRECTIONS.includes(normalized)) {
+    return normalized;
+  }
+  throw new Error('Character asset direction must be front, back, left, or right');
+}
+
+function normalizeCharacterAssetMetadata(payload = {}) {
+  const frameIndex = Math.max(
+    0,
+    Math.min(999, Math.round(Number(payload.frameIndex ?? 0)))
+  );
+  const durationMs = Math.max(
+    33,
+    Math.min(5000, Math.round(Number(payload.durationMs ?? 120)))
+  );
+  return {
+    animation: normalizeCharacterAssetToken(
+      payload.animation,
+      CARD_CHARACTER_ANIMATION_FALLBACK
+    ),
+    direction: normalizeCharacterAssetDirection(payload.direction),
+    frameIndex,
+    durationMs,
+    loop: payload.loop === false ? 0 : 1
+  };
+}
+
+function cardCharacterAssetVersion(date = new Date()) {
+  const pad = (value, width = 2) => String(value).padStart(width, '0');
+  return `${date.getUTCFullYear()}${pad(date.getUTCMonth() + 1)}${pad(
+    date.getUTCDate()
+  )}${pad(date.getUTCHours())}${pad(date.getUTCMinutes())}${pad(
+    date.getUTCSeconds()
+  )}${pad(date.getUTCMilliseconds(), 3)}`;
+}
+
+function cardCharacterAssetImageUrl(cardId, assetId, assetVersion) {
+  const version = String(assetVersion ?? '').trim();
+  return version
+    ? `/card-character-assets/${encodeURIComponent(cardId)}/${encodeURIComponent(
+        assetId
+      )}?v=${encodeURIComponent(version)}`
+    : null;
+}
+
+function cardCharacterAssetKey(cardId, assetId) {
+  return `card-character-asset:${cardId}:${assetId}`;
+}
+
+function cardCharacterAssetMetaKey(cardId, assetId) {
+  return `card-character-asset-meta:${cardId}:${assetId}`;
+}
+
 function cardBgImageKey(cardId) {
   return `card-bg-image:${cardId}`;
 }
 
 function cardBgImageMetaKey(cardId) {
   return `card-bg-image-meta:${cardId}`;
+}
+
+function serializeCharacterAsset(row) {
+  return {
+    assetId: row.asset_id,
+    animation: row.animation || CARD_CHARACTER_ANIMATION_FALLBACK,
+    direction: row.direction || 'front',
+    frameIndex: Number(row.frame_index || 0),
+    durationMs: Number(row.duration_ms || 120),
+    loop: Boolean(Number(row.loop ?? 1)),
+    imageVersion: Number(row.image_version || 0),
+    assetVersion:
+      String(row.asset_version || '').trim() || String(row.image_version || ''),
+    cardId: row.card_id,
+    fileName: row.file_name || null,
+    contentType: row.content_type || null,
+    imageUrl: cardCharacterAssetImageUrl(
+      row.card_id,
+      row.asset_id,
+      String(row.asset_version || '').trim() || row.image_version
+    )
+  };
+}
+
+async function listCardCharacterAssetRows(env, cardId = null) {
+  if (cardId) {
+    const rows = await env.DB.prepare(
+      `SELECT card_id, asset_id, animation, direction, frame_index, duration_ms,
+              loop, image_version, asset_version, file_name, content_type
+       FROM card_character_assets
+       WHERE card_id = ?
+       ORDER BY animation ASC, direction ASC, frame_index ASC, asset_id ASC`
+    )
+      .bind(cardId)
+      .all();
+    return rows.results || [];
+  }
+
+  const rows = await env.DB.prepare(
+    `SELECT card_id, asset_id, animation, direction, frame_index, duration_ms,
+            loop, image_version, asset_version, file_name, content_type
+     FROM card_character_assets
+     ORDER BY card_id ASC, animation ASC, direction ASC, frame_index ASC,
+              asset_id ASC`
+  ).all();
+  return rows.results || [];
+}
+
+async function characterAssetsByCardId(env, cardIds) {
+  if (!cardIds.length) {
+    return new Map();
+  }
+
+  const placeholders = cardIds.map(() => '?').join(', ');
+  const assetRows = await env.DB.prepare(
+    `SELECT card_id, asset_id, animation, direction, frame_index, duration_ms,
+            loop, image_version, asset_version, file_name, content_type
+     FROM card_character_assets
+     WHERE card_id IN (${placeholders})
+     ORDER BY card_id ASC, animation ASC, direction ASC, frame_index ASC,
+              asset_id ASC`
+  )
+    .bind(...cardIds)
+    .all();
+  const rows = assetRows.results || [];
+  const cardIdSet = new Set(cardIds);
+  const assetsByCardId = new Map();
+  for (const row of rows) {
+    if (!cardIdSet.has(row.card_id)) {
+      continue;
+    }
+    const assets = assetsByCardId.get(row.card_id) || [];
+    assets.push(serializeCharacterAsset(row));
+    assetsByCardId.set(row.card_id, assets);
+  }
+  return assetsByCardId;
 }
 
 async function fetchCardRow(env, cardId) {
@@ -282,7 +439,13 @@ async function fetchCardRow(env, cardId) {
 
 async function fetchCardById(env, cardId) {
   const row = await fetchCardRow(env, cardId);
-  return row ? serializeCard(row) : null;
+  if (!row) {
+    return null;
+  }
+  const assets = (await listCardCharacterAssetRows(env, cardId)).map(
+    serializeCharacterAsset
+  );
+  return serializeCard(row, assets);
 }
 
 function starterCardNameI18n(card) {
@@ -452,7 +615,14 @@ export async function listCards(env) {
     `${CARD_SELECT_COLUMNS}
      ORDER BY energy_cost ASC, name ASC`
   ).all();
-  return rows.results.map(serializeCard);
+  const cardRows = rows.results || [];
+  const assetsByCardId = await characterAssetsByCardId(
+    env,
+    cardRows.map((row) => row.id)
+  );
+  return cardRows.map((row) =>
+    serializeCard(row, assetsByCardId.get(row.id) || [])
+  );
 }
 
 export async function upsertCard(env, payload) {
@@ -504,6 +674,19 @@ export async function deleteCard(env, cardId) {
   ) {
     throw new Error('Card is currently used in decks and cannot be deleted');
   }
+
+  const characterAssets = await listCardCharacterAssetRows(env, normalizedCardId);
+  for (const asset of characterAssets) {
+    await env.STATIC_ASSETS?.delete?.(
+      cardCharacterAssetKey(normalizedCardId, asset.asset_id)
+    );
+    await env.STATIC_ASSETS?.delete?.(
+      cardCharacterAssetMetaKey(normalizedCardId, asset.asset_id)
+    );
+  }
+  await env.DB.prepare('DELETE FROM card_character_assets WHERE card_id = ?')
+    .bind(normalizedCardId)
+    .run();
 
   await env.DB.prepare('DELETE FROM cards WHERE id = ?')
     .bind(normalizedCardId)
@@ -757,6 +940,136 @@ export async function getCardCharacterImageResponse(env, cardId, direction = 'fr
     cardId,
     (normalizedCardId) => cardCharImageKey(normalizedCardId, normalizedDirection),
     (normalizedCardId) => cardCharImageMetaKey(normalizedCardId, normalizedDirection)
+  );
+}
+
+export async function uploadCardCharacterAsset(env, cardId, assetId, payload) {
+  const normalizedCardId = normalizeCardId(cardId);
+  const normalizedAssetId = normalizeCharacterAssetId(assetId);
+  if (!(await cardExists(env, normalizedCardId))) {
+    throw new Error('Card not found');
+  }
+
+  const existingAsset = await env.DB.prepare(
+    'SELECT asset_id FROM card_character_assets WHERE card_id = ? AND asset_id = ?'
+  )
+    .bind(normalizedCardId, normalizedAssetId)
+    .first();
+  if (!existingAsset) {
+    const assetCount = await countRows(
+      env,
+      'SELECT COUNT(*) AS count FROM card_character_assets WHERE card_id = ?',
+      normalizedCardId
+    );
+    if (assetCount >= MAX_CHARACTER_ASSETS_PER_CARD) {
+      throw new Error(
+        `A card can have at most ${MAX_CHARACTER_ASSETS_PER_CARD} character assets`
+      );
+    }
+  }
+
+  const contentType = allowedImageContentType(payload?.contentType);
+  if (!contentType) {
+    throw new Error('Only PNG, JPEG, WEBP, and GIF images are supported');
+  }
+
+  const bytes = decodeBase64(payload?.bytesBase64);
+  if (!bytes || !bytes.length) {
+    throw new Error('Image data is required');
+  }
+  if (bytes.length > MAX_CARD_IMAGE_BYTES) {
+    throw new Error('Image must be 1 MB or smaller');
+  }
+
+  const metadata = normalizeCharacterAssetMetadata(payload);
+  const imageVersion = Date.now();
+  const assetVersion = cardCharacterAssetVersion(new Date(imageVersion));
+  await env.STATIC_ASSETS.put(
+    cardCharacterAssetKey(normalizedCardId, normalizedAssetId),
+    bytes
+  );
+  await env.STATIC_ASSETS.put(
+    cardCharacterAssetMetaKey(normalizedCardId, normalizedAssetId),
+    JSON.stringify({
+      contentType,
+      fileName: String(payload?.fileName ?? '').trim() || null,
+      animation: metadata.animation,
+      direction: metadata.direction,
+      frameIndex: metadata.frameIndex,
+      durationMs: metadata.durationMs,
+      loop: Boolean(metadata.loop),
+      assetVersion,
+      uploadedAt: new Date().toISOString()
+    })
+  );
+
+  await env.DB.prepare(
+    `INSERT INTO card_character_assets (
+       card_id, asset_id, animation, direction, frame_index, duration_ms,
+       loop, image_version, asset_version, file_name, content_type, updated_at
+     )
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+     ON CONFLICT(card_id, asset_id) DO UPDATE SET
+       animation = excluded.animation,
+       direction = excluded.direction,
+       frame_index = excluded.frame_index,
+       duration_ms = excluded.duration_ms,
+       loop = excluded.loop,
+       image_version = excluded.image_version,
+       asset_version = excluded.asset_version,
+       file_name = excluded.file_name,
+       content_type = excluded.content_type,
+       updated_at = CURRENT_TIMESTAMP`
+  )
+    .bind(
+      normalizedCardId,
+      normalizedAssetId,
+      metadata.animation,
+      metadata.direction,
+      metadata.frameIndex,
+      metadata.durationMs,
+      metadata.loop,
+      imageVersion,
+      assetVersion,
+      String(payload?.fileName ?? '').trim() || null,
+      contentType
+    )
+    .run();
+
+  return fetchCardById(env, normalizedCardId);
+}
+
+export async function removeCardCharacterAsset(env, cardId, assetId) {
+  const normalizedCardId = normalizeCardId(cardId);
+  const normalizedAssetId = normalizeCharacterAssetId(assetId);
+  await env.STATIC_ASSETS?.delete?.(
+    cardCharacterAssetKey(normalizedCardId, normalizedAssetId)
+  );
+  await env.STATIC_ASSETS?.delete?.(
+    cardCharacterAssetMetaKey(normalizedCardId, normalizedAssetId)
+  );
+  await env.DB.prepare(
+    'DELETE FROM card_character_assets WHERE card_id = ? AND asset_id = ?'
+  )
+    .bind(normalizedCardId, normalizedAssetId)
+    .run();
+
+  return fetchCardById(env, normalizedCardId);
+}
+
+export async function getCardCharacterAssetResponse(env, cardId, assetId) {
+  let normalizedAssetId;
+  try {
+    normalizedAssetId = normalizeCharacterAssetId(assetId);
+  } catch (_) {
+    return null;
+  }
+  return _getCardLayerImageResponse(
+    env,
+    cardId,
+    (normalizedCardId) => cardCharacterAssetKey(normalizedCardId, normalizedAssetId),
+    (normalizedCardId) =>
+      cardCharacterAssetMetaKey(normalizedCardId, normalizedAssetId)
   );
 }
 

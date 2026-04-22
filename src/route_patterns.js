@@ -97,6 +97,19 @@ export function matchManagedCardCharacterImageDirectionRoute(pathname) {
   };
 }
 
+export function matchManagedCardCharacterAssetRoute(pathname) {
+  const match = pathname.match(
+    /^\/api\/admin\/cards\/([a-zA-Z0-9_]+)\/character-assets\/([a-zA-Z0-9_-]+)$/
+  );
+  if (!match) {
+    return null;
+  }
+  return {
+    cardId: match[1],
+    assetId: match[2]
+  };
+}
+
 export function matchManagedCardBgImageRoute(pathname) {
   const match = pathname.match(/^\/api\/admin\/cards\/([a-zA-Z0-9_]+)\/bg-image$/);
   if (!match) {
@@ -131,6 +144,19 @@ export function matchCardCharacterImageDirectionPath(pathname) {
   return {
     cardId: match[1],
     direction: match[2]
+  };
+}
+
+export function matchCardCharacterAssetPath(pathname) {
+  const match = pathname.match(
+    /^\/card-character-assets\/([a-zA-Z0-9_]+)\/([a-zA-Z0-9_-]+)$/
+  );
+  if (!match) {
+    return null;
+  }
+  return {
+    cardId: match[1],
+    assetId: match[2]
   };
 }
 
