@@ -105,6 +105,7 @@ npm test
 ## 重要文件
 
 - 整體架構：[docs/architecture.md](/Volumes/DataExtended/taiwan_brawl/taiwan_brawl_back/docs/architecture.md:1)
+- 遊戲規則：[docs/game_rules.md](/Volumes/DataExtended/taiwan_brawl/taiwan_brawl_back/docs/game_rules.md:1)
 - 推播設定：[docs/push_notifications_setup.md](/Volumes/DataExtended/taiwan_brawl/taiwan_brawl_back/docs/push_notifications_setup.md:1)
 - 部署工具規格：[CODEX_DEPLOY_TOOLKIT.md](/Volumes/DataExtended/taiwan_brawl/taiwan_brawl_back/CODEX_DEPLOY_TOOLKIT.md:1)
 

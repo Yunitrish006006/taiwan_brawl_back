@@ -5,6 +5,7 @@ import {
   regenerateBattleResources,
   resolveSpellEffect,
   spawnBattleUnits,
+  tickHeroAttacks,
   tickBattleUnits,
   towerHitPoints,
   winnerSideFromTowers
@@ -82,6 +83,98 @@ test('resolveSpellEffect damages enemy units and tower in range', () => {
   assert.equal(room.battle.units[0].hp, 50);
   assert.equal(room.battle.units[1].hp, 100);
   assert.equal(room.battle.players.right.towerHp, 950);
+});
+
+test('health tracks are independent and either zero track defeats the player', () => {
+  const room = {
+    battle: {
+      players: {
+        left: { towerHp: 2000 },
+        right: {
+          physicalHealth: 1000,
+          maxPhysicalHealth: 1000,
+          physicalHealthRegen: 0,
+          spiritHealth: 40,
+          maxSpiritHealth: 1000,
+          spiritHealthRegen: 0,
+          physicalEnergy: 0,
+          maxPhysicalEnergy: 0,
+          physicalEnergyRegen: 0,
+          spiritEnergy: 0,
+          maxSpiritEnergy: 0,
+          spiritEnergyRegen: 0,
+          money: 0,
+          maxMoney: 0,
+          moneyPerSecond: 0,
+          towerHp: 1040,
+          maxTowerHp: 2000
+        }
+      },
+      units: []
+    }
+  };
+
+  resolveSpellEffect(
+    room,
+    'left',
+    { spellRadius: 80, spellDamage: 50 },
+    { progress: 950, lateralPosition: 500 }
+  );
+
+  const state = towerHitPoints(room);
+  assert.equal(room.battle.players.right.spiritHealth, 0);
+  assert.equal(room.battle.players.right.physicalHealth, 1000);
+  assert.equal(room.battle.players.right.towerHp, 1000);
+  assert.equal(state.rightDefeated, true);
+  assert.equal(winnerSideFromTowers(state), 'left');
+});
+
+test('hero attacks nearby enemy units defensively', () => {
+  const room = {
+    players: {
+      left: { heroId: 'ordinary_person' },
+      right: { heroId: 'ordinary_person' }
+    },
+    battle: {
+      players: {
+        left: { heroAttackCooldown: 0 },
+        right: { heroAttackCooldown: 0 }
+      },
+      units: [
+        {
+          id: 'unit-near',
+          side: 'right',
+          type: 'melee',
+          progress: 190,
+          lateralPosition: 500,
+          hp: 100,
+          bodyRadius: 18
+        },
+        {
+          id: 'unit-far',
+          side: 'right',
+          type: 'melee',
+          progress: 500,
+          lateralPosition: 500,
+          hp: 100,
+          bodyRadius: 18
+        }
+      ]
+    }
+  };
+
+  tickHeroAttacks(room, 0.1);
+
+  assert.equal(room.battle.units.find((unit) => unit.id === 'unit-near').hp, 36);
+  assert.equal(room.battle.units.find((unit) => unit.id === 'unit-far').hp, 100);
+  assert.equal(room.battle.players.left.heroAttackCooldown, 1.25);
+  assert.deepEqual(room.battle.players.left.heroAttackEvent, {
+    id: 1,
+    animation: 'attack',
+    targetUnitId: 'unit-near',
+    damage: 64,
+    damageType: 'physical'
+  });
 });
 
 test('spawnBattleUnits creates localized units with effects and spacing', () => {

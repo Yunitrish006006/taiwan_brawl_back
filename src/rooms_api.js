@@ -10,6 +10,11 @@ import {
   listDecksForUser,
   saveDeckForUser
 } from './royale_repository.js';
+import {
+  listCharacterArchetypes,
+  listDeckCharactersForUser,
+  selectDeckCharacter
+} from './royale_progression.js';
 import { matchRoomRoute } from './route_patterns.js';
 import { handleSendRoomInvite } from './friends_api.js';
 import { requireUser, withAuthenticatedUser } from './request_helpers.js';
@@ -30,6 +35,22 @@ async function handleListHeroes(request) {
   return jsonResponse({ ok: true, heroes: listHeroDefinitions() }, 200, request);
 }
 
+async function handleListProgression(request, env) {
+  return withAuthenticatedUser(request, env, async (user) => {
+    const cards = await listCards(env);
+    const progression = await listDeckCharactersForUser(env, user.id);
+    return jsonResponse(
+      {
+        ok: true,
+        characterArchetypes: listCharacterArchetypes(cards),
+        progression
+      },
+      200,
+      request
+    );
+  });
+}
+
 async function handleListDecks(request, env) {
   return withAuthenticatedUser(request, env, async (user) => {
     const decks = await listDecksForUser(user.id, env);
@@ -46,6 +67,36 @@ async function handleSaveDeck(request, env) {
 
     const deck = await saveDeckForUser(user.id, body, env);
     return jsonResponse({ ok: true, deck }, 200, request);
+  });
+}
+
+async function handleSelectDeckCharacter(request, env) {
+  return withAuthenticatedUser(request, env, async (user) => {
+    const body = await request.json().catch(() => null);
+    if (!body) {
+      return jsonResponse({ error: 'Invalid body' }, 400, request);
+    }
+    const deckId = Number(body.deckId);
+    if (!Number.isInteger(deckId) || deckId <= 0) {
+      return jsonResponse({ error: 'deckId is required' }, 400, request);
+    }
+    const deck = await getDeckForUser(user.id, deckId, env);
+    if (!deck) {
+      return jsonResponse({ error: 'Deck not found' }, 404, request);
+    }
+    try {
+      const cards = await listCards(env);
+      const progression = await selectDeckCharacter(
+        env,
+        user.id,
+        deckId,
+        body.characterId,
+        listCharacterArchetypes(cards)
+      );
+      return jsonResponse({ ok: true, progression }, 200, request);
+    } catch (error) {
+      return jsonResponse({ error: error.message }, 409, request);
+    }
   });
 }
 
@@ -87,6 +138,7 @@ async function handleCreateRoom(request, env) {
             user: { id: user.id, name: user.name },
             deck,
             heroId,
+            characterId: deck.progression?.characterId,
             vsBot,
             botDeck: deck,
             botController,
@@ -118,7 +170,8 @@ async function handleJoinRoom(request, env, code) {
     return proxyRoomAction(request, env, code, '/internal/join', async () => ({
       user: { id: user.id, name: user.name },
       deck,
-      heroId: normalizeHeroId(body?.heroId)
+      heroId: normalizeHeroId(body?.heroId),
+      characterId: deck.progression?.characterId
     }));
   });
 }
@@ -190,10 +243,14 @@ export function exactRoomsApiRouteHandler(request, env, url) {
       return () => handleListCards(request, env);
     case 'GET /api/heroes':
       return () => handleListHeroes(request);
+    case 'GET /api/progression':
+      return () => handleListProgression(request, env);
     case 'GET /api/decks':
       return () => handleListDecks(request, env);
     case 'POST /api/decks':
       return () => handleSaveDeck(request, env);
+    case 'POST /api/decks/character':
+      return () => handleSelectDeckCharacter(request, env);
     case 'POST /api/rooms':
       return () => handleCreateRoom(request, env);
     default:

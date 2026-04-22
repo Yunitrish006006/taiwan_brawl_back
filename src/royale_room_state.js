@@ -14,6 +14,10 @@ import {
 import { normalizeBotController } from './royale_llm_bot.js';
 import { normalizeCardDefinition } from './royale_cards.js';
 import { initFieldState, getFieldStateSnapshot } from './royale_field_events.js';
+import {
+  cardUseLimit,
+  ensureBattleCardUseState
+} from './royale_card_progression.js';
 
 export function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -54,16 +58,22 @@ export function createBattleState(playersBySide) {
     players: Object.fromEntries(
       Object.entries(playersBySide).map(([side, player]) => {
         const queue = player.deckCardIds.slice();
+        const battlePlayerState = {
+          ...buildInitialBattlePlayerState(player.heroId, {
+            isBot: Boolean(player.isBot)
+          }),
+          hand: queue.splice(0, 4),
+          queue,
+          botThinkMs: player.isBot ? BOT_MIN_THINK_MS : 0,
+          cardUses: {},
+          cardUseLimits: Object.fromEntries(
+            (player.deckCards || []).map((card) => [card.id, cardUseLimit(card)])
+          )
+        };
+        ensureBattleCardUseState(battlePlayerState, player.deckCards || []);
         return [
           side,
-          {
-            ...buildInitialBattlePlayerState(player.heroId, {
-              isBot: Boolean(player.isBot)
-            }),
-            hand: queue.splice(0, 4),
-            queue,
-            botThinkMs: player.isBot ? BOT_MIN_THINK_MS : 0
-          }
+          battlePlayerState
         ];
       })
     )
@@ -80,6 +90,7 @@ export function createPlayer(side, payload) {
     deckCardIds: payload.deck.cards.map((card) => card.id),
     deckCards: payload.deck.cards.map((card) => normalizeCardDefinition(card)),
     heroId: normalizeHeroId(payload.heroId),
+    characterId: String(payload.characterId || 'ordinary_child'),
     botController: Boolean(payload.user.isBot)
       ? normalizeBotController(payload.user.botController)
       : 'heuristic',
@@ -104,6 +115,8 @@ export function buildPlayerSnapshot(player, battleState, includeDeckState) {
       : 'heuristic',
     handCardIds: includeDeckState ? battleState?.hand ?? player.deckCardIds.slice(0, 4) : undefined,
     queueCardIds: includeDeckState ? battleState?.queue ?? player.deckCardIds.slice(4) : undefined,
+    cardUses: includeDeckState ? battleState?.cardUses ?? {} : undefined,
+    cardUseLimits: includeDeckState ? battleState?.cardUseLimits ?? {} : undefined,
     isBot: Boolean(player.isBot),
     ready: player.ready,
     connected: player.connected,
@@ -122,6 +135,8 @@ export function buildPlayerSnapshot(player, battleState, includeDeckState) {
     money: metric(battleState?.money),
     maxMoney: metric(battleState?.maxMoney),
     moneyPerSecond: metric(battleState?.moneyPerSecond),
+    heroAttackCooldown: metric(battleState?.heroAttackCooldown),
+    heroAttackEvent: battleState?.heroAttackEvent ?? null,
     towerHp: battleState?.towerHp ?? 0,
     maxTowerHp: battleState?.maxTowerHp ?? 0
   };
@@ -170,6 +185,7 @@ export function buildUnitSnapshot(unit) {
     maxHp: unit.maxHp,
     attackRange: Math.round(displayAttackReach(unit)),
     bodyRadius: Math.round(unit.bodyRadius ?? 0),
+    degenerationPerSecond: Number(unit.degenerationPerSecond || 0),
     effects: unit.effects ?? [],
     statusEffects: (unit.statusEffects ?? [])
       .filter((e) => e.remainingMs > 0)
@@ -190,6 +206,8 @@ export function buildBattleSnapshot(room, viewer, battlePlayer) {
           .map((cardId) => viewer.deckCards.find((card) => card.id === cardId))
           .filter(Boolean)
       : [],
+    yourCardUses: battlePlayer?.cardUses ?? {},
+    yourCardUseLimits: battlePlayer?.cardUseLimits ?? {},
     nextCardId: battlePlayer?.queue?.[0] ?? null,
     units: room.battle.units.map((unit) => buildUnitSnapshot(unit)),
     events: Array.isArray(room.battle.events) ? room.battle.events.map(clone) : [],
@@ -230,6 +248,18 @@ function normalizeBattlePlayerState(playerState = {}) {
   return syncBattlePlayerTotals({
     hand: Array.isArray(playerState.hand) ? playerState.hand.map(String) : [],
     queue: Array.isArray(playerState.queue) ? playerState.queue.map(String) : [],
+    cardUses:
+      playerState.cardUses && typeof playerState.cardUses === 'object' && !Array.isArray(playerState.cardUses)
+        ? Object.fromEntries(
+            Object.entries(playerState.cardUses).map(([k, v]) => [String(k), Math.max(0, Math.round(Number(v)))])
+          )
+        : {},
+    cardUseLimits:
+      playerState.cardUseLimits && typeof playerState.cardUseLimits === 'object' && !Array.isArray(playerState.cardUseLimits)
+        ? Object.fromEntries(
+            Object.entries(playerState.cardUseLimits).map(([k, v]) => [String(k), Math.max(0, Math.round(Number(v)))])
+          )
+        : {},
     botThinkMs: Number(playerState.botThinkMs || 0),
     physicalHealth: Number(playerState.physicalHealth || playerState.towerHp || 0),
     maxPhysicalHealth: Number(playerState.maxPhysicalHealth || playerState.maxTowerHp || 0),
@@ -245,7 +275,19 @@ function normalizeBattlePlayerState(playerState = {}) {
     spiritEnergyRegen: Number(playerState.spiritEnergyRegen || 0),
     money: Number(playerState.money || 0),
     maxMoney: Number(playerState.maxMoney || 0),
-    moneyPerSecond: Number(playerState.moneyPerSecond || 0)
+    moneyPerSecond: Number(playerState.moneyPerSecond || 0),
+    heroAttackCooldown: Math.max(0, Number(playerState.heroAttackCooldown || 0)),
+    heroAttackEventId: Math.max(0, Math.round(Number(playerState.heroAttackEventId || 0))),
+    heroAttackEvent:
+      playerState.heroAttackEvent && typeof playerState.heroAttackEvent === 'object' && !Array.isArray(playerState.heroAttackEvent)
+        ? {
+            id: Math.max(0, Math.round(Number(playerState.heroAttackEvent.id || 0))),
+            animation: String(playerState.heroAttackEvent.animation || 'attack'),
+            targetUnitId: String(playerState.heroAttackEvent.targetUnitId || ''),
+            damage: Math.max(0, Math.round(Number(playerState.heroAttackEvent.damage || 0))),
+            damageType: playerState.heroAttackEvent.damageType === 'spirit' ? 'spirit' : 'physical'
+          }
+        : null
   });
 }
 
@@ -295,6 +337,7 @@ function normalizeBattleUnitState(unit = {}) {
     bodyRadius: Number(unit.bodyRadius || bodyRadiusForUnitType(unit.type)),
     moveSpeed: Number(unit.moveSpeed || 0),
     attackSpeed: Number(unit.attackSpeed || 1),
+    degenerationPerSecond: Number(unit.degenerationPerSecond || 0),
     targetRule: String(unit.targetRule || 'ground'),
     cooldown: Number(unit.cooldown || 0),
     effects: Array.isArray(unit.effects) ? unit.effects.map(String) : [],

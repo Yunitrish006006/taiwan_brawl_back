@@ -25,11 +25,13 @@ import {
 } from './royale_battle_rules.js';
 import {
   applyBattlePlayerDamage,
+  heroAttackDefinition,
   heroBonusMultiplier,
   heroTraitValue,
   regenerateBattlePlayerResources
 } from './royale_heroes.js';
 import { applyEquipmentEffects } from './royale_room_combat.js';
+import { stealLowValueItemUse } from './royale_card_progression.js';
 
 export function getEnemySide(side) {
   return side === 'left' ? 'right' : 'left';
@@ -84,6 +86,67 @@ export function regenerateBattleResources(room, dt) {
     const battlePlayer = room.battle.players[side];
     regenerateBattlePlayerResources(battlePlayer, dt);
   }
+}
+
+function towerPointForSide(side) {
+  return {
+    progress: getTowerProgressForSide(side),
+    lateralPosition: CENTER_LATERAL
+  };
+}
+
+function triggerHeroAttackEvent(battlePlayer, targetUnit, attack) {
+  const nextId = Number(battlePlayer.heroAttackEventId || battlePlayer.heroAttackEvent?.id || 0) + 1;
+  battlePlayer.heroAttackEventId = nextId;
+  battlePlayer.heroAttackEvent = {
+    id: nextId,
+    animation: 'attack',
+    targetUnitId: targetUnit.id,
+    damage: attack.damage,
+    damageType: attack.damageType
+  };
+}
+
+function selectHeroAttackTarget(room, side, attack) {
+  const origin = towerPointForSide(side);
+  return room.battle.units
+    .filter((unit) => unit.side !== side && unit.hp > 0)
+    .map((unit) => ({
+      unit,
+      distance: distanceBetweenPoints(
+        origin.progress,
+        origin.lateralPosition,
+        unit.progress,
+        unit.lateralPosition
+      )
+    }))
+    .filter((entry) => entry.distance <= attack.range + Number(entry.unit.bodyRadius || bodyRadiusForUnitType(entry.unit.type)))
+    .sort((a, b) => a.distance - b.distance)[0]?.unit ?? null;
+}
+
+export function tickHeroAttacks(room, dt) {
+  for (const [side, battlePlayer] of Object.entries(room.battle.players)) {
+    const player = room.players?.[side];
+    const attack = heroAttackDefinition(player?.heroId);
+    battlePlayer.heroAttackCooldown = Math.max(
+      0,
+      Number(battlePlayer.heroAttackCooldown || 0) - dt
+    );
+    if (battlePlayer.heroAttackCooldown > 0 || attack.damage <= 0 || attack.range <= 0) {
+      continue;
+    }
+
+    const target = selectHeroAttackTarget(room, side, attack);
+    if (!target) {
+      continue;
+    }
+
+    target.hp -= attack.damage;
+    battlePlayer.heroAttackCooldown = attack.attackSpeed;
+    triggerHeroAttackEvent(battlePlayer, target, attack);
+  }
+
+  room.battle.units = room.battle.units.filter((unit) => unit.hp > 0);
 }
 
 export function resolveSpellEffect(room, side, card, dropPoint) {
@@ -198,6 +261,7 @@ export function spawnBattleUnits(
         (card.attackSpeed || 1) *
         GLOBAL_ATTACK_SPEED_MULTIPLIER *
         (stats.attackSpeedMultiplier ?? 1),
+      degenerationPerSecond: Number(stats.degenerationPerSecond || 0),
       targetRule: card.targetRule,
       cooldown: 0,
       effects: equipmentEffects.map((effect) => effect.name),
@@ -309,6 +373,44 @@ export function performUnitAttack(room, unit, target) {
 
   const enemyBattleState = room.battle.players[target.target];
   applyBattlePlayerDamage(enemyBattleState, unit.damage, 'physical');
+  if (unit.cardId === 'roadside_elder') {
+    const enemyPlayer = room.players?.[target.target];
+    const stolen = stealLowValueItemUse(
+      enemyBattleState,
+      Array.isArray(enemyPlayer?.deckCards) ? enemyPlayer.deckCards : []
+    );
+    if (stolen) {
+      if (!room.battle.events) {
+        room.battle.events = [];
+      }
+      room.battle.events.unshift({
+        id: crypto.randomUUID(),
+        kind: 'item_stolen',
+        side: unit.side,
+        cardId: stolen.cardId,
+        cardName: stolen.cardName || stolen.cardId,
+        cardNameZhHant: stolen.cardName || stolen.cardId,
+        cardNameEn: stolen.cardName || stolen.cardId,
+        cardNameJa: stolen.cardName || stolen.cardId,
+        title: 'Cheap Item Stolen',
+        titleZhHant: '低價物品被偷',
+        titleEn: 'Cheap Item Stolen',
+        titleJa: '安いアイテムを盗まれた',
+        description: 'A roadside elder stole one remaining use from a cheap item.',
+        descriptionZhHant: '路邊老人摸走了一個低價道具的剩餘次數。',
+        descriptionEn: 'A roadside elder stole one remaining use from a cheap item.',
+        descriptionJa: '路上の老人が安いアイテムの残り使用回数を 1 回盗んだ。',
+        tone: 'negative',
+        mentalStage: 0,
+        moneyDelta: 0,
+        physicalHealthDelta: 0,
+        spiritHealthDelta: 0,
+        physicalEnergyDelta: 0,
+        spiritEnergyDelta: 0
+      });
+      room.battle.events = room.battle.events.slice(0, 6);
+    }
+  }
 }
 
 export function tickBattleUnits(room, dt) {
@@ -331,6 +433,12 @@ export function tickBattleUnits(room, dt) {
   for (const unit of room.battle.units) {
     if (unit.hp <= 0) {
       continue;
+    }
+    if (Number(unit.degenerationPerSecond || 0) > 0) {
+      unit.hp -= Number(unit.degenerationPerSecond || 0) * dt;
+      if (unit.hp <= 0) {
+        continue;
+      }
     }
 
     const isStunned = unit.statusEffects?.some((e) => e.kind === 'stun') ?? false;
@@ -385,13 +493,59 @@ export function tickBattleUnits(room, dt) {
 }
 
 export function towerHitPoints(room) {
+  const leftPlayer = room.battle.players.left;
+  const rightPlayer = room.battle.players.right;
   return {
-    leftTowerHp: room.battle.players.left?.towerHp ?? 0,
-    rightTowerHp: room.battle.players.right?.towerHp ?? 0
+    leftTowerHp: leftPlayer?.towerHp ?? 0,
+    rightTowerHp: rightPlayer?.towerHp ?? 0,
+    leftPhysicalHealth: Number(leftPlayer?.physicalHealth ?? leftPlayer?.towerHp ?? 0),
+    rightPhysicalHealth: Number(rightPlayer?.physicalHealth ?? rightPlayer?.towerHp ?? 0),
+    leftSpiritHealth: Number(leftPlayer?.spiritHealth ?? 0),
+    rightSpiritHealth: Number(rightPlayer?.spiritHealth ?? 0),
+    leftDefeated: battlePlayerIsDefeated(leftPlayer),
+    rightDefeated: battlePlayerIsDefeated(rightPlayer)
   };
 }
 
-export function winnerSideFromTowers(leftTowerHp, rightTowerHp) {
+export function battlePlayerIsDefeated(player) {
+  if (!player) {
+    return true;
+  }
+
+  const hasPhysicalTrack = Number(player.maxPhysicalHealth || 0) > 0;
+  const hasSpiritTrack = Number(player.maxSpiritHealth || 0) > 0;
+  if (hasPhysicalTrack && Number(player.physicalHealth || 0) <= 0) {
+    return true;
+  }
+  if (hasSpiritTrack && Number(player.spiritHealth || 0) <= 0) {
+    return true;
+  }
+  if (!hasPhysicalTrack && !hasSpiritTrack) {
+    return Number(player.towerHp || 0) <= 0;
+  }
+  return false;
+}
+
+export function winnerSideFromTowers(leftTowerHpOrState, maybeRightTowerHp) {
+  if (typeof leftTowerHpOrState === 'object' && leftTowerHpOrState !== null) {
+    const {
+      leftTowerHp,
+      rightTowerHp,
+      leftDefeated = false,
+      rightDefeated = false
+    } = leftTowerHpOrState;
+    if (leftDefeated || rightDefeated) {
+      return leftDefeated && rightDefeated
+        ? null
+        : leftDefeated
+          ? 'right'
+          : 'left';
+    }
+    return winnerSideFromTowers(leftTowerHp, rightTowerHp);
+  }
+
+  const leftTowerHp = Number(leftTowerHpOrState || 0);
+  const rightTowerHp = Number(maybeRightTowerHp || 0);
   if (leftTowerHp <= 0 || rightTowerHp <= 0) {
     return leftTowerHp <= 0 && rightTowerHp <= 0
       ? null

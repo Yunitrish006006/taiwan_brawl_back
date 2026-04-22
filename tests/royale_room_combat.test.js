@@ -4,10 +4,13 @@ import assert from 'node:assert/strict';
 import { GLOBAL_MOVE_SPEED_MULTIPLIER } from '../src/royale_battle_rules.js';
 import {
   applyEquipmentEffects,
+  applySelfEquipmentEffects,
   buildBotPayload,
+  canCastEquipmentOnHero,
   chooseBotCombo,
   drawReplacementCards,
   equipmentEffects,
+  recordCardUses,
   resolveComboCards
 } from '../src/royale_room_combat.js';
 
@@ -46,6 +49,45 @@ test('drawReplacementCards rotates used cards to the queue tail', () => {
   assert.deepEqual(battlePlayer.queue, ['b', 'd']);
 });
 
+test('card use limits reject exhausted cards and remove spent cards from cycle', () => {
+  const player = {
+    deckCards: [
+      { id: 'knight', type: 'melee' },
+      { id: 'archer', type: 'ranged' }
+    ]
+  };
+  const battlePlayer = {
+    hand: ['knight', 'archer'],
+    queue: ['zap'],
+    cardUses: { knight: 7 },
+    cardUseLimits: { knight: 8, archer: 8, zap: 8 }
+  };
+  const errors = [];
+  const resolved = resolveComboCards(player, battlePlayer, ['knight'], (message) =>
+    errors.push(message)
+  );
+
+  assert.equal(errors.length, 0);
+  recordCardUses(battlePlayer, resolved);
+  drawReplacementCards(battlePlayer, ['knight']);
+
+  assert.deepEqual(battlePlayer.hand, ['archer', 'zap']);
+  assert.deepEqual(battlePlayer.queue, []);
+
+  const exhausted = resolveComboCards(
+    player,
+    {
+      hand: ['knight'],
+      cardUses: { knight: 8 },
+      cardUseLimits: { knight: 8 }
+    },
+    ['knight'],
+    (message) => errors.push(message)
+  );
+  assert.equal(exhausted, null);
+  assert.equal(errors.at(-1), 'Card deployment limit reached');
+});
+
 test('equipmentEffects and applyEquipmentEffects aggregate boosts', () => {
   const effects = equipmentEffects([
     { id: 'blade', name: 'Blade', type: 'equipment', effectKind: 'damage_boost', effectValue: 20 },
@@ -67,6 +109,48 @@ test('equipmentEffects and applyEquipmentEffects aggregate boosts', () => {
     applied.moveSpeed,
     Number((80 * GLOBAL_MOVE_SPEED_MULTIPLIER * 1.25).toFixed(4))
   );
+});
+
+test('betel nut can be cast on hero and adds unit haste with degeneration', () => {
+  const card = {
+    id: 'betel_nut',
+    name: 'Betel Nut',
+    type: 'equipment',
+    targetRule: 'hero',
+    effectKind: 'betel_nut',
+    effectValue: 0.18
+  };
+  const battlePlayer = {
+    physicalHealth: 100,
+    maxPhysicalHealth: 100,
+    physicalHealthRegen: 1,
+    spiritHealth: 0,
+    maxSpiritHealth: 0,
+    spiritHealthRegen: 0,
+    physicalEnergy: 1,
+    maxPhysicalEnergy: 5,
+    physicalEnergyRegen: 0,
+    spiritEnergy: 0,
+    maxSpiritEnergy: 0,
+    spiritEnergyRegen: 0,
+    money: 0,
+    maxMoney: 0,
+    moneyPerSecond: 0
+  };
+
+  assert.equal(canCastEquipmentOnHero(card), true);
+  applySelfEquipmentEffects(battlePlayer, [card]);
+  const applied = applyEquipmentEffects(
+    { hp: 120, damage: 30, moveSpeed: 100 },
+    equipmentEffects([card])
+  );
+
+  assert.equal(battlePlayer.maxPhysicalHealth, 180);
+  assert.equal(battlePlayer.physicalEnergy, 2);
+  assert.ok(battlePlayer.physicalHealthRegen < 1);
+  assert.ok(applied.moveSpeed > 100 * GLOBAL_MOVE_SPEED_MULTIPLIER);
+  assert.ok(applied.attackSpeedMultiplier < 1);
+  assert.equal(applied.degenerationPerSecond, 5);
 });
 
 test('chooseBotCombo prefers affordable unit-first plays', () => {

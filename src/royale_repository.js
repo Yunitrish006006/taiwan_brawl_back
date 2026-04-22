@@ -4,6 +4,12 @@ import {
   normalizeEnergyCostType,
   starterCards
 } from './royale_cards.js';
+import { cardLockState } from './royale_progression.js';
+import {
+  ensureDeckCharacter,
+  listCharacterArchetypes,
+  listDeckCharactersForUser
+} from './royale_progression.js';
 
 const MAX_CARD_IMAGE_BYTES = 1024 * 1024;
 const CARD_CHARACTER_IMAGE_DIRECTIONS = ['front', 'back', 'left', 'right'];
@@ -125,7 +131,7 @@ function serializeCard(row, characterAssets = []) {
     charImageRightVersion,
     'right'
   );
-  return {
+  const serialized = {
     id: row.id,
     name: firstAvailableName(nameI18n, fallbackName),
     nameI18n,
@@ -191,6 +197,10 @@ function serializeCard(row, characterAssets = []) {
     charImageLeftVersion,
     charImageRightVersion,
     bgImageVersion
+  };
+  return {
+    ...serialized,
+    ...cardLockState(serialized, Number(row.viewer_age ?? 0))
   };
 }
 
@@ -550,13 +560,14 @@ async function cardExists(env, cardId) {
   return Boolean(existing);
 }
 
-function serializeDeckRow(deckRow, cards) {
+function serializeDeckRow(deckRow, cards, progression = null) {
   return {
     id: Number(deckRow.id),
     name: deckRow.name,
     slot: Number(deckRow.slot),
     updatedAt: deckRow.updated_at,
-    cards
+    cards,
+    progression
   };
 }
 
@@ -1152,6 +1163,12 @@ async function loadDeckCards(deckId, cardMap, env) {
 export async function listDecksForUser(userId, env) {
   await ensureUserStarterDeck(userId, env);
   const cardMap = await getCardMap(env);
+  const progressionByDeckId = new Map(
+    (await listDeckCharactersForUser(env, userId)).map((progression) => [
+      Number(progression.deckId),
+      progression
+    ])
+  );
   const decks = await env.DB.prepare(
     `SELECT id, name, slot, updated_at
      FROM user_decks
@@ -1164,7 +1181,9 @@ export async function listDecksForUser(userId, env) {
     results.push(
       serializeDeckRow(
         deckRow,
-        await loadDeckCards(deckRow.id, cardMap, env)
+        await loadDeckCards(deckRow.id, cardMap, env),
+        progressionByDeckId.get(Number(deckRow.id)) ||
+          await ensureDeckCharacter(env, userId, Number(deckRow.id))
       )
     );
   }
@@ -1184,7 +1203,11 @@ export async function getDeckForUser(userId, deckId, env) {
   }
 
   const cardMap = await getCardMap(env);
-  return serializeDeckRow(deck, await loadDeckCards(deck.id, cardMap, env));
+  return serializeDeckRow(
+    deck,
+    await loadDeckCards(deck.id, cardMap, env),
+    await ensureDeckCharacter(env, userId, Number(deck.id))
+  );
 }
 
 export async function saveDeckForUser(userId, payload, env) {
@@ -1239,6 +1262,13 @@ export async function saveDeckForUser(userId, payload, env) {
     ).bind(deckId, index, cardId).run();
   }
 
+  await ensureDeckCharacter(
+    env,
+    userId,
+    Number(deckId),
+    payload?.characterId,
+    listCharacterArchetypes(Array.from(cardMap.values()))
+  );
   return getDeckForUser(userId, deckId, env);
 }
 

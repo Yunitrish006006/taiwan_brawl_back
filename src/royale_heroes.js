@@ -3,6 +3,12 @@ import { clamp } from './royale_battle_rules.js';
 export const DEFAULT_HERO_ID = 'ordinary_person';
 const LEGACY_ENERGY_CAP = 10;
 const LEGACY_ENERGY_REGEN_PER_SECOND = 0.8;
+const DEFAULT_HERO_ATTACK = Object.freeze({
+  damage: 64,
+  range: 230,
+  attackSpeed: 1.25,
+  damageType: 'physical'
+});
 
 const HERO_DEFINITIONS = Object.freeze([
   {
@@ -22,6 +28,7 @@ const HERO_DEFINITIONS = Object.freeze([
     physicalEnergy: { initial: 4.2, max: 5.0, regenPerSecond: 0.32 },
     spiritEnergy: { initial: 3.6, max: 4.2, regenPerSecond: 0.22 },
     money: { initial: 20, max: 48, regenPerSecond: 0 },
+    heroAttack: { damage: 48, range: 260, attackSpeed: 1.35, damageType: 'spirit' },
     unitDamageMultiplier: 1,
     jobMoneyMultiplier: 1,
     jobPositiveWeightMultiplier: 1,
@@ -50,6 +57,7 @@ const HERO_DEFINITIONS = Object.freeze([
     physicalEnergy: { initial: 4.4, max: 5.2, regenPerSecond: 0.35 },
     spiritEnergy: { initial: 4.8, max: 5.8, regenPerSecond: 0.42 },
     money: { initial: 7, max: 36, regenPerSecond: 0 },
+    heroAttack: { damage: 64, range: 230, attackSpeed: 1.25, damageType: 'physical' },
     unitDamageMultiplier: 1,
     jobMoneyMultiplier: 1,
     jobPositiveWeightMultiplier: 1,
@@ -75,6 +83,7 @@ const HERO_DEFINITIONS = Object.freeze([
     physicalEnergy: { initial: 4.8, max: 5.6, regenPerSecond: 0.4 },
     spiritEnergy: { initial: 3.8, max: 4.6, regenPerSecond: 0.28 },
     money: { initial: 2, max: 28, regenPerSecond: 0 },
+    heroAttack: { damage: 76, range: 205, attackSpeed: 1.15, damageType: 'physical' },
     unitDamageMultiplier: 1.15,
     jobMoneyMultiplier: 1,
     jobPositiveWeightMultiplier: 1,
@@ -100,6 +109,7 @@ const HERO_DEFINITIONS = Object.freeze([
     physicalEnergy: { initial: 4.3, max: 5.0, regenPerSecond: 0.36 },
     spiritEnergy: { initial: 4.0, max: 4.8, regenPerSecond: 0.34 },
     money: { initial: 5, max: 34, regenPerSecond: 0 },
+    heroAttack: { damage: 58, range: 220, attackSpeed: 0.95, damageType: 'physical' },
     unitDamageMultiplier: 1,
     jobMoneyMultiplier: 1.08,
     jobPositiveWeightMultiplier: 1.35,
@@ -182,29 +192,29 @@ function ensureBattlePlayerMeters(playerState) {
   return next;
 }
 
-function drainMeter(playerState, amount, primaryField, secondaryField) {
-  let remaining = Math.max(0, normalizedNumber(amount));
-  const primaryMaxField = `max${primaryField.charAt(0).toUpperCase()}${primaryField.slice(1)}`;
-  const secondaryMaxField = `max${secondaryField.charAt(0).toUpperCase()}${secondaryField.slice(1)}`;
-
-  const primaryValue = clampMeter(playerState[primaryField], playerState[primaryMaxField]);
-  const primaryDrain = Math.min(primaryValue, remaining);
-  playerState[primaryField] = primaryValue - primaryDrain;
-  remaining -= primaryDrain;
-
-  const secondaryValue = clampMeter(playerState[secondaryField], playerState[secondaryMaxField]);
-  const secondaryDrain = Math.min(secondaryValue, remaining);
-  playerState[secondaryField] = secondaryValue - secondaryDrain;
-  remaining -= secondaryDrain;
-
-  return remaining <= 1e-6;
-}
-
 function fillMeter(playerState, field, maxField, regenField, dt) {
   const current = normalizedNumber(playerState[field]);
   const max = normalizedNumber(playerState[maxField]);
   const regen = normalizedNumber(playerState[regenField]);
   playerState[field] = clamp(current + regen * dt, 0, max);
+}
+
+function maxFieldForMeter(field) {
+  return `max${field.charAt(0).toUpperCase()}${field.slice(1)}`;
+}
+
+function applyDamageToSingleHealthTrack(playerState, amount, field) {
+  const maxField = maxFieldForMeter(field);
+  const max = normalizedNumber(playerState[maxField]);
+  if (max <= 0) {
+    return false;
+  }
+  playerState[field] = clamp(
+    normalizedNumber(playerState[field]) - Math.max(0, normalizedNumber(amount)),
+    0,
+    max
+  );
+  return true;
 }
 
 export function listHeroDefinitions() {
@@ -229,6 +239,17 @@ export function heroTraitValue(heroId, key, fallback = 0) {
   return value ?? fallback;
 }
 
+export function heroAttackDefinition(heroId) {
+  const hero = heroDefinitionById(heroId);
+  const attack = hero.heroAttack || DEFAULT_HERO_ATTACK;
+  return {
+    damage: Math.max(0, Math.round(normalizedNumber(attack.damage, DEFAULT_HERO_ATTACK.damage))),
+    range: Math.max(0, Math.round(normalizedNumber(attack.range, DEFAULT_HERO_ATTACK.range))),
+    attackSpeed: Math.max(0.2, normalizedNumber(attack.attackSpeed, DEFAULT_HERO_ATTACK.attackSpeed)),
+    damageType: attack.damageType === 'spirit' ? 'spirit' : 'physical'
+  };
+}
+
 export function buildHeroSnapshot(value) {
   const hero = heroDefinitionById(value);
   return {
@@ -248,6 +269,7 @@ export function buildHeroSnapshot(value) {
     physicalEnergy: { ...hero.physicalEnergy },
     spiritEnergy: { ...hero.spiritEnergy },
     money: { ...hero.money },
+    heroAttack: heroAttackDefinition(hero.id),
     unitDamageMultiplier: hero.unitDamageMultiplier,
     jobMoneyMultiplier: hero.jobMoneyMultiplier,
     jobPositiveWeightMultiplier: hero.jobPositiveWeightMultiplier,
@@ -276,6 +298,9 @@ export function buildInitialBattlePlayerState(heroId, { isBot = false } = {}) {
     money: hero.money.initial,
     maxMoney: hero.money.max,
     moneyPerSecond: hero.money.regenPerSecond,
+    heroAttackCooldown: 0,
+    heroAttackEventId: 0,
+    heroAttackEvent: null,
     botThinkMs: isBot ? 0 : 0
   });
 }
@@ -376,9 +401,11 @@ export function canSpendBattlePlayerMoney(playerState, amount) {
 export function applyBattlePlayerDamage(playerState, amount, preferredPool = 'physical') {
   ensureBattlePlayerMeters(playerState);
   if (preferredPool === 'spirit') {
-    drainMeter(playerState, amount, 'spiritHealth', 'physicalHealth');
+    applyDamageToSingleHealthTrack(playerState, amount, 'spiritHealth') ||
+      applyDamageToSingleHealthTrack(playerState, amount, 'physicalHealth');
   } else {
-    drainMeter(playerState, amount, 'physicalHealth', 'spiritHealth');
+    applyDamageToSingleHealthTrack(playerState, amount, 'physicalHealth') ||
+      applyDamageToSingleHealthTrack(playerState, amount, 'spiritHealth');
   }
   syncBattlePlayerTotals(playerState);
 }

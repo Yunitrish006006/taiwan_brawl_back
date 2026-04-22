@@ -12,7 +12,17 @@ import {
   sideDirection
 } from './royale_battle_rules.js';
 import { isJobCard } from './royale_job_events.js';
-import { battlePlayerEnergy, totalBattlePlayerEnergy } from './royale_heroes.js';
+import {
+  adjustBattlePlayerResources,
+  battlePlayerEnergy,
+  syncBattlePlayerTotals,
+  totalBattlePlayerEnergy
+} from './royale_heroes.js';
+import {
+  cardHasUsesRemaining,
+  recordCardUses,
+  remainingCardUses
+} from './royale_card_progression.js';
 
 function cardEnergyCost(card) {
   return Number(card.energyCost || card.elixirCost || 0);
@@ -337,7 +347,9 @@ export function chooseBotCombo(room, side, player, battlePlayer) {
   const handCards = battlePlayer.hand
     .map((cardId) => player.deckCards.find((card) => card.id === cardId))
     .filter(Boolean);
-  const affordable = handCards.filter((card) => canAffordCard(battlePlayer, card));
+  const affordable = handCards.filter(
+    (card) => canAffordCard(battlePlayer, card) && cardHasUsesRemaining(battlePlayer, card)
+  );
   if (affordable.length === 0) {
     return [];
   }
@@ -426,6 +438,10 @@ export function resolveComboCards(player, battlePlayer, cardIds, sendError) {
       sendError('Unknown card');
       return null;
     }
+    if (!cardHasUsesRemaining(battlePlayer, card)) {
+      sendError('Card deployment limit reached');
+      return null;
+    }
     comboCards.push(card);
   }
 
@@ -437,6 +453,8 @@ export function resolveComboCards(player, battlePlayer, cardIds, sendError) {
   return comboCards;
 }
 
+export { recordCardUses };
+
 export function drawReplacementCards(battlePlayer, cardIds) {
   for (const cardId of cardIds) {
     const handIndex = battlePlayer.hand.findIndex((entry) => entry === cardId);
@@ -444,7 +462,10 @@ export function drawReplacementCards(battlePlayer, cardIds) {
       continue;
     }
     battlePlayer.hand.splice(handIndex, 1);
-    battlePlayer.queue.push(cardId);
+    const card = { id: cardId };
+    if (remainingCardUses(battlePlayer, card) > 0) {
+      battlePlayer.queue.push(cardId);
+    }
   }
 
   for (let index = 0; index < cardIds.length; index += 1) {
@@ -485,6 +506,7 @@ export function equipmentEffects(cards, opts = {}) {
         name: card.name,
         kind: card.effectKind,
         value: Number(card.effectValue || 0),
+        degenerationPerSecond: card.effectKind === 'betel_nut' ? 5 : 0,
         procChances: Object.keys(procChances).length > 0 ? procChances : undefined,
         westernMedRoll: card.effectKind === 'western_med' ? Math.random() : undefined
       };
@@ -504,6 +526,13 @@ export function applyEquipmentEffects(card, effects) {
       hp += effect.value;
     } else if (effect.kind === 'speed_boost') {
       moveSpeed *= 1 + effect.value;
+    } else if (effect.kind === 'betel_nut') {
+      moveSpeed *= 1.18;
+      attackSpeedMultiplier *= 0.82;
+    } else if (effect.kind === 'helmet_guard') {
+      hp += effect.value || 140;
+    } else if (effect.kind === 'florida_water') {
+      attackSpeedMultiplier *= 0.92;
     } else if (effect.kind === 'western_med') {
       const roll = effect.westernMedRoll ?? Math.random();
       if (roll < 0.40) {
@@ -522,6 +551,45 @@ export function applyEquipmentEffects(card, effects) {
     hp: Math.round(hp),
     damage: Math.round(damage),
     moveSpeed: Number(moveSpeed.toFixed(4)),
-    attackSpeedMultiplier
+    attackSpeedMultiplier,
+    degenerationPerSecond: effects.reduce(
+      (sum, effect) => sum + Number(effect.degenerationPerSecond || 0),
+      0
+    )
   };
+}
+
+export function canCastEquipmentOnHero(card) {
+  return (
+    card.type === 'equipment' &&
+    ['self', 'hero'].includes(String(card.targetRule || '').trim().toLowerCase())
+  );
+}
+
+export function applySelfEquipmentEffects(battlePlayer, cards) {
+  const events = [];
+  for (const card of cards.filter(canCastEquipmentOnHero)) {
+    switch (card.effectKind) {
+      case 'betel_nut':
+        battlePlayer.maxPhysicalHealth = Number(battlePlayer.maxPhysicalHealth || 0) + 80;
+        battlePlayer.physicalHealth = Number(battlePlayer.physicalHealth || 0) + 80;
+        battlePlayer.physicalEnergy = Number(battlePlayer.physicalEnergy || 0) + 1;
+        battlePlayer.physicalHealthRegen = Number(battlePlayer.physicalHealthRegen || 0) - 0.45;
+        battlePlayer.cancerRisk = Number(battlePlayer.cancerRisk || 0) + 0.03;
+        events.push({ cardId: card.id, kind: 'betel_nut_self' });
+        break;
+      case 'helmet_guard':
+        adjustBattlePlayerResources(battlePlayer, { physicalHealthDelta: Number(card.effectValue || 140) });
+        events.push({ cardId: card.id, kind: 'helmet_guard_self' });
+        break;
+      case 'florida_water':
+        adjustBattlePlayerResources(battlePlayer, { spiritHealthDelta: Number(card.effectValue || 24) });
+        events.push({ cardId: card.id, kind: 'florida_water_self' });
+        break;
+      default:
+        break;
+    }
+  }
+  syncBattlePlayerTotals(battlePlayer);
+  return events;
 }

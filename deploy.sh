@@ -96,7 +96,7 @@ commit_message_version_bump() {
   local conventional_regex='^([A-Za-z]+)(\([^)]+\))?(!)?:[[:space:]]'
 
   if [[ "${subject}" =~ ${conventional_regex} ]]; then
-    type="${BASH_REMATCH[1],,}"
+    type="$(printf '%s' "${BASH_REMATCH[1]}" | tr '[:upper:]' '[:lower:]')"
     breaking="${BASH_REMATCH[3]:-}"
   else
     printf 'none\n'

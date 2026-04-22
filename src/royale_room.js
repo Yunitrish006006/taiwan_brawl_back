@@ -9,13 +9,18 @@ import {
   randomBotThinkMs
 } from './royale_battle_rules.js';
 import {
+  applySelfEquipmentEffects,
   buildBotPayload,
+  canCastEquipmentOnHero,
   chooseBotCombo,
   drawReplacementCards,
   equipmentEffects,
+  recordCardUses,
   resolveComboCards
 } from './royale_room_combat.js';
 import { isJobCard, resolveJobCardEffect } from './royale_job_events.js';
+import { isEventCard } from './royale_card_progression.js';
+import { resolveEventCard } from './royale_event_cards.js';
 import { tickFieldEvents } from './royale_field_events.js';
 import {
   getEnemySide,
@@ -24,6 +29,7 @@ import {
   resolveSpellEffect,
   selectUnitTarget,
   spawnBattleUnits,
+  tickHeroAttacks,
   tickBattleUnits,
   towerHitPoints,
   winnerSideFromTowers
@@ -45,6 +51,7 @@ import {
 } from './royale_heroes.js';
 import { normalizeBotController } from './royale_llm_bot.js';
 import { normalizeCardDefinition } from './royale_cards.js';
+import { applyMatchProgression } from './royale_progression.js';
 
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
@@ -443,6 +450,11 @@ export class RoyaleRoom {
       reason: String(payload.reason ?? 'time_up')
     };
 
+    await applyMatchProgression(this.env, {
+      room: this.room,
+      winnerSide: this.room.battle.result.winnerSide,
+      reason: this.room.battle.result.reason
+    });
     await this.persistAndBroadcast('match_result');
     return this.okRoom(payload.userId);
   }
@@ -720,11 +732,23 @@ export class RoyaleRoom {
     }
 
     const equipmentCards = comboCards.filter((card) => card.type === 'equipment');
+    const eventCards = comboCards.filter((card) => isEventCard(card));
     const jobCards = comboCards.filter((card) => isJobCard(card));
     const unitCards = comboCards.filter(
-      (card) => card.type !== 'equipment' && card.type !== 'spell' && !isJobCard(card)
+      (card) =>
+        card.type !== 'equipment' &&
+        card.type !== 'spell' &&
+        !isEventCard(card) &&
+        !isJobCard(card)
     );
-    if (equipmentCards.length > 0 && unitCards.length === 0) {
+    const selfEquipmentOnly =
+      equipmentCards.length === comboCards.length &&
+      equipmentCards.every((card) => canCastEquipmentOnHero(card));
+    if (eventCards.length > 0 && comboCards.length !== 1) {
+      this.sendError(userId, 'Event cards must be played alone');
+      return;
+    }
+    if (equipmentCards.length > 0 && unitCards.length === 0 && !selfEquipmentOnly) {
       this.sendError(userId, 'Equipment cards need at least one unit in the same cast');
       return;
     }
@@ -733,7 +757,10 @@ export class RoyaleRoom {
       return;
     }
 
-    const dropPoint = jobCards.length > 0 ? null : normalizeDropPoint(player.side, payload);
+    const dropPoint =
+      jobCards.length > 0 || eventCards.length > 0 || selfEquipmentOnly
+        ? null
+        : normalizeDropPoint(player.side, payload);
     const comboEquipmentEffects = equipmentEffects(comboCards, {
       battleState: this.room.battle,
       side: player.side
@@ -750,16 +777,22 @@ export class RoyaleRoom {
         );
       }
     }
+    recordCardUses(battlePlayer, comboCards);
     drawReplacementCards(battlePlayer, comboCards.map((card) => card.id));
 
     for (const card of comboCards) {
       if (card.type === 'spell') {
         this.resolveSpell(player.side, card, dropPoint);
+      } else if (isEventCard(card)) {
+        resolveEventCard(this.room, player.side, card);
       } else if (isJobCard(card)) {
         resolveJobCardEffect(this.room, player.side, card);
       } else if (card.type !== 'equipment') {
         this.spawnUnits(player.side, card, dropPoint, comboEquipmentEffects);
       }
+    }
+    if (selfEquipmentOnly) {
+      applySelfEquipmentEffects(battlePlayer, comboCards);
     }
 
     await this.broadcast('battle_event', {
@@ -809,13 +842,14 @@ export class RoyaleRoom {
     regenerateBattleResources(this.room, dt);
 
     await this.runBotTurns();
+    tickHeroAttacks(this.room, dt);
     tickBattleUnits(this.room, dt);
     tickFieldEvents(this.room, dt);
-    const { leftTowerHp, rightTowerHp } = towerHitPoints(this.room);
+    const towerState = towerHitPoints(this.room);
 
-    if (leftTowerHp <= 0 || rightTowerHp <= 0) {
+    if (towerState.leftDefeated || towerState.rightDefeated) {
       await this.finishMatch(
-        winnerSideFromTowers(leftTowerHp, rightTowerHp),
+        winnerSideFromTowers(towerState),
         'tower_destroyed'
       );
       return;
@@ -833,7 +867,7 @@ export class RoyaleRoom {
 
     if (this.room.battle.timeRemainingMs <= 0) {
       await this.finishMatch(
-        winnerSideFromTowers(leftTowerHp, rightTowerHp),
+        winnerSideFromTowers(towerState),
         'time_up'
       );
       return;
@@ -865,6 +899,11 @@ export class RoyaleRoom {
         summary: this.viewerSnapshot(leftPlayer.userId)
       });
     }
+    await applyMatchProgression(this.env, {
+      room: this.room,
+      winnerSide,
+      reason
+    });
 
     await this.persist(true);
     await this.broadcast('match_result');
