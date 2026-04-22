@@ -57,7 +57,9 @@ normalize_version_bump() {
 }
 
 is_truthy() {
-  case "${1,,}" in
+  local lower
+  lower="$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')"
+  case "${lower}" in
     1|true|yes|y|on) return 0 ;;
     *) return 1 ;;
   esac

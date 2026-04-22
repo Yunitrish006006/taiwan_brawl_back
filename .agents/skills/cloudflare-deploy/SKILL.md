@@ -185,6 +185,37 @@ Always invoke Wrangler via:
 
 Do not call a globally installed Wrangler directly.
 
+## Runtime Reliability Notes (Observed in Production Deploys)
+
+When applying this skill in real macOS developer environments, enforce the following safeguards.
+
+### 1) Bash 3.2 Compatibility (macOS default)
+
+- Avoid Bash 4+ parameter expansions such as `${var,,}` and `${var^^}` in `deploy.sh`.
+- Prefer portable transforms, for example: `printf '%s' "$value" | tr '[:upper:]' '[:lower:]'`.
+- If deploy succeeds but script exits at post-deploy steps with errors like `bad substitution`, treat this as a script compatibility bug and patch the script immediately.
+
+### 2) Non-interactive npm exec / Wrangler bootstrap
+
+- `npm exec --package=wrangler@...` may pause for package install confirmation in some environments.
+- For automation or agent execution, set non-interactive mode before running deploy:
+	- `NPM_CONFIG_YES=true`
+- If output appears frozen during preflight (`whoami`) with no failure text, check whether `npm exec` is waiting for confirmation and rerun with `NPM_CONFIG_YES=true`.
+
+### 3) KV Bulk Upload Appears Stalled
+
+- Large `assets.json` payloads (tens of MB) can spend long time in `wrangler kv bulk put` with little or no progress output.
+- Before treating as hang, verify the process is still alive and consuming some CPU.
+- Only force-stop when clearly deadlocked or after an agreed timeout policy.
+
+### 4) Post-deploy Failure Classification
+
+- If `[6/6] Deploying Workers...` and `[6.5/6]` smoke tests pass, deployment is successful even when later optional stages (`[7/6]` auto commit / `[7.5/6]` auto push) fail.
+- Report this explicitly as:
+	- deploy success
+	- post-deploy automation failure
+	- required remediation (script fix or config change)
+
 ## Discovery Rules
 
 Frontend directory detection order:
