@@ -6,10 +6,11 @@ import {
 } from './royale_cards.js';
 import { cardLockState } from './royale_progression.js';
 import {
-  ensureDeckCharacter,
-  listCharacterArchetypes,
-  listDeckCharactersForUser
+  ensureDeckProgressionHero,
+  listDeckProgressionForUser,
+  listProgressionHeroOptions
 } from './royale_progression.js';
+import { listHeroUnitCards } from './royale_heroes.js';
 
 const MAX_CARD_IMAGE_BYTES = 1024 * 1024;
 const CARD_CHARACTER_IMAGE_DIRECTIONS = ['front', 'back', 'left', 'right'];
@@ -631,9 +632,16 @@ export async function listCards(env) {
     env,
     cardRows.map((row) => row.id)
   );
-  return cardRows.map((row) =>
+  const cards = cardRows.map((row) =>
     serializeCard(row, assetsByCardId.get(row.id) || [])
   );
+  const cardById = new Map(cards.map((card) => [card.id, card]));
+  for (const heroCard of listHeroUnitCards()) {
+    if (!cardById.has(heroCard.id)) {
+      cards.push(normalizeCardDefinition(heroCard));
+    }
+  }
+  return cards;
 }
 
 export async function upsertCard(env, payload) {
@@ -1164,7 +1172,7 @@ export async function listDecksForUser(userId, env) {
   await ensureUserStarterDeck(userId, env);
   const cardMap = await getCardMap(env);
   const progressionByDeckId = new Map(
-    (await listDeckCharactersForUser(env, userId)).map((progression) => [
+    (await listDeckProgressionForUser(env, userId)).map((progression) => [
       Number(progression.deckId),
       progression
     ])
@@ -1183,7 +1191,7 @@ export async function listDecksForUser(userId, env) {
         deckRow,
         await loadDeckCards(deckRow.id, cardMap, env),
         progressionByDeckId.get(Number(deckRow.id)) ||
-          await ensureDeckCharacter(env, userId, Number(deckRow.id))
+        await ensureDeckProgressionHero(env, userId, Number(deckRow.id))
       )
     );
   }
@@ -1206,7 +1214,7 @@ export async function getDeckForUser(userId, deckId, env) {
   return serializeDeckRow(
     deck,
     await loadDeckCards(deck.id, cardMap, env),
-    await ensureDeckCharacter(env, userId, Number(deck.id))
+    await ensureDeckProgressionHero(env, userId, Number(deck.id))
   );
 }
 
@@ -1262,12 +1270,12 @@ export async function saveDeckForUser(userId, payload, env) {
     ).bind(deckId, index, cardId).run();
   }
 
-  await ensureDeckCharacter(
+  await ensureDeckProgressionHero(
     env,
     userId,
     Number(deckId),
-    payload?.characterId,
-    listCharacterArchetypes(Array.from(cardMap.values()))
+    payload?.heroId,
+    listProgressionHeroOptions(Array.from(cardMap.values()))
   );
   return getDeckForUser(userId, deckId, env);
 }

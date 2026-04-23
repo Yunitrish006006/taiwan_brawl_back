@@ -90,7 +90,6 @@ export function createPlayer(side, payload) {
     deckCardIds: payload.deck.cards.map((card) => card.id),
     deckCards: payload.deck.cards.map((card) => normalizeCardDefinition(card)),
     heroId: normalizeHeroId(payload.heroId),
-    characterId: String(payload.characterId || 'ordinary_child'),
     botController: Boolean(payload.user.isBot)
       ? normalizeBotController(payload.user.botController)
       : 'heuristic',

@@ -1,50 +1,18 @@
 import {
   cardUnlockAge,
-  cardUnlockTier,
-  isUnitCard
+  cardUnlockTier
 } from './royale_card_progression.js';
+import {
+  DEFAULT_HERO_ID,
+  listHeroDefinitions,
+  normalizeHeroId,
+  registerUnitHeroDefinitions
+} from './royale_heroes.js';
 
 const MAX_HEALTH = 100;
 const DAILY_HEALTH_REGEN = 6;
 
-export const CHARACTER_ARCHETYPES = Object.freeze([
-  {
-    id: 'ordinary_child',
-    name: 'Ordinary Child',
-    nameZhHant: '普通小孩',
-    nameEn: 'Ordinary Child',
-    nameJa: '普通の子',
-    descriptionZhHant: '沒有明顯偏科，適合第一次培養。',
-    descriptionEn: 'Balanced starting point for the first life.',
-    descriptionJa: '初回育成向けのバランス型。'
-  },
-  {
-    id: 'street_smart',
-    name: 'Street Smart',
-    nameZhHant: '街頭小聰明',
-    nameEn: 'Street Smart',
-    nameJa: '街の知恵',
-    descriptionZhHant: '較容易走向道具與生存路線。',
-    descriptionEn: 'Leans toward item and survival paths.',
-    descriptionJa: '道具と生存寄りの方向性。'
-  },
-  {
-    id: 'study_grind',
-    name: 'Study Grind',
-    nameZhHant: '讀書苦行',
-    nameEn: 'Study Grind',
-    nameJa: '勉強漬け',
-    descriptionZhHant: '較容易走向技能與事件路線。',
-    descriptionEn: 'Leans toward skill and event paths.',
-    descriptionJa: 'スキルとイベント寄りの方向性。'
-  }
-]);
-
-export const DEFAULT_CHARACTER_ID = 'ordinary_child';
-
-const CHARACTER_BY_ID = new Map(
-  CHARACTER_ARCHETYPES.map((character) => [character.id, character])
-);
+export const DEFAULT_PROGRESSION_HERO_ID = DEFAULT_HERO_ID;
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, Number(value) || 0));
@@ -71,69 +39,68 @@ function stringifyJson(value) {
   return JSON.stringify(value ?? {});
 }
 
-export function normalizeCharacterArchetype(value) {
+export function normalizeProgressionHeroId(value) {
   const candidate = String(value || '').trim().toLowerCase();
-  return CHARACTER_BY_ID.has(candidate) ? candidate : DEFAULT_CHARACTER_ID;
-}
-
-function normalizeCharacterId(value) {
-  const candidate = String(value || '').trim().toLowerCase();
-  return /^[a-z0-9_:-]{1,96}$/.test(candidate) ? candidate : DEFAULT_CHARACTER_ID;
-}
-
-function characterOptionIds(characterOptions = []) {
-  return new Set(
-    [
-      ...CHARACTER_ARCHETYPES,
-      ...characterOptions
-    ].map((entry) => String(entry?.id || '').trim().toLowerCase()).filter(Boolean)
-  );
-}
-
-function resolveCharacterId(value, characterOptions = null) {
-  const candidate = normalizeCharacterId(value);
-  if (!Array.isArray(characterOptions)) {
+  const normalizedHero = normalizeHeroId(candidate);
+  if (normalizedHero !== DEFAULT_HERO_ID || candidate === DEFAULT_HERO_ID) {
+    return normalizedHero;
+  }
+  if (/^[a-z0-9_:-]{1,96}$/.test(candidate)) {
     return candidate;
   }
-  return characterOptionIds(characterOptions).has(candidate)
+  return DEFAULT_PROGRESSION_HERO_ID;
+}
+
+function normalizeProgressionHeroCandidate(value) {
+  return normalizeProgressionHeroId(value);
+}
+
+function progressionHeroOptionIds(heroOptions = []) {
+  return new Set(heroOptions.map((entry) => normalizeProgressionHeroId(entry?.id)).filter(Boolean));
+}
+
+function resolveProgressionHeroId(value, heroOptions = null) {
+  const candidate = normalizeProgressionHeroCandidate(value);
+  if (!Array.isArray(heroOptions)) {
+    return candidate;
+  }
+  return progressionHeroOptionIds(heroOptions).has(candidate)
     ? candidate
-    : DEFAULT_CHARACTER_ID;
+    : DEFAULT_PROGRESSION_HERO_ID;
 }
 
-function cardCharacterOption(card) {
-  const nameZhHant = card.nameZhHant || card.name || card.id;
-  const nameEn = card.nameEn || card.name || card.id;
-  const nameJa = card.nameJa || card.name || card.id;
-  return {
-    id: String(card.id),
-    kind: 'unit_card',
-    cardId: String(card.id),
-    type: card.type,
-    imageUrl: card.characterImageUrl || card.imageUrl || null,
-    name: nameZhHant,
-    nameZhHant,
-    nameEn,
-    nameJa,
-    descriptionZhHant: `以「${nameZhHant}」作為這副牌組的培養角色。`,
-    descriptionEn: `Use ${nameEn} as this deck's progression character.`,
-    descriptionJa: `「${nameJa}」をこのデッキの育成キャラクターにします。`
-  };
-}
+export function listProgressionHeroOptions(cards = []) {
+  registerUnitHeroDefinitions(cards);
+  const cardById = new Map(
+    cards
+      .filter((card) => card?.id)
+      .map((card) => [String(card.id), card])
+  );
 
-export function listCharacterArchetypes(cards = []) {
-  const unitCardOptions = cards
-    .filter((card) => card?.id && isUnitCard(card))
-    .map(cardCharacterOption)
-    .sort((a, b) => a.name.localeCompare(b.name));
-  return [
-    ...CHARACTER_ARCHETYPES.map((character) => ({
-      ...character,
-      kind: 'archetype',
-      cardId: null,
-      imageUrl: null
-    })),
-    ...unitCardOptions
-  ];
+  return listHeroDefinitions().map((hero) => {
+    const linkedCard = hero.sourceCardId ? cardById.get(String(hero.sourceCardId)) : cardById.get(String(hero.id));
+    return {
+      id: String(hero.id),
+      kind: hero.sourceKind === 'unit_card' ? 'unit_card' : 'hero',
+      cardId: hero.sourceCardId || null,
+      type: linkedCard?.type || 'hero',
+      imageUrl:
+        linkedCard?.characterImageUrl ||
+        linkedCard?.imageUrl ||
+        linkedCard?.characterFrontImageUrl ||
+        null,
+      name: hero.nameZhHant || hero.name,
+      nameZhHant: hero.nameZhHant || hero.name,
+      nameEn: hero.nameEn || hero.name,
+      nameJa: hero.nameJa || hero.name,
+      descriptionZhHant:
+        hero.bonusSummaryZhHant || `以「${hero.nameZhHant || hero.name}」作為這副牌組的角色。`,
+      descriptionEn:
+        hero.bonusSummaryEn || `Use ${hero.nameEn || hero.name} as this deck character.`,
+      descriptionJa:
+        hero.bonusSummaryJa || `「${hero.nameJa || hero.name}」をこのデッキのキャラクターにします。`
+    };
+  });
 }
 
 export function unlockedTiersForAge(age) {
@@ -158,11 +125,11 @@ export function cardLockState(card, age) {
 }
 
 function startOptionsFromAchievements(achievements = {}) {
-  const options = ['ordinary_child'];
-  if (achievements.firstWin) options.push('balanced_start');
-  if (achievements.age8) options.push('unit_focus');
-  if (achievements.age16) options.push('worker_focus');
-  if (achievements.rebirth1) options.push('second_life_bonus');
+  const options = [DEFAULT_PROGRESSION_HERO_ID];
+  if (achievements.firstWin) options.push('rich_heir');
+  if (achievements.age8) options.push('low_income_household');
+  if (achievements.age16) options.push('part_time_worker');
+  if (achievements.rebirth1) options.push('ordinary_person');
   return [...new Set(options)];
 }
 
@@ -183,7 +150,7 @@ function serializeProgressionRow(row) {
   return {
     deckId: Number(row.deck_id),
     userId: Number(row.user_id),
-    characterId: normalizeCharacterId(row.character_id),
+    heroId: normalizeProgressionHeroId(row.character_id),
     age,
     health: Math.round(clamp(row.health, 0, MAX_HEALTH)),
     rebirthCount: Math.max(0, Math.floor(Number(row.rebirth_count || 0))),
@@ -235,14 +202,16 @@ async function applyPassiveHealthRegen(env, row, now = new Date()) {
   };
 }
 
-export async function ensureDeckCharacter(
+export async function ensureDeckProgressionHero(
   env,
   userId,
   deckId,
-  characterId = DEFAULT_CHARACTER_ID,
-  characterOptions = null
+  heroId = DEFAULT_PROGRESSION_HERO_ID,
+  heroOptions = null
 ) {
-  const normalizedCharacter = resolveCharacterId(characterId, characterOptions);
+  const normalizedHeroId = normalizeProgressionHeroId(
+    resolveProgressionHeroId(heroId, heroOptions)
+  );
   let row = await deckCharacterRow(env, userId, deckId);
   if (!row) {
     await env.DB.prepare(
@@ -251,47 +220,49 @@ export async function ensureDeckCharacter(
         talent_history_json, achievements_json, last_health_regen_at
       ) VALUES (?, ?, ?, 0, ?, 0, '{}', '{}', CURRENT_TIMESTAMP)`
     )
-      .bind(deckId, userId, normalizedCharacter, MAX_HEALTH)
+      .bind(deckId, userId, normalizedHeroId, MAX_HEALTH)
       .run();
     row = await deckCharacterRow(env, userId, deckId);
   }
   return serializeProgressionRow(await applyPassiveHealthRegen(env, row));
 }
 
-export async function selectDeckCharacter(
+export async function selectDeckProgressionHero(
   env,
   userId,
   deckId,
-  characterId,
-  characterOptions = []
+  heroId,
+  heroOptions = []
 ) {
   const existing = await deckCharacterRow(env, userId, deckId);
   if (existing && (Number(existing.age || 0) > 0 || Number(existing.rebirth_count || 0) > 0)) {
     throw new Error('Initial character can only be changed before progression starts');
   }
-  const normalizedCharacter = resolveCharacterId(characterId, characterOptions);
-  if (normalizedCharacter !== normalizeCharacterId(characterId)) {
-    throw new Error('Unknown deck character');
+  const normalizedHeroId = normalizeProgressionHeroId(
+    resolveProgressionHeroId(heroId, heroOptions)
+  );
+  if (normalizedHeroId !== normalizeProgressionHeroId(heroId)) {
+    throw new Error('Unknown deck hero');
   }
-  await ensureDeckCharacter(env, userId, deckId, normalizedCharacter, characterOptions);
+  await ensureDeckProgressionHero(env, userId, deckId, normalizedHeroId, heroOptions);
   await env.DB.prepare(
     `UPDATE user_deck_characters
      SET character_id = ?, updated_at = CURRENT_TIMESTAMP
      WHERE user_id = ? AND deck_id = ?`
   )
-    .bind(normalizedCharacter, userId, deckId)
+    .bind(normalizedHeroId, userId, deckId)
     .run();
-  return getDeckCharacter(env, userId, deckId);
+  return getDeckProgressionHero(env, userId, deckId);
 }
 
-export async function getDeckCharacter(env, userId, deckId) {
-  return ensureDeckCharacter(env, userId, deckId);
+export async function getDeckProgressionHero(env, userId, deckId) {
+  return ensureDeckProgressionHero(env, userId, deckId);
 }
 
-export async function listDeckCharactersForUser(env, userId) {
+export async function listDeckProgressionForUser(env, userId) {
   const rows = await env.DB.prepare(
     `SELECT d.id AS deck_id, d.user_id AS user_id,
-            COALESCE(c.character_id, 'ordinary_child') AS character_id,
+            COALESCE(c.character_id, ?) AS character_id,
             COALESCE(c.age, 0) AS age,
             COALESCE(c.health, ?) AS health,
             COALESCE(c.rebirth_count, 0) AS rebirth_count,
@@ -306,7 +277,7 @@ export async function listDeckCharactersForUser(env, userId) {
      WHERE d.user_id = ?
      ORDER BY d.slot ASC, d.id ASC`
   )
-    .bind(MAX_HEALTH, userId)
+    .bind(DEFAULT_PROGRESSION_HERO_ID, MAX_HEALTH, userId)
     .all();
   return (rows.results || []).map(serializeProgressionRow);
 }
@@ -403,11 +374,11 @@ export async function applyMatchProgression(env, { room, winnerSide, reason }) {
       maxHp
     };
 
-    const current = await ensureDeckCharacter(
+    const current = await ensureDeckProgressionHero(
       env,
       Number(player.userId),
       Number(player.deckId),
-      player.characterId
+      player.heroId
     );
     const ageDelta = ageGainForResult(result);
     const healthLoss = healthLossForResult(result);
@@ -479,7 +450,7 @@ export async function applyMatchProgression(env, { room, winnerSide, reason }) {
       )
       .run();
 
-    results.push(await getDeckCharacter(env, Number(player.userId), Number(player.deckId)));
+    results.push(await getDeckProgressionHero(env, Number(player.userId), Number(player.deckId)));
   }
 
   return results;

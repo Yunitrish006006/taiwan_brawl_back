@@ -1,7 +1,8 @@
 import { normalizeSimulationMode } from './royale_battle_rules.js';
 import {
   listHeroDefinitions,
-  normalizeHeroId
+  normalizeHeroId,
+  registerUnitHeroDefinitions
 } from './royale_heroes.js';
 import { normalizeBotController } from './royale_llm_bot.js';
 import {
@@ -11,9 +12,9 @@ import {
   saveDeckForUser
 } from './royale_repository.js';
 import {
-  listCharacterArchetypes,
-  listDeckCharactersForUser,
-  selectDeckCharacter
+  listDeckProgressionForUser,
+  listProgressionHeroOptions,
+  selectDeckProgressionHero
 } from './royale_progression.js';
 import { matchRoomRoute } from './route_patterns.js';
 import { handleSendRoomInvite } from './friends_api.js';
@@ -31,18 +32,20 @@ async function handleListCards(request, env) {
   return jsonResponse({ ok: true, cards }, 200, request);
 }
 
-async function handleListHeroes(request) {
+async function handleListHeroes(request, env) {
+  const cards = await listCards(env);
+  registerUnitHeroDefinitions(cards);
   return jsonResponse({ ok: true, heroes: listHeroDefinitions() }, 200, request);
 }
 
 async function handleListProgression(request, env) {
   return withAuthenticatedUser(request, env, async (user) => {
     const cards = await listCards(env);
-    const progression = await listDeckCharactersForUser(env, user.id);
+    const progression = await listDeckProgressionForUser(env, user.id);
     return jsonResponse(
       {
         ok: true,
-        characterArchetypes: listCharacterArchetypes(cards),
+        heroOptions: listProgressionHeroOptions(cards),
         progression
       },
       200,
@@ -70,7 +73,7 @@ async function handleSaveDeck(request, env) {
   });
 }
 
-async function handleSelectDeckCharacter(request, env) {
+async function handleSelectDeckHero(request, env) {
   return withAuthenticatedUser(request, env, async (user) => {
     const body = await request.json().catch(() => null);
     if (!body) {
@@ -86,12 +89,12 @@ async function handleSelectDeckCharacter(request, env) {
     }
     try {
       const cards = await listCards(env);
-      const progression = await selectDeckCharacter(
+      const progression = await selectDeckProgressionHero(
         env,
         user.id,
         deckId,
-        body.characterId,
-        listCharacterArchetypes(cards)
+        body.heroId,
+        listProgressionHeroOptions(cards)
       );
       return jsonResponse({ ok: true, progression }, 200, request);
     } catch (error) {
@@ -121,9 +124,11 @@ async function handleCreateRoom(request, env) {
     if (error) {
       return error;
     }
+    const cards = await listCards(env);
+    registerUnitHeroDefinitions(cards);
     const vsBot = Boolean(body?.vsBot);
     const simulationMode = vsBot ? 'host' : normalizeSimulationMode(body?.simulationMode);
-    const heroId = normalizeHeroId(body?.heroId);
+    const heroId = normalizeHeroId(body?.heroId || deck.progression?.heroId);
     const botController = vsBot ? normalizeBotController(body?.botController) : 'heuristic';
 
     for (let attempt = 0; attempt < 5; attempt += 1) {
@@ -138,7 +143,6 @@ async function handleCreateRoom(request, env) {
             user: { id: user.id, name: user.name },
             deck,
             heroId,
-            characterId: deck.progression?.characterId,
             vsBot,
             botDeck: deck,
             botController,
@@ -167,11 +171,13 @@ async function handleJoinRoom(request, env, code) {
       return error;
     }
 
+    const cards = await listCards(env);
+    registerUnitHeroDefinitions(cards);
+
     return proxyRoomAction(request, env, code, '/internal/join', async () => ({
       user: { id: user.id, name: user.name },
       deck,
-      heroId: normalizeHeroId(body?.heroId),
-      characterId: deck.progression?.characterId
+      heroId: normalizeHeroId(body?.heroId || deck.progression?.heroId)
     }));
   });
 }
@@ -242,15 +248,15 @@ export function exactRoomsApiRouteHandler(request, env, url) {
     case 'GET /api/cards':
       return () => handleListCards(request, env);
     case 'GET /api/heroes':
-      return () => handleListHeroes(request);
+      return () => handleListHeroes(request, env);
     case 'GET /api/progression':
       return () => handleListProgression(request, env);
     case 'GET /api/decks':
       return () => handleListDecks(request, env);
     case 'POST /api/decks':
       return () => handleSaveDeck(request, env);
-    case 'POST /api/decks/character':
-      return () => handleSelectDeckCharacter(request, env);
+    case 'POST /api/decks/hero':
+      return () => handleSelectDeckHero(request, env);
     case 'POST /api/rooms':
       return () => handleCreateRoom(request, env);
     default:

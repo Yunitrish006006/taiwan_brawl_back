@@ -1,4 +1,6 @@
 import { clamp } from './royale_battle_rules.js';
+import { isUnitCard } from './royale_card_progression.js';
+import { starterCards } from './royale_cards.js';
 
 export const DEFAULT_HERO_ID = 'ordinary_person';
 const LEGACY_ENERGY_CAP = 10;
@@ -10,7 +12,7 @@ const DEFAULT_HERO_ATTACK = Object.freeze({
   damageType: 'physical'
 });
 
-const HERO_DEFINITIONS = Object.freeze([
+const BASE_HERO_DEFINITIONS = Object.freeze([
   {
     id: 'rich_heir',
     name: 'Rich Heir',
@@ -120,7 +122,150 @@ const HERO_DEFINITIONS = Object.freeze([
   }
 ]);
 
-const HERO_BY_ID = new Map(HERO_DEFINITIONS.map((hero) => [hero.id, hero]));
+const BASE_HERO_BY_ID = new Map(BASE_HERO_DEFINITIONS.map((hero) => [hero.id, hero]));
+const UNIT_HERO_BY_ID = new Map();
+const HERO_BY_ID = new Map(BASE_HERO_DEFINITIONS.map((hero) => [hero.id, hero]));
+
+function normalizedId(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function sanitizeUnitHeroAttack(card = {}) {
+  return {
+    damage: Math.max(12, Math.round(normalizedNumber(card.damage, DEFAULT_HERO_ATTACK.damage))),
+    range: Math.max(120, Math.round(normalizedNumber(card.attackRange, DEFAULT_HERO_ATTACK.range))),
+    attackSpeed: Math.max(0.35, normalizedNumber(card.attackSpeed, DEFAULT_HERO_ATTACK.attackSpeed)),
+    damageType: String(card.damageType || '').trim().toLowerCase() === 'spirit' ? 'spirit' : 'physical'
+  };
+}
+
+function deriveUnitHeroDefinition(card = {}) {
+  const id = normalizedId(card.id);
+  if (!id) {
+    return null;
+  }
+
+  const nameZhHant = String(card.nameZhHant || card.name || id);
+  const nameEn = String(card.nameEn || card.name || id);
+  const nameJa = String(card.nameJa || card.name || id);
+  const baseHp = Math.max(120, Math.round(normalizedNumber(card.hp, 0)));
+  const attack = sanitizeUnitHeroAttack(card);
+  const physicalHealthMax = Math.max(860, Math.round(baseHp * 1.75));
+  const spiritHealthMax = Math.max(420, Math.round(baseHp * 0.65));
+
+  return {
+    id,
+    sourceCardId: id,
+    sourceKind: 'unit_card',
+    name: nameZhHant,
+    nameZhHant,
+    nameEn,
+    nameJa,
+    bonusSummary: 'Use this unit as your hero profile',
+    bonusSummaryZhHant: '使用此單位作為你的角色模板',
+    bonusSummaryEn: 'Use this unit as your hero profile',
+    bonusSummaryJa: 'このユニットをヒーロープロファイルとして使用',
+    bonusKind: 'none',
+    bonusValue: 1,
+    physicalHealth: {
+      initial: physicalHealthMax,
+      max: physicalHealthMax,
+      regenPerSecond: 1.0
+    },
+    spiritHealth: {
+      initial: spiritHealthMax,
+      max: spiritHealthMax,
+      regenPerSecond: 0.8
+    },
+    physicalEnergy: { initial: 4.3, max: 5.2, regenPerSecond: 0.34 },
+    spiritEnergy: { initial: 4.0, max: 5.0, regenPerSecond: 0.3 },
+    money: { initial: 6, max: 34, regenPerSecond: 0 },
+    heroAttack: attack,
+    unitDamageMultiplier: 1,
+    jobMoneyMultiplier: 1,
+    jobPositiveWeightMultiplier: 1,
+    jobNegativeWeightMultiplier: 1,
+    mentalEventWeightMultiplier: 1,
+    mentalDamageMultiplier: 1,
+    mentalIllnessStageFloor: 1
+  };
+}
+
+function heroToUnitCard(hero = {}) {
+  const attack = hero.heroAttack || DEFAULT_HERO_ATTACK;
+  const id = normalizedId(hero.id);
+  if (!id) {
+    return null;
+  }
+
+  return {
+    id,
+    name: hero.nameZhHant || hero.name || id,
+    nameZhHant: hero.nameZhHant || hero.name || id,
+    nameEn: hero.nameEn || hero.name || id,
+    nameJa: hero.nameJa || hero.name || id,
+    energyCost: 5,
+    energyCostType: 'physical',
+    type: 'melee',
+    hp: Math.max(1, Math.round(normalizedNumber(hero.physicalHealth?.max) + normalizedNumber(hero.spiritHealth?.max))),
+    damage: Math.max(1, Math.round(normalizedNumber(attack.damage, DEFAULT_HERO_ATTACK.damage))),
+    attackRange: Math.max(40, Math.round(normalizedNumber(attack.range, DEFAULT_HERO_ATTACK.range) * 0.8)),
+    bodyRadius: 18,
+    moveSpeed: 150,
+    attackSpeed: Math.max(0.35, normalizedNumber(attack.attackSpeed, DEFAULT_HERO_ATTACK.attackSpeed)),
+    spawnCount: 1,
+    spellRadius: 0,
+    spellDamage: 0,
+    targetRule: 'ground',
+    effectKind: 'none',
+    effectValue: 0,
+    sourceHeroId: id,
+    sourceKind: 'hero'
+  };
+}
+
+function heroSnapshotsInDisplayOrder() {
+  const base = BASE_HERO_DEFINITIONS.map((hero) => buildHeroSnapshot(hero.id));
+  const dynamic = Array.from(UNIT_HERO_BY_ID.values())
+    .sort((a, b) => String(a.nameZhHant || a.name).localeCompare(String(b.nameZhHant || b.name), 'zh-Hant'))
+    .map((hero) => buildHeroSnapshot(hero.id));
+  return [...base, ...dynamic];
+}
+
+export function registerUnitHeroDefinitions(cards = []) {
+  if (!Array.isArray(cards)) {
+    return 0;
+  }
+
+  let added = 0;
+  for (const card of cards) {
+    if (!isUnitCard(card)) {
+      continue;
+    }
+    const cardId = normalizedId(card?.id);
+    if (!cardId) {
+      continue;
+    }
+    if (BASE_HERO_BY_ID.has(cardId)) {
+      continue;
+    }
+
+    const definition = deriveUnitHeroDefinition(card);
+    if (!definition) {
+      continue;
+    }
+
+    UNIT_HERO_BY_ID.set(cardId, definition);
+    HERO_BY_ID.set(cardId, definition);
+    added += 1;
+  }
+
+  return added;
+}
+
+export function listHeroUnitCards() {
+  return BASE_HERO_DEFINITIONS.map(heroToUnitCard).filter(Boolean);
+}
 
 function normalizedNumber(value, fallback = 0) {
   const parsed = Number(value);
@@ -218,11 +363,11 @@ function applyDamageToSingleHealthTrack(playerState, amount, field) {
 }
 
 export function listHeroDefinitions() {
-  return HERO_DEFINITIONS.map((hero) => buildHeroSnapshot(hero.id));
+  return heroSnapshotsInDisplayOrder();
 }
 
 export function normalizeHeroId(value) {
-  const candidate = String(value || '').trim().toLowerCase();
+  const candidate = normalizedId(value);
   return HERO_BY_ID.has(candidate) ? candidate : DEFAULT_HERO_ID;
 }
 
@@ -264,6 +409,8 @@ export function buildHeroSnapshot(value) {
     bonusSummaryJa: hero.bonusSummaryJa,
     bonusKind: hero.bonusKind,
     bonusValue: hero.bonusValue,
+    sourceCardId: hero.sourceCardId || null,
+    sourceKind: hero.sourceKind || 'hero',
     physicalHealth: { ...hero.physicalHealth },
     spiritHealth: { ...hero.spiritHealth },
     physicalEnergy: { ...hero.physicalEnergy },
@@ -428,3 +575,5 @@ export function heroBonusMultiplier(heroId, bonusKind) {
   const hero = heroDefinitionById(heroId);
   return hero.bonusKind === bonusKind ? hero.bonusValue : 1;
 }
+
+registerUnitHeroDefinitions(starterCards);

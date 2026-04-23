@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 
 import {
   cardLockState,
-  listCharacterArchetypes,
-  normalizeCharacterArchetype,
+  listProgressionHeroOptions,
+  normalizeProgressionHeroId,
   unlockedTiersForAge
 } from '../src/royale_progression.js';
 
@@ -31,18 +31,18 @@ test('cardLockState follows type and special id unlock ages', () => {
   assert.equal(cardLockState({ id: 'convenience_shift', type: 'job' }, 15).locked, true);
 });
 
-test('unknown character archetypes fall back safely', () => {
-  assert.equal(normalizeCharacterArchetype('street_smart'), 'street_smart');
-  assert.equal(normalizeCharacterArchetype('bad-id'), 'ordinary_child');
+test('unknown hero options fall back safely', () => {
+  assert.equal(normalizeProgressionHeroId('street_smart'), 'street_smart');
+  assert.equal(normalizeProgressionHeroId('bad-id'), 'bad-id');
 });
 
-test('unit cards are exposed as deck character options', () => {
-  const options = listCharacterArchetypes([
+test('unit cards are exposed as deck hero options', () => {
+  const options = listProgressionHeroOptions([
     { id: 'swordsman', type: 'melee', name: '劍士', nameEn: 'Swordsman' },
     { id: 'fireball', type: 'spell', name: '火球', nameEn: 'Fireball' },
     { id: 'betel_nut', type: 'equipment', name: '檳榔', nameEn: 'Betel Nut' }
   ]);
-  assert.ok(options.some((entry) => entry.id === 'ordinary_child'));
+  assert.ok(options.some((entry) => entry.id === 'ordinary_person'));
   assert.ok(options.some((entry) => entry.id === 'swordsman' && entry.kind === 'unit_card'));
   assert.equal(options.some((entry) => entry.id === 'fireball'), false);
   assert.equal(options.some((entry) => entry.id === 'betel_nut'), false);
