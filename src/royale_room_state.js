@@ -184,6 +184,7 @@ export function buildUnitSnapshot(unit) {
     maxHp: unit.maxHp,
     attackRange: Math.round(displayAttackReach(unit)),
     bodyRadius: Math.round(unit.bodyRadius ?? 0),
+    collisionBehavior: String(unit.collisionBehavior || 'hold'),
     degenerationPerSecond: Number(unit.degenerationPerSecond || 0),
     effects: unit.effects ?? [],
     statusEffects: (unit.statusEffects ?? [])
@@ -334,6 +335,7 @@ function normalizeBattleUnitState(unit = {}) {
     damage: Number(unit.damage || 0),
     attackRange: Number(unit.attackRange || 0),
     bodyRadius: Number(unit.bodyRadius || bodyRadiusForUnitType(unit.type)),
+    collisionBehavior: String(unit.collisionBehavior || 'hold'),
     moveSpeed: Number(unit.moveSpeed || 0),
     attackSpeed: Number(unit.attackSpeed || 1),
     degenerationPerSecond: Number(unit.degenerationPerSecond || 0),

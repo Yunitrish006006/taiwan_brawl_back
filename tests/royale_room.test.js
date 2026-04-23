@@ -138,3 +138,56 @@ test('host bot rooms can start after the human player is ready', async () => {
   assert.equal(room.room.status, 'battle');
   assert.ok(room.room.battle);
 });
+
+test('handlePlayCombo spreads multiple unit cards across distinct lateral lanes', async () => {
+  const state = createStateStub();
+  const room = new RoyaleRoom(state, {});
+  await room.initialized;
+
+  await room.handleCreate(
+    new Request('https://royale-room/internal/create', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        code: 'LANE12',
+        user: { id: 1, name: 'Left Player' },
+        deck: sampleDeck(),
+        heroId: 'low_income_household',
+        vsBot: false,
+        simulationMode: 'server'
+      })
+    })
+  );
+  await room.handleJoin(
+    new Request('https://royale-room/internal/join', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        user: { id: 2, name: 'Right Player' },
+        deck: sampleDeck(),
+        heroId: 'low_income_household'
+      })
+    })
+  );
+
+  room.room.players.left.connected = true;
+  room.room.players.right.connected = true;
+  await room.markPlayerReady(1);
+  await room.markPlayerReady(2);
+  assert.equal(room.room.status, 'battle');
+
+  await room.handlePlayCombo(1, {
+    cardIds: ['knight', 'archer', 'guardian'],
+    dropX: 0.5,
+    dropY: 0.75
+  });
+
+  const alliedUnits = room.room.battle.units.filter((unit) => unit.side === 'left');
+  assert.equal(alliedUnits.length, 3);
+  const lateralPositions = alliedUnits
+    .map((unit) => unit.lateralPosition)
+    .sort((a, b) => a - b);
+  assert.ok(lateralPositions[0] < lateralPositions[1]);
+  assert.ok(lateralPositions[1] < lateralPositions[2]);
+  room.stopTicking();
+});

@@ -1,7 +1,9 @@
 import {
   defaultDeckCardIds,
   normalizeCardDefinition,
+  normalizeCollisionBehavior,
   normalizeEnergyCostType,
+  inferCardCollisionBehavior,
   starterCards
 } from './royale_cards.js';
 import { cardLockState } from './royale_progression.js';
@@ -18,16 +20,18 @@ const CARD_CHARACTER_ANIMATION_FALLBACK = 'idle';
 const MAX_CHARACTER_ASSETS_PER_CARD = 80;
 const CARD_SELECT_COLUMNS = `SELECT id, name, elixir_cost, energy_cost, energy_cost_type, type, hp, damage, attack_range, move_speed,
         attack_speed, spawn_count, spell_radius, spell_damage, target_rule,
-        effect_kind, effect_value, body_radius, name_zh_hant, name_en, name_ja,
-        name_i18n, image_version, char_image_version, char_image_back_version,
+        effect_kind, effect_value, body_radius, collision_behavior,
+        name_zh_hant, name_en, name_ja, name_i18n, image_version,
+        char_image_version, char_image_back_version,
         char_image_left_version, char_image_right_version, bg_image_version
  FROM cards`;
 const CARD_WRITE_COLUMNS = `id, name, elixir_cost, energy_cost, energy_cost_type, type, hp, damage, attack_range, move_speed,
       attack_speed, spawn_count, spell_radius, spell_damage, target_rule,
-      effect_kind, effect_value, body_radius, name_zh_hant, name_en, name_ja,
+      effect_kind, effect_value, body_radius, collision_behavior,
+      name_zh_hant, name_en, name_ja,
       name_i18n`;
 const CARD_WRITE_PLACEHOLDERS =
-  '?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?';
+  '?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?';
 
 function normalizeLocaleKey(locale) {
   const normalized = String(locale ?? '').trim();
@@ -178,6 +182,10 @@ function serializeCard(row, characterAssets = []) {
     targetRule: row.target_rule,
     effectKind: row.effect_kind || 'none',
     effectValue: Number(row.effect_value || 0),
+    collisionBehavior: normalizeCollisionBehavior(
+      row.collision_behavior,
+      inferCardCollisionBehavior({ type: row.type })
+    ),
     imageVersion,
     imageUrl: characterFrontImageUrl,
     characterImageUrl: characterFrontImageUrl,
@@ -511,7 +519,8 @@ function normalizeCardPayload(payload) {
     spellDamage: Number(payload?.spellDamage ?? 0),
     targetRule,
     effectKind,
-    effectValue: Number(payload?.effectValue ?? 0)
+    effectValue: Number(payload?.effectValue ?? 0),
+    collisionBehavior: payload?.collisionBehavior
   });
 
   if (!card.id) {
@@ -596,6 +605,7 @@ function cardWriteBindings(card) {
     card.effectKind,
     card.effectValue,
     card.bodyRadius,
+    card.collisionBehavior,
     card.nameZhHant,
     card.nameEn,
     card.nameJa,
@@ -669,6 +679,7 @@ export async function upsertCard(env, payload) {
       effect_kind = excluded.effect_kind,
       effect_value = excluded.effect_value,
       body_radius = excluded.body_radius,
+      collision_behavior = excluded.collision_behavior,
       name_zh_hant = excluded.name_zh_hant,
       name_en = excluded.name_en,
       name_ja = excluded.name_ja,

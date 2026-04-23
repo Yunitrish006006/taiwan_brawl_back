@@ -23,6 +23,7 @@ export const GLOBAL_ATTACK_SPEED_MULTIPLIER = 1.18;
 export const FIELD_ASPECT_RATIO = 0.62;
 export const TOWER_BODY_RADIUS = 30;
 export const UNIT_COLLISION_GAP = 6;
+export const UNIT_FORMATION_BIAS_LIMIT = 90;
 
 // Status effect constants
 export const BRUISE_DAMAGE_PER_SECOND = 20;

@@ -23,6 +23,22 @@ export function inferCardEnergyCostType(card = {}) {
   return normalizedType === 'spell' ? 'spirit' : 'physical';
 }
 
+export function inferCardCollisionBehavior(card = {}) {
+  const normalizedType = String(card.type || '').trim().toLowerCase();
+  return normalizedType === 'swarm' ? 'reroute' : 'hold';
+}
+
+export function normalizeCollisionBehavior(value, fallback = 'hold') {
+  const candidate = String(value ?? '').trim().toLowerCase();
+  if (candidate === 'reroute') {
+    return 'reroute';
+  }
+  if (candidate === 'hold') {
+    return 'hold';
+  }
+  return fallback === 'reroute' ? 'reroute' : 'hold';
+}
+
 export function normalizeCardDefinition(card = {}) {
   const energyCost = Number(card.energyCost ?? card.elixirCost ?? 0);
   const normalizedType = String(card.type || '').trim().toLowerCase();
@@ -33,11 +49,16 @@ export function normalizeCardDefinition(card = {}) {
           card.energyCostType,
           inferCardEnergyCostType(card)
         );
+  const collisionBehavior = normalizeCollisionBehavior(
+    card.collisionBehavior,
+    inferCardCollisionBehavior(card)
+  );
 
   return {
     ...card,
     energyCost,
-    energyCostType
+    energyCostType,
+    collisionBehavior
   };
 }
 

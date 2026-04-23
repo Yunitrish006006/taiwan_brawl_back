@@ -1,9 +1,13 @@
 import { recordMatchHistory } from './royale_repository.js';
 import {
+  UNIT_COLLISION_GAP,
+  bodyRadiusForUnitType,
   DISCONNECT_GRACE_MS,
   PERSIST_INTERVAL_MS,
   TICK_MS,
   clamp,
+  lateralOffsetForWorldDistance,
+  minimumBodyContactDistance,
   normalizeDropPoint,
   normalizeSimulationMode,
   randomBotThinkMs
@@ -58,6 +62,24 @@ function json(data, status = 200) {
     status,
     headers: { 'Content-Type': 'application/json' }
   });
+}
+
+function cardBodyRadius(card) {
+  return Math.max(0, Number(card.bodyRadius || bodyRadiusForUnitType(card.type)));
+}
+
+function comboUnitOffsets(cards) {
+  if (cards.length <= 1) {
+    return cards.map(() => 0);
+  }
+  const maxBodyRadius = cards.reduce(
+    (max, card) => Math.max(max, cardBodyRadius(card)),
+    0
+  );
+  const spacing = lateralOffsetForWorldDistance(
+    minimumBodyContactDistance(maxBodyRadius, maxBodyRadius, UNIT_COLLISION_GAP)
+  );
+  return cards.map((_, index) => (index - (cards.length - 1) / 2) * spacing);
 }
 
 export class RoyaleRoom {
@@ -765,6 +787,8 @@ export class RoyaleRoom {
       battleState: this.room.battle,
       side: player.side
     });
+    const comboOffsets = comboUnitOffsets(unitCards);
+    let comboUnitCursor = 0;
 
     for (const card of comboCards) {
       if (card.energyCostType === 'money') {
@@ -788,7 +812,13 @@ export class RoyaleRoom {
       } else if (isJobCard(card)) {
         resolveJobCardEffect(this.room, player.side, card);
       } else if (card.type !== 'equipment') {
-        this.spawnUnits(player.side, card, dropPoint, comboEquipmentEffects);
+        this.spawnUnits(
+          player.side,
+          card,
+          dropPoint,
+          comboEquipmentEffects,
+          comboOffsets[comboUnitCursor++]
+        );
       }
     }
     if (selfEquipmentOnly) {
@@ -814,8 +844,15 @@ export class RoyaleRoom {
     resolveSpellEffect(this.room, side, card, dropPoint);
   }
 
-  spawnUnits(side, card, dropPoint, equipmentEffects = []) {
-    spawnBattleUnits(this.room, side, card, dropPoint, equipmentEffects);
+  spawnUnits(side, card, dropPoint, equipmentEffects = [], groupLateralOffset = 0) {
+    spawnBattleUnits(
+      this.room,
+      side,
+      card,
+      dropPoint,
+      equipmentEffects,
+      groupLateralOffset
+    );
   }
 
   getEnemySide(side) {
