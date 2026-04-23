@@ -10,6 +10,11 @@ import {
   towerHitPoints,
   winnerSideFromTowers
 } from '../src/royale_room_runtime.js';
+import {
+  distanceBetweenPoints,
+  minimumBodyContactDistance,
+  UNIT_COLLISION_GAP
+} from '../src/royale_battle_rules.js';
 
 test('regenerateBattleResources increases both players and clamps to max', () => {
   const room = {
@@ -83,6 +88,36 @@ test('resolveSpellEffect damages enemy units and tower in range', () => {
   assert.equal(room.battle.units[0].hp, 50);
   assert.equal(room.battle.units[1].hp, 100);
   assert.equal(room.battle.players.right.towerHp, 950);
+});
+
+test('resolveSpellEffect counts the target body radius at the edge of the spell', () => {
+  const room = {
+    battle: {
+      players: {
+        left: { towerHp: 1000 },
+        right: { towerHp: 1000 }
+      },
+      units: [
+        {
+          side: 'right',
+          type: 'melee',
+          progress: 924,
+          lateralPosition: 500,
+          hp: 100,
+          bodyRadius: 18
+        }
+      ]
+    }
+  };
+
+  resolveSpellEffect(
+    room,
+    'left',
+    { spellRadius: 10, spellDamage: 40 },
+    { progress: 950, lateralPosition: 500 }
+  );
+
+  assert.equal(room.battle.units[0].hp, 60);
 });
 
 test('health tracks are independent and either zero track defeats the player', () => {
@@ -213,6 +248,19 @@ test('spawnBattleUnits creates localized units with effects and spacing', () => 
   assert.equal(room.battle.units[0].effects[0], 'Boots');
   assert.equal(room.battle.units[0].damage, 35);
   assert.notEqual(room.battle.units[0].lateralPosition, room.battle.units[1].lateralPosition);
+  assert.ok(
+    distanceBetweenPoints(
+      room.battle.units[0].progress,
+      room.battle.units[0].lateralPosition,
+      room.battle.units[1].progress,
+      room.battle.units[1].lateralPosition
+    ) >=
+      minimumBodyContactDistance(
+        room.battle.units[0].bodyRadius,
+        room.battle.units[1].bodyRadius,
+        UNIT_COLLISION_GAP
+      )
+  );
 });
 
 test('tickBattleUnits moves units and resolves attacks', () => {

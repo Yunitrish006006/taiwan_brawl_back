@@ -15,11 +15,16 @@ import {
   STUN_DURATION_MS,
   SLOW_DURATION_MS,
   SLOW_SPEED_FACTOR,
+  UNIT_COLLISION_GAP,
   bodyRadiusForUnitType,
   clamp,
   distanceBetweenPoints,
+  effectiveSpellReachToTower,
+  effectiveSpellReachToUnit,
   effectiveAttackReachToTower,
   effectiveAttackReachToUnit,
+  lateralOffsetForWorldDistance,
+  minimumBodyContactDistance,
   sanitizeLateralPosition,
   sideDirection
 } from './royale_battle_rules.js';
@@ -163,13 +168,14 @@ export function resolveSpellEffect(room, side, card, dropPoint) {
     if (unit.side === side) {
       continue;
     }
+    const spellReach = effectiveSpellReachToUnit(card.spellRadius, unit);
     if (
       distanceBetweenPoints(
         unit.progress,
         unit.lateralPosition,
         dropPoint.progress,
         dropPoint.lateralPosition
-      ) <= card.spellRadius
+      ) <= spellReach
     ) {
       unit.hp -= spellDamage;
     }
@@ -182,8 +188,7 @@ export function resolveSpellEffect(room, side, card, dropPoint) {
       CENTER_LATERAL,
       dropPoint.progress,
       dropPoint.lateralPosition
-    ) <=
-    card.spellRadius + 50
+    ) <= effectiveSpellReachToTower(card.spellRadius)
   ) {
     applyBattlePlayerDamage(enemyBattleState, spellDamage, 'spirit');
   }
@@ -197,9 +202,15 @@ export function spawnBattleUnits(
   equipmentEffects = []
 ) {
   const count = Math.max(1, card.spawnCount);
-  const spacing = count === 1 ? 0 : 30 / FIELD_ASPECT_RATIO;
   const stats = applyEquipmentEffects(card, equipmentEffects);
   const caster = room.players?.[side];
+  const bodyRadius = Number(card.bodyRadius || bodyRadiusForUnitType(card.type));
+  const spacing =
+    count === 1
+      ? 0
+      : lateralOffsetForWorldDistance(
+          minimumBodyContactDistance(bodyRadius, bodyRadius, UNIT_COLLISION_GAP)
+        );
   const unitHpMultiplier = heroBonusMultiplier(
     caster?.heroId,
     'unit_hp_multiplier'
@@ -255,7 +266,7 @@ export function spawnBattleUnits(
       maxHp: boostedHp,
       damage: boostedDamage,
       attackRange: Number(card.attackRange || 0),
-      bodyRadius: Number(card.bodyRadius ?? bodyRadiusForUnitType(card.type)),
+      bodyRadius,
       moveSpeed: stats.moveSpeed,
       attackSpeed:
         (card.attackSpeed || 1) *

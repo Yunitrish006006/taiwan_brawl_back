@@ -22,6 +22,7 @@ export const GLOBAL_MOVE_SPEED_MULTIPLIER = 0.58;
 export const GLOBAL_ATTACK_SPEED_MULTIPLIER = 1.18;
 export const FIELD_ASPECT_RATIO = 0.62;
 export const TOWER_BODY_RADIUS = 30;
+export const UNIT_COLLISION_GAP = 6;
 
 // Status effect constants
 export const BRUISE_DAMAGE_PER_SECOND = 20;
@@ -123,6 +124,22 @@ export function bodyRadiusForUnitType(type) {
 
 export function displayAttackReach(unit) {
   return Number(unit.attackRange || 0) + Number(unit.bodyRadius || bodyRadiusForUnitType(unit.type));
+}
+
+export function effectiveSpellReachToUnit(spellRadius, target) {
+  return Number(spellRadius || 0) + Number(target?.bodyRadius || bodyRadiusForUnitType(target?.type));
+}
+
+export function effectiveSpellReachToTower(spellRadius) {
+  return Number(spellRadius || 0) + TOWER_BODY_RADIUS;
+}
+
+export function minimumBodyContactDistance(bodyRadius, otherBodyRadius, gap = 0) {
+  return Number(bodyRadius || 0) + Number(otherBodyRadius || 0) + Number(gap || 0);
+}
+
+export function lateralOffsetForWorldDistance(worldDistance) {
+  return Number(worldDistance || 0) / FIELD_ASPECT_RATIO;
 }
 
 export function effectiveAttackReachToUnit(unit, target) {

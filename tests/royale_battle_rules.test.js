@@ -3,12 +3,18 @@ import assert from 'node:assert/strict';
 
 import {
   CENTER_LATERAL,
+  FIELD_ASPECT_RATIO,
   LATERAL_MAX,
   LATERAL_MIN,
+  UNIT_COLLISION_GAP,
   bodyRadiusForUnitType,
   distanceBetweenPoints,
   effectiveAttackReachToTower,
   effectiveAttackReachToUnit,
+  effectiveSpellReachToTower,
+  effectiveSpellReachToUnit,
+  lateralOffsetForWorldDistance,
+  minimumBodyContactDistance,
   normalizeDropPoint,
   normalizeSimulationMode,
   sanitizeLateralPosition
@@ -41,6 +47,13 @@ test('distance and attack reach calculations include body radius', () => {
   assert.equal(bodyRadiusForUnitType('swarm'), 14);
   assert.equal(effectiveAttackReachToUnit(unit, target), 142);
   assert.equal(effectiveAttackReachToTower(unit), 148);
+  assert.equal(effectiveSpellReachToUnit(80, target), 104);
+  assert.equal(effectiveSpellReachToTower(80), 110);
+  assert.equal(
+    minimumBodyContactDistance(unit.bodyRadius, target.bodyRadius, UNIT_COLLISION_GAP),
+    48
+  );
+  assert.equal(lateralOffsetForWorldDistance(31), 31 / FIELD_ASPECT_RATIO);
   assert.equal(distanceBetweenPoints(100, 200, 100, 200), 0);
   assert.ok(distanceBetweenPoints(100, 200, 200, 200) > 0);
 });
