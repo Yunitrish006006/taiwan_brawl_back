@@ -5,7 +5,8 @@ import {
   arenaCenterLateral,
   bodyRadiusForUnitType,
   displayAttackReach,
-  normalizeArenaConfig
+  normalizeArenaConfig,
+  randomArenaConfig
 } from './royale_battle_rules.js';
 import {
   buildHeroSnapshot,
@@ -47,11 +48,14 @@ function normalizeAnimationEvent(event) {
   return { animation, id };
 }
 
-export function createBattleState(playersBySide) {
+export function createBattleState(playersBySide, options = {}) {
+  const arena = options?.arena
+    ? normalizeArenaConfig(options.arena)
+    : randomArenaConfig(options?.random);
   return {
     timeRemainingMs: MATCH_DURATION_MS,
     startedAt: new Date().toISOString(),
-    arena: normalizeArenaConfig(DEFAULT_ARENA_CONFIG),
+    arena,
     units: [],
     events: [],
     nextUnitId: 1,

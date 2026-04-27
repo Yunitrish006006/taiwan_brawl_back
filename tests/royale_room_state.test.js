@@ -7,6 +7,10 @@ import {
   createBattleState,
   normalizeHostBattleState
 } from '../src/royale_room_state.js';
+import {
+  DEFAULT_ARENA_ID,
+  DOUBLE_BRIDGE_ARENA_ID
+} from '../src/royale_battle_rules.js';
 
 test('createBattleState seeds hand, queue, and bot think time', () => {
   const battle = createBattleState({
@@ -26,6 +30,28 @@ test('createBattleState seeds hand, queue, and bot think time', () => {
   assert.deepEqual(battle.players.right.hand, ['g', 'h', 'i', 'j']);
   assert.deepEqual(battle.players.right.queue, ['k', 'l']);
   assert.ok(battle.players.right.botThinkMs > 0);
+});
+
+test('createBattleState randomly selects an arena for new battles', () => {
+  const players = {
+    left: {
+      deckCardIds: ['a', 'b', 'c', 'd'],
+      isBot: false
+    },
+    right: {
+      deckCardIds: ['e', 'f', 'g', 'h'],
+      isBot: false
+    }
+  };
+
+  assert.equal(
+    createBattleState(players, { random: () => 0 }).arena.id,
+    DEFAULT_ARENA_ID
+  );
+  assert.equal(
+    createBattleState(players, { random: () => 0.99 }).arena.id,
+    DOUBLE_BRIDGE_ARENA_ID
+  );
 });
 
 test('build snapshots include battle state for host viewers', () => {

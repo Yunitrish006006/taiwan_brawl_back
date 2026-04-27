@@ -30,8 +30,13 @@ export const BRIDGE_MIN_PROGRESS = 430;
 export const BRIDGE_MAX_PROGRESS = 570;
 export const BRIDGE_MIN_LATERAL = 380;
 export const BRIDGE_MAX_LATERAL = 620;
+export const DOUBLE_BRIDGE_LEFT_MIN_LATERAL = 220;
+export const DOUBLE_BRIDGE_LEFT_MAX_LATERAL = 390;
+export const DOUBLE_BRIDGE_RIGHT_MIN_LATERAL = 610;
+export const DOUBLE_BRIDGE_RIGHT_MAX_LATERAL = 780;
 
 export const DEFAULT_ARENA_ID = 'classic_bridge';
+export const DOUBLE_BRIDGE_ARENA_ID = 'classic_double_bridge';
 export const DEFAULT_ARENA_CONFIG = {
   id: DEFAULT_ARENA_ID,
   name: 'Classic Bridge',
@@ -81,6 +86,38 @@ export const DEFAULT_ARENA_CONFIG = {
   ],
   obstacles: []
 };
+
+export const DOUBLE_BRIDGE_ARENA_CONFIG = {
+  ...DEFAULT_ARENA_CONFIG,
+  id: DOUBLE_BRIDGE_ARENA_ID,
+  name: 'Classic Double Bridge',
+  terrainGates: [
+    {
+      id: 'central_river_double_bridge',
+      kind: 'river',
+      progressMin: RIVER_MIN_PROGRESS,
+      progressMax: RIVER_MAX_PROGRESS,
+      bridgeMinProgress: BRIDGE_MIN_PROGRESS,
+      bridgeMaxProgress: BRIDGE_MAX_PROGRESS,
+      passableLateralRanges: [
+        {
+          min: DOUBLE_BRIDGE_LEFT_MIN_LATERAL,
+          max: DOUBLE_BRIDGE_LEFT_MAX_LATERAL
+        },
+        {
+          min: DOUBLE_BRIDGE_RIGHT_MIN_LATERAL,
+          max: DOUBLE_BRIDGE_RIGHT_MAX_LATERAL
+        }
+      ]
+    }
+  ],
+  obstacles: []
+};
+
+export const ARENA_CATALOG = [
+  DEFAULT_ARENA_CONFIG,
+  DOUBLE_BRIDGE_ARENA_CONFIG
+];
 
 // Status effect constants
 export const BRUISE_DAMAGE_PER_SECOND = 20;
@@ -303,6 +340,26 @@ export function normalizeArenaConfig(config = DEFAULT_ARENA_CONFIG) {
 
 export function arenaConfigForBattle(battle) {
   return normalizeArenaConfig(battle?.arena ?? DEFAULT_ARENA_CONFIG);
+}
+
+export function listArenaConfigs() {
+  return ARENA_CATALOG.map((arena) => normalizeArenaConfig(arena));
+}
+
+export function arenaConfigById(id) {
+  const normalizedId = String(id ?? '').trim();
+  return normalizeArenaConfig(
+    ARENA_CATALOG.find((arena) => arena.id === normalizedId) ??
+      DEFAULT_ARENA_CONFIG
+  );
+}
+
+export function randomArenaConfig(random = Math.random) {
+  const randomSource = typeof random === 'function' ? random : Math.random;
+  const roll = Number(randomSource());
+  const normalizedRoll = Number.isFinite(roll) ? clamp(roll, 0, 0.999999) : 0;
+  const index = Math.floor(normalizedRoll * ARENA_CATALOG.length);
+  return normalizeArenaConfig(ARENA_CATALOG[index] ?? DEFAULT_ARENA_CONFIG);
 }
 
 export function arenaCenterLateral(arena = DEFAULT_ARENA_CONFIG) {

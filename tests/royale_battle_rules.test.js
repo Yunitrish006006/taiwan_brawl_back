@@ -5,12 +5,17 @@ import {
   CENTER_LATERAL,
   BRIDGE_MAX_LATERAL,
   BRIDGE_MIN_LATERAL,
+  DEFAULT_ARENA_ID,
+  DOUBLE_BRIDGE_ARENA_ID,
+  DOUBLE_BRIDGE_LEFT_MAX_LATERAL,
+  DOUBLE_BRIDGE_RIGHT_MIN_LATERAL,
   FIELD_ASPECT_RATIO,
   LATERAL_MAX,
   LATERAL_MIN,
   RIVER_MAX_PROGRESS,
   RIVER_MIN_PROGRESS,
   UNIT_COLLISION_GAP,
+  arenaConfigById,
   bodyRadiusForUnitType,
   distanceBetweenPoints,
   effectiveAttackReachToTower,
@@ -18,10 +23,12 @@ import {
   effectiveSpellReachToTower,
   effectiveSpellReachToUnit,
   lateralOffsetForWorldDistance,
+  listArenaConfigs,
   minimumBodyContactDistance,
   normalizeArenaConfig,
   normalizeDropPoint,
   normalizeSimulationMode,
+  randomArenaConfig,
   sanitizeLateralPosition,
   sanitizeTerrainLateralForProgress,
   terrainGateLateralForProgress,
@@ -106,6 +113,38 @@ test('terrain helpers gate river crossings through the bridge', () => {
     BRIDGE_MIN_LATERAL
   );
   assert.equal(terrainNavigationLateralForMove(300, 430, 220), 220);
+});
+
+test('arena catalog supports random dual-bridge maps with separated bridge lanes', () => {
+  const arenaIds = listArenaConfigs().map((arena) => arena.id);
+  assert.ok(arenaIds.includes(DEFAULT_ARENA_ID));
+  assert.ok(arenaIds.includes(DOUBLE_BRIDGE_ARENA_ID));
+  assert.equal(randomArenaConfig(() => 0).id, DEFAULT_ARENA_ID);
+  assert.equal(randomArenaConfig(() => 0.99).id, DOUBLE_BRIDGE_ARENA_ID);
+
+  const arena = arenaConfigById(DOUBLE_BRIDGE_ARENA_ID);
+  assert.equal(arena.terrainGates[0].passableLateralRanges.length, 2);
+  assert.equal(
+    sanitizeTerrainLateralForProgress(500, 500, arena),
+    DOUBLE_BRIDGE_LEFT_MAX_LATERAL
+  );
+  assert.equal(
+    terrainNavigationLateralForMove(300, 700, 500, arena),
+    DOUBLE_BRIDGE_LEFT_MAX_LATERAL
+  );
+  assert.equal(
+    sanitizeTerrainLateralForProgress(
+      500,
+      DOUBLE_BRIDGE_RIGHT_MIN_LATERAL + 20,
+      arena
+    ),
+    DOUBLE_BRIDGE_RIGHT_MIN_LATERAL + 20
+  );
+  assert.equal(
+    terrainLimitedProgressForMove(450, 470, 500, arena),
+    RIVER_MIN_PROGRESS
+  );
+  assert.equal(terrainLimitedProgressForMove(450, 470, 300, arena), 470);
 });
 
 test('arena helpers support custom size, gates, and rectangular obstacles', () => {
