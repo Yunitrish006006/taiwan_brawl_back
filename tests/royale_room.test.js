@@ -37,6 +37,26 @@ function sampleDeck() {
   };
 }
 
+test('enqueueMutation serializes asynchronous room mutations', async () => {
+  const state = createStateStub();
+  const room = new RoyaleRoom(state, {});
+  await room.initialized;
+  const order = [];
+
+  const first = room.enqueueMutation(async () => {
+    order.push('first:start');
+    await Promise.resolve();
+    order.push('first:end');
+  });
+  const second = room.enqueueMutation(async () => {
+    order.push('second');
+  });
+
+  await Promise.all([first, second]);
+
+  assert.deepEqual(order, ['first:start', 'first:end', 'second']);
+});
+
 test('handleCreate forces bot rooms into host simulation mode', async () => {
   const state = createStateStub();
   const room = new RoyaleRoom(state, {});

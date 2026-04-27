@@ -90,7 +90,27 @@ export class RoyaleRoom {
     this.sockets = new Map();
     this.tickHandle = null;
     this.lastPersistedAt = 0;
+    this.mutationQueue = Promise.resolve();
+    this.mutationDepth = 0;
     this.initialized = this.load();
+  }
+
+  async enqueueMutation(operation) {
+    if (this.mutationDepth > 0) {
+      return operation();
+    }
+
+    const run = async () => {
+      this.mutationDepth += 1;
+      try {
+        return await operation();
+      } finally {
+        this.mutationDepth -= 1;
+      }
+    };
+    const next = this.mutationQueue.then(run, run);
+    this.mutationQueue = next.catch(() => {});
+    return next;
   }
 
   async load() {
@@ -249,6 +269,10 @@ export class RoyaleRoom {
   }
 
   async startBattleIfReady() {
+    return this.enqueueMutation(() => this.startBattleIfReadyMutation());
+  }
+
+  async startBattleIfReadyMutation() {
     if (!this.canStartBattle()) {
       return false;
     }
@@ -267,6 +291,10 @@ export class RoyaleRoom {
   }
 
   async markPlayerReady(userId) {
+    return this.enqueueMutation(() => this.markPlayerReadyMutation(userId));
+  }
+
+  async markPlayerReadyMutation(userId) {
     const player = this.findPlayerByUserId(userId);
     if (!player) {
       return false;
@@ -335,6 +363,10 @@ export class RoyaleRoom {
   }
 
   async handleCreate(request) {
+    return this.enqueueMutation(() => this.handleCreateMutation(request));
+  }
+
+  async handleCreateMutation(request) {
     const payload = await request.json();
     if (this.room) {
       return json({ error: 'Room already exists' }, 409);
@@ -371,6 +403,10 @@ export class RoyaleRoom {
   }
 
   async handleJoin(request) {
+    return this.enqueueMutation(() => this.handleJoinMutation(request));
+  }
+
+  async handleJoinMutation(request) {
     const payload = await request.json();
     if (!this.room) {
       return json({ error: 'Room not found' }, 404);
@@ -391,6 +427,10 @@ export class RoyaleRoom {
   }
 
   async handleReady(request) {
+    return this.enqueueMutation(() => this.handleReadyMutation(request));
+  }
+
+  async handleReadyMutation(request) {
     const payload = await request.json();
     const player = this.findPlayerByUserId(payload.userId);
     if (!player) {
@@ -406,6 +446,10 @@ export class RoyaleRoom {
   }
 
   async handleRematch(request) {
+    return this.enqueueMutation(() => this.handleRematchMutation(request));
+  }
+
+  async handleRematchMutation(request) {
     const payload = await request.json();
     const player = this.findPlayerByUserId(payload.userId);
     if (!player) {
@@ -433,6 +477,10 @@ export class RoyaleRoom {
   }
 
   async handleHostFinish(request) {
+    return this.enqueueMutation(() => this.handleHostFinishMutation(request));
+  }
+
+  async handleHostFinishMutation(request) {
     const payload = await request.json();
     const player = this.findPlayerByUserId(payload.userId);
     if (!player) {
@@ -596,6 +644,10 @@ export class RoyaleRoom {
   }
 
   async handleHostState(userId, state) {
+    return this.enqueueMutation(() => this.handleHostStateMutation(userId, state));
+  }
+
+  async handleHostStateMutation(userId, state) {
     if (!this.isBattleRunning()) {
       return;
     }
@@ -621,6 +673,10 @@ export class RoyaleRoom {
   }
 
   handleSocketClose(userId, socket) {
+    void this.enqueueMutation(() => this.handleSocketCloseMutation(userId, socket));
+  }
+
+  handleSocketCloseMutation(userId, socket) {
     const activeSocket = this.socketForUser(userId);
     if (activeSocket && activeSocket !== socket) {
       return;
@@ -708,6 +764,10 @@ export class RoyaleRoom {
   }
 
   async handlePlayCombo(userId, payload) {
+    return this.enqueueMutation(() => this.handlePlayComboMutation(userId, payload));
+  }
+
+  async handlePlayComboMutation(userId, payload) {
     if (!this.room?.battle || this.room.status !== 'battle') {
       return;
     }
@@ -868,6 +928,10 @@ export class RoyaleRoom {
   }
 
   async tick() {
+    return this.enqueueMutation(() => this.tickMutation());
+  }
+
+  async tickMutation() {
     if (!this.room?.battle || this.room.status !== 'battle') {
       this.stopTicking();
       return;

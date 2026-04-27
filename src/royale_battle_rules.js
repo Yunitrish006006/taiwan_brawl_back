@@ -24,6 +24,12 @@ export const FIELD_ASPECT_RATIO = 0.62;
 export const TOWER_BODY_RADIUS = 30;
 export const UNIT_COLLISION_GAP = 6;
 export const UNIT_FORMATION_BIAS_LIMIT = 90;
+export const RIVER_MIN_PROGRESS = LEFT_DEPLOY_MAX + 35;
+export const RIVER_MAX_PROGRESS = RIGHT_DEPLOY_MIN - 35;
+export const BRIDGE_MIN_PROGRESS = 430;
+export const BRIDGE_MAX_PROGRESS = 570;
+export const BRIDGE_MIN_LATERAL = 380;
+export const BRIDGE_MAX_LATERAL = 620;
 
 // Status effect constants
 export const BRUISE_DAMAGE_PER_SECOND = 20;
@@ -75,6 +81,77 @@ export function sanitizeLateralPosition(value) {
     return CENTER_LATERAL;
   }
   return clamp(value, LATERAL_MIN, LATERAL_MAX);
+}
+
+export function isRiverProgress(progress) {
+  const normalizedProgress = Number(progress);
+  return (
+    Number.isFinite(normalizedProgress) &&
+    normalizedProgress > RIVER_MIN_PROGRESS &&
+    normalizedProgress < RIVER_MAX_PROGRESS
+  );
+}
+
+export function isBridgeLateral(lateral) {
+  const normalizedLateral = sanitizeLateralPosition(lateral);
+  return (
+    normalizedLateral >= BRIDGE_MIN_LATERAL &&
+    normalizedLateral <= BRIDGE_MAX_LATERAL
+  );
+}
+
+export function pathIntersectsRiver(startProgress, endProgress) {
+  const start = Number(startProgress);
+  const end = Number(endProgress);
+  if (!Number.isFinite(start) || !Number.isFinite(end)) {
+    return false;
+  }
+
+  const minProgress = Math.min(start, end);
+  const maxProgress = Math.max(start, end);
+  return minProgress < RIVER_MAX_PROGRESS && maxProgress > RIVER_MIN_PROGRESS;
+}
+
+export function terrainNavigationLateralForMove(
+  startProgress,
+  targetProgress,
+  desiredLateral
+) {
+  const sanitizedLateral = sanitizeLateralPosition(desiredLateral);
+  if (
+    !pathIntersectsRiver(startProgress, targetProgress) ||
+    isBridgeLateral(sanitizedLateral)
+  ) {
+    return sanitizedLateral;
+  }
+
+  return sanitizedLateral < BRIDGE_MIN_LATERAL
+    ? BRIDGE_MIN_LATERAL
+    : BRIDGE_MAX_LATERAL;
+}
+
+export function terrainLimitedProgressForMove(
+  startProgress,
+  desiredProgress,
+  desiredLateral
+) {
+  const start = Number(startProgress);
+  const desired = Number(desiredProgress);
+  if (!Number.isFinite(start) || !Number.isFinite(desired)) {
+    return Number.isFinite(start) ? start : MIN_FIELD_PROGRESS;
+  }
+  if (!pathIntersectsRiver(start, desired) || isBridgeLateral(desiredLateral)) {
+    return desired;
+  }
+
+  if (start <= RIVER_MIN_PROGRESS && desired > RIVER_MIN_PROGRESS) {
+    return RIVER_MIN_PROGRESS;
+  }
+  if (start >= RIVER_MAX_PROGRESS && desired < RIVER_MAX_PROGRESS) {
+    return RIVER_MAX_PROGRESS;
+  }
+
+  return desired;
 }
 
 export function toWorldProgress(side, viewY) {
@@ -141,6 +218,18 @@ export function minimumBodyContactDistance(bodyRadius, otherBodyRadius, gap = 0)
 
 export function lateralOffsetForWorldDistance(worldDistance) {
   return Number(worldDistance || 0) / FIELD_ASPECT_RATIO;
+}
+
+export function terrainGateLateralForProgress(progress) {
+  if (!isRiverProgress(progress)) {
+    return [LATERAL_MIN, LATERAL_MAX];
+  }
+  return [BRIDGE_MIN_LATERAL, BRIDGE_MAX_LATERAL];
+}
+
+export function sanitizeTerrainLateralForProgress(progress, lateral) {
+  const [minLateral, maxLateral] = terrainGateLateralForProgress(progress);
+  return clamp(sanitizeLateralPosition(lateral), minLateral, maxLateral);
 }
 
 export function effectiveAttackReachToUnit(unit, target) {

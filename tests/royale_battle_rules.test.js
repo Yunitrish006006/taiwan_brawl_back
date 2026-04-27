@@ -3,9 +3,13 @@ import assert from 'node:assert/strict';
 
 import {
   CENTER_LATERAL,
+  BRIDGE_MAX_LATERAL,
+  BRIDGE_MIN_LATERAL,
   FIELD_ASPECT_RATIO,
   LATERAL_MAX,
   LATERAL_MIN,
+  RIVER_MAX_PROGRESS,
+  RIVER_MIN_PROGRESS,
   UNIT_COLLISION_GAP,
   bodyRadiusForUnitType,
   distanceBetweenPoints,
@@ -17,7 +21,11 @@ import {
   minimumBodyContactDistance,
   normalizeDropPoint,
   normalizeSimulationMode,
-  sanitizeLateralPosition
+  sanitizeLateralPosition,
+  sanitizeTerrainLateralForProgress,
+  terrainGateLateralForProgress,
+  terrainLimitedProgressForMove,
+  terrainNavigationLateralForMove
 } from '../src/royale_battle_rules.js';
 
 test('normalizeDropPoint maps normalized viewport coordinates into world space', () => {
@@ -64,4 +72,37 @@ test('simulation mode normalization and lateral clamping stay bounded', () => {
   assert.equal(normalizeSimulationMode('weird'), 'server');
   assert.equal(sanitizeLateralPosition(-100), LATERAL_MIN);
   assert.equal(sanitizeLateralPosition(5000), LATERAL_MAX);
+});
+
+test('terrain helpers gate river crossings through the bridge', () => {
+  assert.deepEqual(terrainGateLateralForProgress(500), [
+    BRIDGE_MIN_LATERAL,
+    BRIDGE_MAX_LATERAL
+  ]);
+  assert.deepEqual(terrainGateLateralForProgress(RIVER_MIN_PROGRESS), [
+    LATERAL_MIN,
+    LATERAL_MAX
+  ]);
+  assert.deepEqual(terrainGateLateralForProgress(RIVER_MAX_PROGRESS), [
+    LATERAL_MIN,
+    LATERAL_MAX
+  ]);
+  assert.equal(
+    sanitizeTerrainLateralForProgress(500, 120),
+    BRIDGE_MIN_LATERAL
+  );
+  assert.equal(
+    sanitizeTerrainLateralForProgress(RIVER_MIN_PROGRESS, 120),
+    120
+  );
+  assert.equal(
+    terrainLimitedProgressForMove(450, 470, 220),
+    RIVER_MIN_PROGRESS
+  );
+  assert.equal(terrainLimitedProgressForMove(450, 470, 390), 470);
+  assert.equal(
+    terrainNavigationLateralForMove(300, 700, 220),
+    BRIDGE_MIN_LATERAL
+  );
+  assert.equal(terrainNavigationLateralForMove(300, 430, 220), 220);
 });
