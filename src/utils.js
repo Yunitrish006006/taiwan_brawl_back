@@ -6,14 +6,45 @@ export const USER_SELECT_COLUMNS = `SELECT id, name, email, role, bio, avatar_ur
         llm_base_url, llm_model, llm_api_key
  FROM users`;
 
+const DEFAULT_ALLOWED_ORIGINS = new Set([
+  'https://taiwan-brawl-api.yunitrish0419.workers.dev'
+]);
+
+function requestOrigin(request) {
+  try {
+    return request?.url ? new URL(request.url).origin : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function isLocalDevOrigin(origin) {
+  return /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
+}
+
+function isAllowedCorsOrigin(origin, request) {
+  if (!origin) {
+    return true;
+  }
+  return (
+    origin === requestOrigin(request) ||
+    DEFAULT_ALLOWED_ORIGINS.has(origin) ||
+    isLocalDevOrigin(origin)
+  );
+}
+
 export function corsHeaders(request) {
-  const origin = request.headers.get('Origin');
-  return {
-    'Access-Control-Allow-Origin': origin ?? '*',
+  const origin = request?.headers?.get('Origin') ?? null;
+  const headers = {
     'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type',
-    'Access-Control-Allow-Credentials': 'true'
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization'
   };
+  if (isAllowedCorsOrigin(origin, request)) {
+    headers['Access-Control-Allow-Origin'] =
+      origin ?? requestOrigin(request) ?? [...DEFAULT_ALLOWED_ORIGINS][0];
+    headers['Access-Control-Allow-Credentials'] = 'true';
+  }
+  return headers;
 }
 
 export function jsonResponse(data, status = 200, request) {
@@ -31,7 +62,7 @@ export function generateSessionId() {
 }
 
 export function setCookie(name, value, maxAge = 3600) {
-  return `${name}=${value}; Path=/; Max-Age=${maxAge}; SameSite=None; Secure`;
+  return `${name}=${value}; Path=/; Max-Age=${maxAge}; SameSite=None; Secure; HttpOnly`;
 }
 
 export function buildUploadedAvatarUrl(userId, uploadedAvatarVersion) {

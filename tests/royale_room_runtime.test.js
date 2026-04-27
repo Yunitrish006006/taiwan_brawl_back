@@ -552,7 +552,7 @@ test('tickBattleUnits keeps hold movers planted behind allied blockers', () => {
           damage: 0,
           attackRange: 20,
           bodyRadius: 20,
-          moveSpeed: 100,
+          moveSpeed: 0,
           attackSpeed: 1,
           targetRule: 'ground',
           cooldown: 0
@@ -605,7 +605,7 @@ test('tickBattleUnits reroutes selected movers backward and outward', () => {
           damage: 0,
           attackRange: 20,
           bodyRadius: 20,
-          moveSpeed: 100,
+          moveSpeed: 0,
           attackSpeed: 1,
           targetRule: 'ground',
           cooldown: 0

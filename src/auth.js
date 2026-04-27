@@ -12,6 +12,15 @@ import {
 
 const SESSION_TTL_SECONDS = 30 * 24 * 3600;
 const SESSION_DURATION_MS = SESSION_TTL_SECONDS * 1000;
+const GOOGLE_JWKS_URL = 'https://www.googleapis.com/oauth2/v3/certs';
+const DEFAULT_GOOGLE_CLIENT_IDS = [
+  '310421071956-1ctfspu1f772ehkatigsgd2vq1ui4bks.apps.googleusercontent.com'
+];
+
+let googleJwkCache = {
+  keys: null,
+  expiresAt: 0
+};
 
 function authJsonResponse(request, body, setCookieValue) {
   return new Response(JSON.stringify(body), {
@@ -110,37 +119,158 @@ async function findUserByEmail(env, email) {
 }
 
 function decodeBase64Url(value) {
-  let normalized = value.replace(/-/g, '+').replace(/_/g, '/');
+  return new TextDecoder().decode(decodeBase64UrlBytes(value));
+}
+
+function decodeBase64UrlBytes(value) {
+  let normalized = String(value).replace(/-/g, '+').replace(/_/g, '/');
   while (normalized.length % 4) {
     normalized += '=';
   }
 
   const binary = atob(normalized);
-  const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
-  return new TextDecoder().decode(bytes);
+  return Uint8Array.from(binary, (char) => char.charCodeAt(0));
 }
 
-function decodeGoogleIdToken(idToken) {
-  const tokenParts = idToken.split('.');
+function parseGoogleIdToken(idToken) {
+  const tokenParts = String(idToken || '').split('.');
   if (tokenParts.length !== 3) {
     return null;
   }
 
   try {
+    const header = JSON.parse(decodeBase64Url(tokenParts[0]));
     const payload = JSON.parse(decodeBase64Url(tokenParts[1]));
-    if (!payload?.sub || !payload?.email || payload.email_verified === false) {
+    if (header?.alg !== 'RS256' || !header?.kid) {
       return null;
     }
-
     return {
-      sub: payload.sub,
-      email: payload.email,
-      name: payload.name,
-      picture: payload.picture || null
+      header,
+      payload,
+      signingInput: `${tokenParts[0]}.${tokenParts[1]}`,
+      signature: tokenParts[2]
     };
   } catch (_) {
     return null;
   }
+}
+
+function configuredGoogleClientIds(env, clientIds) {
+  const configured = [
+    ...(clientIds ?? []),
+    env?.GOOGLE_CLIENT_ID,
+    env?.GOOGLE_CLIENT_IDS
+  ]
+    .filter(Boolean)
+    .flatMap((value) => String(value).split(','))
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const values = configured.length > 0 ? configured : DEFAULT_GOOGLE_CLIENT_IDS;
+  return new Set(values);
+}
+
+function cacheMaxAgeMs(cacheControl) {
+  const match = String(cacheControl || '').match(/max-age=(\d+)/i);
+  if (!match) {
+    return 5 * 60 * 1000;
+  }
+  return Math.max(60, Number(match[1])) * 1000;
+}
+
+async function fetchGoogleJwks(fetcher, nowMs) {
+  if (googleJwkCache.keys && googleJwkCache.expiresAt > nowMs) {
+    return googleJwkCache.keys;
+  }
+
+  const response = await fetcher(GOOGLE_JWKS_URL);
+  if (!response.ok) {
+    throw new Error('Unable to fetch Google signing keys');
+  }
+
+  const body = await response.json();
+  const keys = Array.isArray(body?.keys) ? body.keys : [];
+  googleJwkCache = {
+    keys,
+    expiresAt: nowMs + cacheMaxAgeMs(response.headers.get('Cache-Control'))
+  };
+  return keys;
+}
+
+async function verifyTokenSignature(parsedToken, jwk) {
+  const publicKey = await crypto.subtle.importKey(
+    'jwk',
+    jwk,
+    { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
+    false,
+    ['verify']
+  );
+
+  return crypto.subtle.verify(
+    'RSASSA-PKCS1-v1_5',
+    publicKey,
+    decodeBase64UrlBytes(parsedToken.signature),
+    new TextEncoder().encode(parsedToken.signingInput)
+  );
+}
+
+function validateGooglePayload(payload, allowedClientIds, nowSeconds) {
+  if (!payload?.sub || !payload?.email || payload.email_verified !== true) {
+    return null;
+  }
+  if (!allowedClientIds.has(String(payload.aud || ''))) {
+    return null;
+  }
+  if (
+    !['accounts.google.com', 'https://accounts.google.com'].includes(payload.iss)
+  ) {
+    return null;
+  }
+  if (Number(payload.exp || 0) <= nowSeconds) {
+    return null;
+  }
+
+  return {
+    sub: String(payload.sub),
+    email: String(payload.email),
+    name: payload.name ? String(payload.name) : '',
+    picture: payload.picture ? String(payload.picture) : null
+  };
+}
+
+export async function verifyGoogleIdToken(idToken, env, options = {}) {
+  const parsedToken = parseGoogleIdToken(idToken);
+  if (!parsedToken) {
+    return null;
+  }
+
+  const nowMs = options.nowMs ?? Date.now();
+  const allowedClientIds = configuredGoogleClientIds(env, options.clientIds);
+  const googleUser = validateGooglePayload(
+    parsedToken.payload,
+    allowedClientIds,
+    Math.floor(nowMs / 1000)
+  );
+  if (!googleUser) {
+    return null;
+  }
+
+  try {
+    const keys = await fetchGoogleJwks(options.fetcher ?? fetch, nowMs);
+    const key = keys.find((entry) => entry.kid === parsedToken.header.kid);
+    if (!key || !(await verifyTokenSignature(parsedToken, key))) {
+      return null;
+    }
+    return googleUser;
+  } catch (_) {
+    return null;
+  }
+}
+
+export function __resetGoogleJwkCacheForTests() {
+  googleJwkCache = {
+    keys: null,
+    expiresAt: 0
+  };
 }
 
 export async function handleGoogleLogin(request, env) {
@@ -149,7 +279,7 @@ export async function handleGoogleLogin(request, env) {
     return jsonResponse({ error: 'Missing id_token' }, 400, request);
   }
 
-  const googleUser = decodeGoogleIdToken(body.id_token);
+  const googleUser = await verifyGoogleIdToken(body.id_token, env);
   if (!googleUser) {
     return jsonResponse({ error: 'Invalid Google token' }, 401, request);
   }

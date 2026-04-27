@@ -297,7 +297,7 @@ function resolveUnitMovementCollision(room, unit, nextProgress, nextLateral, min
 
     // When units start exactly at body contact, allow tangent/outward movement.
     if (c <= 1e-6) {
-      if (c < -1e-6 || inwardDot < -1e-6) {
+      if (inwardDot < -1e-6) {
         bestT = 0;
       }
       continue;

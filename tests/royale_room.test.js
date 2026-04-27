@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { RoyaleRoom } from '../src/royale_room.js';
+import { starterCards } from '../src/royale_cards.js';
 
 function createStateStub() {
   const storageData = new Map();
@@ -19,19 +20,20 @@ function createStateStub() {
 }
 
 function sampleDeck() {
+  const cardsById = new Map(starterCards.map((card) => [card.id, card]));
   return {
     id: 1,
     name: 'Starter Deck',
     cards: [
-      { id: 'knight' },
-      { id: 'archer' },
-      { id: 'guardian' },
-      { id: 'fireball' },
-      { id: 'zap' },
-      { id: 'giant' },
-      { id: 'wolf_pack' },
-      { id: 'healer' }
-    ]
+      'knight',
+      'archer',
+      'guardian',
+      'fireball',
+      'zap',
+      'giant',
+      'wolf_pack',
+      'healer'
+    ].map((id) => ({ ...(cardsById.get(id) ?? { id }) }))
   };
 }
 
@@ -142,52 +144,57 @@ test('host bot rooms can start after the human player is ready', async () => {
 test('handlePlayCombo spreads multiple unit cards across distinct lateral lanes', async () => {
   const state = createStateStub();
   const room = new RoyaleRoom(state, {});
-  await room.initialized;
+  try {
+    await room.initialized;
 
-  await room.handleCreate(
-    new Request('https://royale-room/internal/create', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        code: 'LANE12',
-        user: { id: 1, name: 'Left Player' },
-        deck: sampleDeck(),
-        heroId: 'low_income_household',
-        vsBot: false,
-        simulationMode: 'server'
+    await room.handleCreate(
+      new Request('https://royale-room/internal/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          code: 'LANE12',
+          user: { id: 1, name: 'Left Player' },
+          deck: sampleDeck(),
+          heroId: 'low_income_household',
+          vsBot: false,
+          simulationMode: 'server'
+        })
       })
-    })
-  );
-  await room.handleJoin(
-    new Request('https://royale-room/internal/join', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        user: { id: 2, name: 'Right Player' },
-        deck: sampleDeck(),
-        heroId: 'low_income_household'
+    );
+    await room.handleJoin(
+      new Request('https://royale-room/internal/join', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user: { id: 2, name: 'Right Player' },
+          deck: sampleDeck(),
+          heroId: 'low_income_household'
+        })
       })
-    })
-  );
+    );
 
-  room.room.players.left.connected = true;
-  room.room.players.right.connected = true;
-  await room.markPlayerReady(1);
-  await room.markPlayerReady(2);
-  assert.equal(room.room.status, 'battle');
+    room.room.players.left.connected = true;
+    room.room.players.right.connected = true;
+    await room.markPlayerReady(1);
+    await room.markPlayerReady(2);
+    assert.equal(room.room.status, 'battle');
+    room.room.battle.players.left.physicalEnergy = 10;
+    room.room.battle.players.left.maxPhysicalEnergy = 10;
 
-  await room.handlePlayCombo(1, {
-    cardIds: ['knight', 'archer', 'guardian'],
-    dropX: 0.5,
-    dropY: 0.75
-  });
+    await room.handlePlayCombo(1, {
+      cardIds: ['knight', 'archer', 'guardian'],
+      dropX: 0.5,
+      dropY: 0.75
+    });
 
-  const alliedUnits = room.room.battle.units.filter((unit) => unit.side === 'left');
-  assert.equal(alliedUnits.length, 3);
-  const lateralPositions = alliedUnits
-    .map((unit) => unit.lateralPosition)
-    .sort((a, b) => a - b);
-  assert.ok(lateralPositions[0] < lateralPositions[1]);
-  assert.ok(lateralPositions[1] < lateralPositions[2]);
-  room.stopTicking();
+    const alliedUnits = room.room.battle.units.filter((unit) => unit.side === 'left');
+    assert.equal(alliedUnits.length, 3);
+    const lateralPositions = alliedUnits
+      .map((unit) => unit.lateralPosition)
+      .sort((a, b) => a - b);
+    assert.ok(lateralPositions[0] < lateralPositions[1]);
+    assert.ok(lateralPositions[1] < lateralPositions[2]);
+  } finally {
+    room.stopTicking();
+  }
 });
