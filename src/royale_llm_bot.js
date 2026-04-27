@@ -1,14 +1,14 @@
 import {
-  CENTER_LATERAL,
-  FIELD_ASPECT_RATIO,
-  LEFT_TOWER_X,
+  DEFAULT_ARENA_CONFIG,
   MAX_COMBO_CARDS,
-  RIGHT_TOWER_X,
-  WORLD_SCALE,
+  arenaCenterLateral,
+  arenaFieldAspectRatio,
   distanceBetweenPoints,
+  normalizeArenaConfig,
   sanitizeLanePosition,
   sanitizeLateralPosition,
-  sideDirection
+  sideDirection,
+  towerPointForSide
 } from './royale_battle_rules.js';
 
 export const DEFAULT_LLM_BOT_BASE_URL = 'https://api.openai.com/v1';
@@ -107,14 +107,14 @@ function normalizePlayerState(player = {}, side) {
   };
 }
 
-function normalizeUnit(unit = {}) {
+function normalizeUnit(unit = {}, arena = DEFAULT_ARENA_CONFIG) {
   return {
     id: String(unit.id || ''),
     cardId: String(unit.cardId || ''),
     side: unit.side === 'right' ? 'right' : 'left',
     type: String(unit.type || 'melee'),
     progress: metric(unit.progress),
-    lateralPosition: metric(unit.lateralPosition || CENTER_LATERAL),
+    lateralPosition: metric(unit.lateralPosition ?? arenaCenterLateral(arena)),
     hp: positiveInteger(unit.hp, 0),
     maxHp: positiveInteger(unit.maxHp, 0),
     damage: positiveInteger(unit.damage, 0),
@@ -200,15 +200,19 @@ export async function fetchUserLlmBotSettings(env, userId) {
 
 export function normalizeLlmBotDecisionState(payload = {}) {
   const playerSide = payload.playerSide === 'left' ? 'left' : 'right';
+  const arena = normalizeArenaConfig(payload.arena ?? DEFAULT_ARENA_CONFIG);
   const state = {
     roomCode: String(payload.roomCode || ''),
     playerSide,
     timeRemainingMs: positiveInteger(payload.timeRemainingMs, 0),
+    arena,
     players: {
       left: normalizePlayerState(payload.players?.left, 'left'),
       right: normalizePlayerState(payload.players?.right, 'right')
     },
-    units: Array.isArray(payload.units) ? payload.units.map(normalizeUnit) : [],
+    units: Array.isArray(payload.units)
+      ? payload.units.map((unit) => normalizeUnit(unit, arena))
+      : [],
     events: Array.isArray(payload.events) ? payload.events.map(normalizeEvent) : []
   };
   assertValidDecisionState(state);
@@ -252,37 +256,38 @@ function actionCost(cards) {
   );
 }
 
-function ownTowerProgress(side) {
-  return side === 'left' ? LEFT_TOWER_X : RIGHT_TOWER_X;
+function ownTowerProgress(side, arena) {
+  return towerPointForSide(side, arena).progress;
 }
 
-function averageLateralPosition(units) {
+function averageLateralPosition(units, arena) {
   if (!units.length) {
-    return CENTER_LATERAL;
+    return arenaCenterLateral(arena);
   }
   return units.reduce((sum, unit) => sum + unit.lateralPosition, 0) / units.length;
 }
 
-function distanceToOwnTower(side, progress) {
-  return Math.abs(progress - ownTowerProgress(side));
+function distanceToOwnTower(side, progress, arena) {
+  return Math.abs(progress - ownTowerProgress(side, arena));
 }
 
-function selectPriorityThreat(side, enemyUnits) {
+function selectPriorityThreat(side, enemyUnits, arena) {
   if (!enemyUnits.length) {
     return null;
   }
+  const normalizedArena = normalizeArenaConfig(arena);
 
   return enemyUnits
     .slice()
     .sort((a, b) => {
       const aScore =
-        (1000 - distanceToOwnTower(side, a.progress)) +
+        (normalizedArena.progressMax - distanceToOwnTower(side, a.progress, arena)) +
         Number(a.damage || 0) * 0.7 +
         Number(a.maxHp || a.hp || 0) * 0.08 +
         (a.targetRule === 'tower' ? 180 : 0) +
         (a.type === 'swarm' ? 70 : 0);
       const bScore =
-        (1000 - distanceToOwnTower(side, b.progress)) +
+        (normalizedArena.progressMax - distanceToOwnTower(side, b.progress, arena)) +
         Number(b.damage || 0) * 0.7 +
         Number(b.maxHp || b.hp || 0) * 0.08 +
         (b.targetRule === 'tower' ? 180 : 0) +
@@ -301,11 +306,11 @@ function selectAlliedFront(side, alliedUnits) {
     .sort((a, b) => b.progress * direction - a.progress * direction)[0];
 }
 
-function isUrgentThreat(side, threat) {
+function isUrgentThreat(side, threat, arena) {
   if (!threat) {
     return false;
   }
-  return distanceToOwnTower(side, threat.progress) < 260;
+  return distanceToOwnTower(side, threat.progress, arena) < 260;
 }
 
 function cardPowerScore(card) {
@@ -319,6 +324,7 @@ function cardPowerScore(card) {
 }
 
 function evaluateSpellTarget(state, side, spellCard) {
+  const arena = state.arena;
   const enemyUnits = state.units.filter((unit) => unit.side !== side && unit.hp > 0);
   if (!enemyUnits.length) {
     return null;
@@ -332,7 +338,8 @@ function evaluateSpellTarget(state, side, spellCard) {
           unit.progress,
           unit.lateralPosition,
           candidate.progress,
-          candidate.lateralPosition
+          candidate.lateralPosition,
+          arena
         ) <= Number(spellCard.spellRadius || 0)
     );
 
@@ -348,7 +355,7 @@ function evaluateSpellTarget(state, side, spellCard) {
       (unit) => Number(unit.hp || 0) <= Number(spellCard.spellDamage || 0)
     ).length;
     const minimumThreatDistance = Math.min(
-      ...hitUnits.map((unit) => distanceToOwnTower(side, unit.progress))
+      ...hitUnits.map((unit) => distanceToOwnTower(side, unit.progress, arena))
     );
     const score =
       totalDamage +
@@ -360,7 +367,7 @@ function evaluateSpellTarget(state, side, spellCard) {
       bestTarget = {
         score,
         progress: hitUnits.reduce((sum, unit) => sum + unit.progress, 0) / hitUnits.length,
-        lateralPosition: averageLateralPosition(hitUnits),
+        lateralPosition: averageLateralPosition(hitUnits, arena),
         hits: hitUnits.length,
         kills: killCount
       };
@@ -371,7 +378,7 @@ function evaluateSpellTarget(state, side, spellCard) {
 }
 
 function scorePrimaryCard(state, side, player, card, alliedFront, threat) {
-  const urgentThreat = isUrgentThreat(side, threat);
+  const urgentThreat = isUrgentThreat(side, threat, state.arena);
   const enemySide = side === 'left' ? 'right' : 'left';
   const ownTowerHp = Number(state.players[side]?.towerHp || 0);
   const enemyTowerHp = Number(state.players[enemySide]?.towerHp || 0);
@@ -461,33 +468,35 @@ function scoreEquipmentCard(primaryCard, equipmentCard) {
 }
 
 function buildBotDropPoint(state, side, primaryCard) {
+  const arena = state.arena;
   const enemyUnits = state.units.filter((unit) => unit.side !== side && unit.hp > 0);
   const alliedUnits = state.units.filter((unit) => unit.side === side && unit.hp > 0);
-  const threat = selectPriorityThreat(side, enemyUnits);
+  const threat = selectPriorityThreat(side, enemyUnits, arena);
   const alliedFront = selectAlliedFront(side, alliedUnits);
-  const defaultLateral = averageLateralPosition(enemyUnits);
+  const defaultLateral = averageLateralPosition(enemyUnits, arena);
 
   if (primaryCard.type === 'spell') {
     const spellTarget = evaluateSpellTarget(state, side, primaryCard);
     if (spellTarget) {
       return {
-        progress: sanitizeLanePosition(side, spellTarget.progress),
-        lateralPosition: sanitizeLateralPosition(spellTarget.lateralPosition)
+        progress: sanitizeLanePosition(side, spellTarget.progress, arena),
+        lateralPosition: sanitizeLateralPosition(spellTarget.lateralPosition, arena)
       };
     }
   }
 
+  const deployRange = side === 'left' ? arena.deploy.left : arena.deploy.right;
   let progress =
     primaryCard.targetRule === 'tower'
       ? side === 'left'
-        ? 360
-        : 640
+        ? deployRange.max - 60
+        : deployRange.min + 60
       : side === 'left'
-        ? 280
-        : 720;
+        ? deployRange.max - 140
+        : deployRange.min + 140;
   let lateralPosition = defaultLateral;
 
-  if (isUrgentThreat(side, threat)) {
+  if (isUrgentThreat(side, threat, arena)) {
     const defensiveOffset = Number(primaryCard.attackRange || 0) >= 200 ? 130 : 70;
     progress = threat.progress - sideDirection(side) * defensiveOffset;
     lateralPosition = threat.lateralPosition;
@@ -506,8 +515,8 @@ function buildBotDropPoint(state, side, primaryCard) {
   }
 
   return {
-    progress: sanitizeLanePosition(side, progress),
-    lateralPosition: sanitizeLateralPosition(lateralPosition)
+    progress: sanitizeLanePosition(side, progress, arena),
+    lateralPosition: sanitizeLateralPosition(lateralPosition, arena)
   };
 }
 
@@ -547,12 +556,16 @@ function actionLabel(cards) {
 }
 
 function serializeAction(state, side, cards, score) {
+  const arena = state.arena;
   const primaryCard = cards.find((card) => card.type !== 'equipment') ?? cards[0];
   const dropPoint = buildBotDropPoint(state, side, primaryCard);
-  const jitter = primaryCard.type === 'spell' ? 0 : 28 / FIELD_ASPECT_RATIO;
-  const lateralPosition = sanitizeLateralPosition(dropPoint.lateralPosition + jitter * 0.2);
-  const progress = sanitizeLanePosition(side, dropPoint.progress);
-  const dropY = side === 'left' ? WORLD_SCALE - progress : progress;
+  const jitter = primaryCard.type === 'spell' ? 0 : 28 / arenaFieldAspectRatio(arena);
+  const lateralPosition = sanitizeLateralPosition(
+    dropPoint.lateralPosition + jitter * 0.2,
+    arena
+  );
+  const progress = sanitizeLanePosition(side, dropPoint.progress, arena);
+  const dropY = side === 'left' ? arena.progressMax - progress : progress;
   const cost = actionCost(cards);
   const actionId = [
     'play',
@@ -648,13 +661,21 @@ function buildStateSummary(state) {
   };
 }
 
-function buildProtocolRules() {
+function buildProtocolRules(arena = DEFAULT_ARENA_CONFIG) {
+  const normalizedArena = normalizeArenaConfig(arena);
   return {
     specVersion: LLM_BOT_SPEC_VERSION,
     battlefield: {
-      worldScale: WORLD_SCALE,
-      leftTowerX: LEFT_TOWER_X,
-      rightTowerX: RIGHT_TOWER_X
+      width: normalizedArena.width,
+      height: normalizedArena.height,
+      progressMin: normalizedArena.progressMin,
+      progressMax: normalizedArena.progressMax,
+      lateralMin: normalizedArena.lateralMin,
+      lateralMax: normalizedArena.lateralMax,
+      leftTowerX: normalizedArena.towers.left.progress,
+      rightTowerX: normalizedArena.towers.right.progress,
+      terrainGates: normalizedArena.terrainGates,
+      obstacles: normalizedArena.obstacles
     },
     turnRules: {
       maxComboCards: MAX_COMBO_CARDS,
@@ -683,7 +704,7 @@ export function buildLlmBotProtocol(rawState, { limit = 6 } = {}) {
   const playableEquipment = affordable.filter((card) => card.type === 'equipment');
   const enemyUnits = state.units.filter((unit) => unit.side !== side && unit.hp > 0);
   const alliedUnits = state.units.filter((unit) => unit.side === side && unit.hp > 0);
-  const threat = selectPriorityThreat(side, enemyUnits);
+  const threat = selectPriorityThreat(side, enemyUnits, state.arena);
   const alliedFront = selectAlliedFront(side, alliedUnits);
 
   const playActions = [];
@@ -721,7 +742,7 @@ export function buildLlmBotProtocol(rawState, { limit = 6 } = {}) {
 
   return {
     specVersion: LLM_BOT_SPEC_VERSION,
-    rules: buildProtocolRules(),
+    rules: buildProtocolRules(state.arena),
     stateSummary: buildStateSummary(state),
     legalActions
   };

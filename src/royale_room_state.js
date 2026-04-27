@@ -1,9 +1,11 @@
 import {
   BOT_MIN_THINK_MS,
-  CENTER_LATERAL,
+  DEFAULT_ARENA_CONFIG,
   MATCH_DURATION_MS,
+  arenaCenterLateral,
   bodyRadiusForUnitType,
-  displayAttackReach
+  displayAttackReach,
+  normalizeArenaConfig
 } from './royale_battle_rules.js';
 import {
   buildHeroSnapshot,
@@ -49,6 +51,7 @@ export function createBattleState(playersBySide) {
   return {
     timeRemainingMs: MATCH_DURATION_MS,
     startedAt: new Date().toISOString(),
+    arena: normalizeArenaConfig(DEFAULT_ARENA_CONFIG),
     units: [],
     events: [],
     nextUnitId: 1,
@@ -212,7 +215,8 @@ export function buildBattleSnapshot(room, viewer, battlePlayer) {
     units: room.battle.units.map((unit) => buildUnitSnapshot(unit)),
     events: Array.isArray(room.battle.events) ? room.battle.events.map(clone) : [],
     result: room.battle.result,
-    fieldState: getFieldStateSnapshot(room.battle)
+    fieldState: getFieldStateSnapshot(room.battle),
+    arena: normalizeArenaConfig(room.battle.arena ?? DEFAULT_ARENA_CONFIG)
   };
 }
 
@@ -291,8 +295,9 @@ function normalizeBattlePlayerState(playerState = {}) {
   });
 }
 
-function normalizeBattleUnitState(unit = {}) {
+function normalizeBattleUnitState(unit = {}, arena = DEFAULT_ARENA_CONFIG) {
   const animationEvent = normalizeAnimationEvent(unit.animationEvent);
+  const centerLateral = arenaCenterLateral(arena);
   return {
     id: String(unit.id),
     cardId: String(unit.cardId),
@@ -329,7 +334,7 @@ function normalizeBattleUnitState(unit = {}) {
     type: String(unit.type || 'melee'),
     side: unit.side === 'right' ? 'right' : 'left',
     progress: Number(unit.progress || 0),
-    lateralPosition: Number(unit.lateralPosition || CENTER_LATERAL),
+    lateralPosition: Number(unit.lateralPosition ?? centerLateral),
     hp: Number(unit.hp || 0),
     maxHp: Number(unit.maxHp || 0),
     damage: Number(unit.damage || 0),
@@ -379,9 +384,11 @@ function normalizeFieldState(fs) {
 }
 
 export function normalizeHostBattleState(previousBattle, state) {
+  const arena = normalizeArenaConfig(state.arena ?? previousBattle?.arena ?? DEFAULT_ARENA_CONFIG);
   return clone({
     timeRemainingMs: Math.max(0, Number(state.timeRemainingMs || 0)),
     startedAt: previousBattle?.startedAt || new Date().toISOString(),
+    arena,
     nextUnitId: Number(state.nextUnitId || previousBattle?.nextUnitId || 1),
     result: state.result ?? null,
     cardMentalBonus:
@@ -394,7 +401,9 @@ export function normalizeHostBattleState(previousBattle, state) {
       left: normalizeBattlePlayerState(state.players?.left),
       right: normalizeBattlePlayerState(state.players?.right)
     },
-    units: Array.isArray(state.units) ? state.units.map(normalizeBattleUnitState) : [],
+    units: Array.isArray(state.units)
+      ? state.units.map((unit) => normalizeBattleUnitState(unit, arena))
+      : [],
     events: Array.isArray(state.events) ? state.events.map(normalizeBattleEventState) : [],
     fieldState: normalizeFieldState(state.fieldState) ?? previousBattle?.fieldState ?? initFieldState()
   });

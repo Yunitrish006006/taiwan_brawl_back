@@ -6,9 +6,11 @@ import {
   PERSIST_INTERVAL_MS,
   TICK_MS,
   clamp,
+  arenaConfigForBattle,
   lateralOffsetForWorldDistance,
   minimumBodyContactDistance,
   normalizeDropPoint,
+  normalizeArenaConfig,
   normalizeSimulationMode,
   randomBotThinkMs
 } from './royale_battle_rules.js';
@@ -68,7 +70,7 @@ function cardBodyRadius(card) {
   return Math.max(0, Number(card.bodyRadius || bodyRadiusForUnitType(card.type)));
 }
 
-function comboUnitOffsets(cards) {
+function comboUnitOffsets(cards, arena) {
   if (cards.length <= 1) {
     return cards.map(() => 0);
   }
@@ -77,7 +79,8 @@ function comboUnitOffsets(cards) {
     0
   );
   const spacing = lateralOffsetForWorldDistance(
-    minimumBodyContactDistance(maxBodyRadius, maxBodyRadius, UNIT_COLLISION_GAP)
+    minimumBodyContactDistance(maxBodyRadius, maxBodyRadius, UNIT_COLLISION_GAP),
+    arena
   );
   return cards.map((_, index) => (index - (cards.length - 1) / 2) * spacing);
 }
@@ -123,6 +126,7 @@ export class RoyaleRoom {
       }
     }
     if (this.room?.status === 'battle') {
+      this.room.battle.arena = normalizeArenaConfig(this.room.battle.arena);
       this.ensureTicking();
     }
   }
@@ -842,12 +846,15 @@ export class RoyaleRoom {
     const dropPoint =
       jobCards.length > 0 || eventCards.length > 0 || selfEquipmentOnly
         ? null
-        : normalizeDropPoint(player.side, payload);
+        : normalizeDropPoint(player.side, payload, this.room.battle.arena);
     const comboEquipmentEffects = equipmentEffects(comboCards, {
       battleState: this.room.battle,
       side: player.side
     });
-    const comboOffsets = comboUnitOffsets(unitCards);
+    const comboOffsets = comboUnitOffsets(
+      unitCards,
+      arenaConfigForBattle(this.room.battle)
+    );
     let comboUnitCursor = 0;
 
     for (const card of comboCards) {

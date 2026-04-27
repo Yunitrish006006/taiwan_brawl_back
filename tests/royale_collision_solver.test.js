@@ -9,7 +9,8 @@ import {
 import {
   BRIDGE_MIN_LATERAL,
   RIVER_MIN_PROGRESS,
-  distanceBetweenPoints
+  distanceBetweenPoints,
+  normalizeArenaConfig
 } from '../src/royale_battle_rules.js';
 
 function unit(overrides = {}) {
@@ -157,4 +158,66 @@ test('solveUnitMovementPlan allows river entry once the unit is on the bridge', 
 
   assert.equal(solved.progress, RIVER_MIN_PROGRESS + 15);
   assert.equal(solved.lateralPosition, BRIDGE_MIN_LATERAL);
+});
+
+test('solveUnitMovementPlan honors custom arena size and terrain gates', () => {
+  const arena = normalizeArenaConfig({
+    id: 'tall_bridge_test',
+    width: 1200,
+    height: 1400,
+    progressMax: 1400,
+    lateralMax: 1200,
+    centerLateral: 600,
+    fieldAspectRatio: 0.75,
+    towers: {
+      left: { progress: 100, lateralPosition: 600 },
+      right: { progress: 1300, lateralPosition: 600 }
+    },
+    deploy: {
+      left: { min: 0, max: 540 },
+      right: { min: 860, max: 1400 }
+    },
+    terrainGates: [
+      {
+        id: 'wide_river',
+        kind: 'river',
+        progressMin: 650,
+        progressMax: 750,
+        passableLateralRanges: [{ min: 500, max: 700 }]
+      }
+    ]
+  });
+  const traveler = unit({
+    id: 'traveler',
+    progress: 640,
+    lateralPosition: 300
+  });
+  const solved = solveUnitMovementPlan([traveler], [{
+    unit: traveler,
+    intendedProgress: 680,
+    intendedLateral: 300,
+    progressDelta: 40,
+    effectiveMoveSpeed: 100,
+    dt: 0.4
+  }], arena).get(traveler);
+
+  assert.equal(solved.progress, 650);
+  assert.equal(solved.lateralPosition, 300);
+
+  const edgeRunner = unit({
+    id: 'edge-runner',
+    progress: 1390,
+    lateralPosition: 600
+  });
+  const edgeSolved = solveUnitMovementPlan([edgeRunner], [{
+    unit: edgeRunner,
+    intendedProgress: 1500,
+    intendedLateral: 600,
+    progressDelta: 110,
+    effectiveMoveSpeed: 220,
+    dt: 0.5
+  }], arena).get(edgeRunner);
+
+  assert.equal(edgeSolved.progress, 1400);
+  assert.equal(edgeSolved.lateralPosition, 600);
 });

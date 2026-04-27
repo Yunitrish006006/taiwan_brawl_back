@@ -1,21 +1,19 @@
 import {
-  CENTER_LATERAL,
-  FIELD_ASPECT_RATIO,
-  LEFT_TOWER_X,
-  MAX_FIELD_PROGRESS,
-  MIN_FIELD_PROGRESS,
-  RIGHT_TOWER_X,
   UNIT_COLLISION_GAP,
   UNIT_FORMATION_BIAS_LIMIT,
+  arenaCenterLateral,
+  arenaFieldAspectRatio,
   bodyRadiusForUnitType,
   clamp,
   distanceBetweenPoints,
   minimumBodyContactDistance,
+  normalizeArenaConfig,
   sanitizeLateralPosition,
   sanitizeTerrainLateralForProgress,
   sideDirection,
   terrainLimitedProgressForMove,
-  terrainNavigationLateralForMove
+  terrainNavigationLateralForMove,
+  towerPointForSide
 } from './royale_battle_rules.js';
 import {
   inferCardCollisionBehavior,
@@ -34,21 +32,19 @@ export function unitBodyContactDistance(unit, blocker) {
   );
 }
 
-export function unitDesiredLateral(unit, target) {
+export function unitDesiredLateral(unit, target, arena) {
+  const centerLateral = arenaCenterLateral(arena);
   const baseLateral =
     target?.kind === 'unit'
-      ? Number(target.target.lateralPosition || CENTER_LATERAL)
-      : CENTER_LATERAL;
+      ? Number(target.target.lateralPosition ?? centerLateral)
+      : centerLateral;
   const targetProgress =
     target?.kind === 'unit'
       ? Number(target.target.progress || unit.progress || 0)
       : target?.kind === 'tower'
-        ? target.target === 'left'
-          ? LEFT_TOWER_X
-          : RIGHT_TOWER_X
-        : unit.side === 'left'
-          ? RIGHT_TOWER_X
-          : LEFT_TOWER_X;
+        ? towerPointForSide(target.target, arena).progress
+        : towerPointForSide(unit.side === 'left' ? 'right' : 'left', arena)
+          .progress;
   const laneBias = clamp(
     Number(unit.laneBias || 0),
     -UNIT_FORMATION_BIAS_LIMIT,
@@ -57,7 +53,8 @@ export function unitDesiredLateral(unit, target) {
   return terrainNavigationLateralForMove(
     Number(unit.progress || 0),
     targetProgress,
-    baseLateral + laneBias
+    baseLateral + laneBias,
+    arena
   );
 }
 
@@ -68,12 +65,13 @@ function unitCollisionBehavior(unit) {
   );
 }
 
-function findClosestAlliedMovementBlocker(units, unit) {
+function findClosestAlliedMovementBlocker(units, unit, arena) {
   let closest = null;
   let bestScore = Infinity;
+  const centerLateral = arenaCenterLateral(arena);
   const forwardDirection = sideDirection(unit.side);
   const unitProgress = Number(unit.progress || 0);
-  const unitLateral = Number(unit.lateralPosition || CENTER_LATERAL);
+  const unitLateral = Number(unit.lateralPosition ?? centerLateral);
 
   for (const blocker of units) {
     if (blocker === unit || blocker.hp <= 0 || blocker.side !== unit.side) {
@@ -96,7 +94,8 @@ function findClosestAlliedMovementBlocker(units, unit) {
       unitProgress,
       unitLateral,
       blockerProgress,
-      Number(blocker.lateralPosition || CENTER_LATERAL)
+      Number(blocker.lateralPosition ?? centerLateral),
+      arena
     );
     const contactDistance = unitBodyContactDistance(unit, blocker);
     if (distance > contactDistance + 48) {
@@ -113,7 +112,8 @@ function findClosestAlliedMovementBlocker(units, unit) {
   return closest;
 }
 
-function chooseUnitRerouteSide(units, unit, blocker) {
+function chooseUnitRerouteSide(units, unit, blocker, arena) {
+  const centerLateral = arenaCenterLateral(arena);
   const laneBias = Number(unit.laneBias || 0);
   if (laneBias > 1) {
     return 1;
@@ -124,8 +124,8 @@ function chooseUnitRerouteSide(units, unit, blocker) {
 
   if (blocker) {
     const lateralDelta =
-      Number(blocker.lateralPosition || CENTER_LATERAL) -
-      Number(unit.lateralPosition || CENTER_LATERAL);
+      Number(blocker.lateralPosition ?? centerLateral) -
+      Number(unit.lateralPosition ?? centerLateral);
     if (Math.abs(lateralDelta) > 1e-3) {
       return lateralDelta < 0 ? 1 : -1;
     }
@@ -134,7 +134,7 @@ function chooseUnitRerouteSide(units, unit, blocker) {
   let leftPenalty = 0;
   let rightPenalty = 0;
   const unitProgress = Number(unit.progress || 0);
-  const unitLateral = Number(unit.lateralPosition || CENTER_LATERAL);
+  const unitLateral = Number(unit.lateralPosition ?? centerLateral);
 
   for (const other of units) {
     if (other === unit || other.hp <= 0 || other.side !== unit.side) {
@@ -147,10 +147,10 @@ function chooseUnitRerouteSide(units, unit, blocker) {
     }
 
     const penalty = 160 - progressGap;
-    if (Number(other.lateralPosition || CENTER_LATERAL) <= unitLateral) {
+    if (Number(other.lateralPosition ?? centerLateral) <= unitLateral) {
       leftPenalty += penalty;
     }
-    if (Number(other.lateralPosition || CENTER_LATERAL) >= unitLateral) {
+    if (Number(other.lateralPosition ?? centerLateral) >= unitLateral) {
       rightPenalty += penalty;
     }
   }
@@ -158,10 +158,10 @@ function chooseUnitRerouteSide(units, unit, blocker) {
   if (leftPenalty !== rightPenalty) {
     return leftPenalty < rightPenalty ? -1 : 1;
   }
-  if (unitLateral < CENTER_LATERAL - 4) {
+  if (unitLateral < centerLateral - 4) {
     return -1;
   }
-  if (unitLateral > CENTER_LATERAL + 4) {
+  if (unitLateral > centerLateral + 4) {
     return 1;
   }
 
@@ -178,23 +178,28 @@ function resolveUnitMovementCollision(
   nextProgress,
   nextLateral,
   minProgress,
-  maxProgress
+  maxProgress,
+  arena
 ) {
+  const centerLateral = arenaCenterLateral(arena);
+  const fieldAspectRatio = arenaFieldAspectRatio(arena);
   const startProgress = Number(unit.progress || 0);
   const startScaledLateral =
-    Number(unit.lateralPosition || CENTER_LATERAL) * FIELD_ASPECT_RATIO;
+    Number(unit.lateralPosition ?? centerLateral) * fieldAspectRatio;
   const boundedProgress = clamp(nextProgress, minProgress, maxProgress);
-  const rawDesiredLateral = sanitizeLateralPosition(nextLateral);
+  const rawDesiredLateral = sanitizeLateralPosition(nextLateral, arena);
   const desiredProgress = terrainLimitedProgressForMove(
     startProgress,
     boundedProgress,
-    rawDesiredLateral
+    rawDesiredLateral,
+    arena
   );
   const desiredLateral = sanitizeTerrainLateralForProgress(
     desiredProgress,
-    rawDesiredLateral
+    rawDesiredLateral,
+    arena
   );
-  const desiredScaledLateral = desiredLateral * FIELD_ASPECT_RATIO;
+  const desiredScaledLateral = desiredLateral * fieldAspectRatio;
   const deltaProgress = desiredProgress - startProgress;
   const deltaScaledLateral = desiredScaledLateral - startScaledLateral;
   const movementLengthSquared =
@@ -215,7 +220,7 @@ function resolveUnitMovementCollision(
 
     const minDistance = unitBodyContactDistance(unit, blocker);
     const blockerScaledLateral =
-      Number(blocker.lateralPosition || CENTER_LATERAL) * FIELD_ASPECT_RATIO;
+      Number(blocker.lateralPosition ?? centerLateral) * fieldAspectRatio;
     const relativeStartProgress = startProgress - Number(blocker.progress || 0);
     const relativeStartScaledLateral = startScaledLateral - blockerScaledLateral;
     const a = movementLengthSquared;
@@ -264,7 +269,7 @@ function resolveUnitMovementCollision(
       const minDistance = unitBodyContactDistance(unit, blocker);
       const blockerProgress = Number(blocker.progress || 0);
       const blockerScaledLateral =
-        Number(blocker.lateralPosition || CENTER_LATERAL) * FIELD_ASPECT_RATIO;
+        Number(blocker.lateralPosition ?? centerLateral) * fieldAspectRatio;
       let relativeProgress = resolvedProgress - blockerProgress;
       let relativeScaledLateral = resolvedScaledLateral - blockerScaledLateral;
       let distance = Math.hypot(relativeProgress, relativeScaledLateral);
@@ -293,9 +298,10 @@ function resolveUnitMovementCollision(
     resolvedProgress = clamp(resolvedProgress, minProgress, maxProgress);
     const clampedLateral = sanitizeTerrainLateralForProgress(
       resolvedProgress,
-      resolvedScaledLateral / FIELD_ASPECT_RATIO
+      resolvedScaledLateral / fieldAspectRatio,
+      arena
     );
-    resolvedScaledLateral = clampedLateral * FIELD_ASPECT_RATIO;
+    resolvedScaledLateral = clampedLateral * fieldAspectRatio;
     if (!adjusted) {
       return {
         progress: resolvedProgress,
@@ -308,17 +314,21 @@ function resolveUnitMovementCollision(
     progress: resolvedProgress,
     lateralPosition: sanitizeTerrainLateralForProgress(
       resolvedProgress,
-      resolvedScaledLateral / FIELD_ASPECT_RATIO
+      resolvedScaledLateral / fieldAspectRatio,
+      arena
     )
   };
 }
 
-function attemptUnitReroute(units, unit, blocker, effectiveMoveSpeed, dt) {
+function attemptUnitReroute(units, unit, blocker, effectiveMoveSpeed, dt, arena) {
   if (unitCollisionBehavior(unit) !== 'reroute' || !blocker) {
     return null;
   }
 
-  const rerouteSide = chooseUnitRerouteSide(units, unit, blocker);
+  const centerLateral = arenaCenterLateral(arena);
+  const fieldAspectRatio = arenaFieldAspectRatio(arena);
+  const normalizedArena = normalizeArenaConfig(arena);
+  const rerouteSide = chooseUnitRerouteSide(units, unit, blocker, arena);
   const moveBudget = Math.max(8, effectiveMoveSpeed * dt);
   const progressWeight = -sideDirection(unit.side) * 0.8;
   const scaledLateralWeight = rerouteSide * 0.6;
@@ -326,21 +336,23 @@ function attemptUnitReroute(units, unit, blocker, effectiveMoveSpeed, dt) {
   const detourProgress =
     Number(unit.progress || 0) + (progressWeight / vectorLength) * moveBudget;
   const detourScaledLateral =
-    Number(unit.lateralPosition || CENTER_LATERAL) * FIELD_ASPECT_RATIO +
+    Number(unit.lateralPosition ?? centerLateral) * fieldAspectRatio +
     (scaledLateralWeight / vectorLength) * moveBudget;
   const rerouteMove = resolveUnitMovementCollision(
     units,
     unit,
     detourProgress,
-    detourScaledLateral / FIELD_ASPECT_RATIO,
-    MIN_FIELD_PROGRESS,
-    MAX_FIELD_PROGRESS
+    detourScaledLateral / fieldAspectRatio,
+    normalizedArena.progressMin,
+    normalizedArena.progressMax,
+    arena
   );
   const rerouteDistance = distanceBetweenPoints(
     Number(unit.progress || 0),
-    Number(unit.lateralPosition || CENTER_LATERAL),
+    Number(unit.lateralPosition ?? centerLateral),
     rerouteMove.progress,
-    rerouteMove.lateralPosition
+    rerouteMove.lateralPosition,
+    arena
   );
   return rerouteDistance > 1e-3 ? rerouteMove : null;
 }
@@ -357,7 +369,8 @@ function movementPlanOrder(left, right) {
   return left.index - right.index;
 }
 
-export function solveUnitMovementPlan(units, plans) {
+export function solveUnitMovementPlan(units, plans, arena) {
+  const normalizedArena = normalizeArenaConfig(arena);
   const solverUnits = units.map((unit) => ({ ...unit }));
   const unitIndex = new Map(units.map((unit, index) => [unit, index]));
   const solverByUnit = new Map(
@@ -380,21 +393,23 @@ export function solveUnitMovementPlan(units, plans) {
       solverUnit,
       plan.intendedProgress,
       plan.intendedLateral,
-      MIN_FIELD_PROGRESS,
-      MAX_FIELD_PROGRESS
+      normalizedArena.progressMin,
+      normalizedArena.progressMax,
+      arena
     );
     const forwardGain =
       sideDirection(solverUnit.side) * (resolvedMove.progress - solverUnit.progress);
     const blockedForward =
       forwardGain <= Math.max(1, Math.abs(plan.progressDelta) * 0.15);
     if (blockedForward) {
-      const blocker = findClosestAlliedMovementBlocker(solverUnits, solverUnit);
+      const blocker = findClosestAlliedMovementBlocker(solverUnits, solverUnit, arena);
       const rerouteMove = attemptUnitReroute(
         solverUnits,
         solverUnit,
         blocker,
         plan.effectiveMoveSpeed,
-        plan.dt
+        plan.dt,
+        arena
       );
       if (rerouteMove) {
         resolvedMove = rerouteMove;

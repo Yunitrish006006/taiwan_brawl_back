@@ -1,15 +1,14 @@
 import {
-  CENTER_LATERAL,
-  FIELD_ASPECT_RATIO,
   GLOBAL_MOVE_SPEED_MULTIPLIER,
-  LEFT_TOWER_X,
   MAX_COMBO_CARDS,
-  RIGHT_TOWER_X,
-  WORLD_SCALE,
+  arenaCenterLateral,
+  arenaConfigForBattle,
+  arenaFieldAspectRatio,
   distanceBetweenPoints,
   sanitizeLanePosition,
   sanitizeLateralPosition,
-  sideDirection
+  sideDirection,
+  towerPointForSide
 } from './royale_battle_rules.js';
 import { isJobCard } from './royale_job_events.js';
 import {
@@ -46,38 +45,39 @@ function canAffordCard(battlePlayer, card) {
   return battlePlayerResourceForType(battlePlayer, cardEnergyType(card)) + 1e-6 >= cardEnergyCost(card);
 }
 
-function ownTowerProgress(side) {
-  return side === 'left' ? LEFT_TOWER_X : RIGHT_TOWER_X;
+function ownTowerProgress(side, arena) {
+  return towerPointForSide(side, arena).progress;
 }
 
-function averageLateralPosition(units) {
+function averageLateralPosition(units, arena) {
   if (units.length === 0) {
-    return CENTER_LATERAL;
+    return arenaCenterLateral(arena);
   }
   return units.reduce((sum, unit) => sum + unit.lateralPosition, 0) / units.length;
 }
 
-function distanceToOwnTower(side, progress) {
-  return Math.abs(progress - ownTowerProgress(side));
+function distanceToOwnTower(side, progress, arena) {
+  return Math.abs(progress - ownTowerProgress(side, arena));
 }
 
-function selectPriorityThreat(side, enemyUnits) {
+function selectPriorityThreat(side, enemyUnits, arena) {
   if (enemyUnits.length === 0) {
     return null;
   }
+  const normalizedArena = arenaConfigForBattle({ arena });
   return enemyUnits
     .slice()
     .sort((a, b) => {
-      const aTowerDistance = distanceToOwnTower(side, a.progress);
-      const bTowerDistance = distanceToOwnTower(side, b.progress);
+      const aTowerDistance = distanceToOwnTower(side, a.progress, arena);
+      const bTowerDistance = distanceToOwnTower(side, b.progress, arena);
       const aScore =
-        (1000 - aTowerDistance) +
+        (normalizedArena.progressMax - aTowerDistance) +
         Number(a.damage || 0) * 0.7 +
         Number(a.maxHp || a.hp || 0) * 0.08 +
         (a.targetRule === 'tower' ? 180 : 0) +
         (a.type === 'swarm' ? 70 : 0);
       const bScore =
-        (1000 - bTowerDistance) +
+        (normalizedArena.progressMax - bTowerDistance) +
         Number(b.damage || 0) * 0.7 +
         Number(b.maxHp || b.hp || 0) * 0.08 +
         (b.targetRule === 'tower' ? 180 : 0) +
@@ -96,11 +96,11 @@ function selectAlliedFront(side, alliedUnits) {
     .sort((a, b) => b.progress * direction - a.progress * direction)[0];
 }
 
-function isUrgentThreat(side, threat) {
+function isUrgentThreat(side, threat, arena) {
   if (!threat) {
     return false;
   }
-  return distanceToOwnTower(side, threat.progress) < 260;
+  return distanceToOwnTower(side, threat.progress, arena) < 260;
 }
 
 function cardPowerScore(card) {
@@ -114,6 +114,7 @@ function cardPowerScore(card) {
 }
 
 function evaluateSpellTarget(room, side, spellCard) {
+  const arena = arenaConfigForBattle(room.battle);
   const enemyUnits = room.battle.units.filter((unit) => unit.side !== side && unit.hp > 0);
   if (enemyUnits.length === 0) {
     return null;
@@ -127,7 +128,8 @@ function evaluateSpellTarget(room, side, spellCard) {
           unit.progress,
           unit.lateralPosition,
           candidate.progress,
-          candidate.lateralPosition
+          candidate.lateralPosition,
+          arena
         ) <= Number(spellCard.spellRadius || 0)
     );
     if (hitUnits.length === 0) {
@@ -142,7 +144,7 @@ function evaluateSpellTarget(room, side, spellCard) {
       (unit) => Number(unit.hp || 0) <= Number(spellCard.spellDamage || 0)
     ).length;
     const minimumThreatDistance = Math.min(
-      ...hitUnits.map((unit) => distanceToOwnTower(side, unit.progress))
+      ...hitUnits.map((unit) => distanceToOwnTower(side, unit.progress, arena))
     );
     const score =
       totalDamage +
@@ -151,7 +153,7 @@ function evaluateSpellTarget(room, side, spellCard) {
       (minimumThreatDistance < 260 ? 120 : 0);
 
     const progress = hitUnits.reduce((sum, unit) => sum + unit.progress, 0) / hitUnits.length;
-    const lateralPosition = averageLateralPosition(hitUnits);
+    const lateralPosition = averageLateralPosition(hitUnits, arena);
 
     if (!bestTarget || score > bestTarget.score) {
       bestTarget = {
@@ -168,7 +170,8 @@ function evaluateSpellTarget(room, side, spellCard) {
 }
 
 function scorePrimaryCard(room, side, battlePlayer, card, alliedFront, threat) {
-  const urgentThreat = isUrgentThreat(side, threat);
+  const arena = arenaConfigForBattle(room.battle);
+  const urgentThreat = isUrgentThreat(side, threat, arena);
   const enemySide = side === 'left' ? 'right' : 'left';
   const ownTowerHp = Number(room.battle.players[side]?.towerHp || 0);
   const enemyTowerHp = Number(room.battle.players[enemySide]?.towerHp || 0);
@@ -276,32 +279,36 @@ function scoreEquipmentCard(primaryCard, equipmentCard) {
 }
 
 function buildBotDropPoint(room, side, primaryCard) {
+  const arena = arenaConfigForBattle(room.battle);
   const enemyUnits = room.battle.units.filter((unit) => unit.side !== side && unit.hp > 0);
   const alliedUnits = room.battle.units.filter((unit) => unit.side === side && unit.hp > 0);
-  const threat = selectPriorityThreat(side, enemyUnits);
+  const threat = selectPriorityThreat(side, enemyUnits, arena);
   const alliedFront = selectAlliedFront(side, alliedUnits);
-  const defaultLateral = averageLateralPosition(enemyUnits);
+  const defaultLateral = averageLateralPosition(enemyUnits, arena);
 
   if (primaryCard.type === 'spell') {
     const spellTarget = evaluateSpellTarget(room, side, primaryCard);
     if (spellTarget) {
       return {
-        progress: sanitizeLanePosition(side, spellTarget.progress),
-        lateralPosition: sanitizeLateralPosition(spellTarget.lateralPosition)
+        progress: sanitizeLanePosition(side, spellTarget.progress, arena),
+        lateralPosition: sanitizeLateralPosition(spellTarget.lateralPosition, arena)
       };
     }
   }
 
+  const deployRange = side === 'left'
+    ? arena.deploy.left
+    : arena.deploy.right;
   let progress = primaryCard.targetRule === 'tower'
     ? side === 'left'
-      ? 360
-      : 640
+      ? deployRange.max - 60
+      : deployRange.min + 60
     : side === 'left'
-      ? 280
-      : 720;
+      ? deployRange.max - 140
+      : deployRange.min + 140;
   let lateralPosition = defaultLateral;
 
-  if (isUrgentThreat(side, threat)) {
+  if (isUrgentThreat(side, threat, arena)) {
     const defensiveOffset = Number(primaryCard.attackRange || 0) >= 200 ? 130 : 70;
     progress = threat.progress - sideDirection(side) * defensiveOffset;
     lateralPosition = threat.lateralPosition;
@@ -320,20 +327,22 @@ function buildBotDropPoint(room, side, primaryCard) {
   }
 
   return {
-    progress: sanitizeLanePosition(side, progress),
-    lateralPosition: sanitizeLateralPosition(lateralPosition)
+    progress: sanitizeLanePosition(side, progress, arena),
+    lateralPosition: sanitizeLateralPosition(lateralPosition, arena)
   };
 }
 
 export function buildBotPayload(room, side, comboCards) {
+  const arena = arenaConfigForBattle(room.battle);
   const primaryCard = comboCards.find((card) => card.type !== 'equipment') ?? comboCards[0];
   const dropPoint = buildBotDropPoint(room, side, primaryCard);
-  const jitter = primaryCard?.type === 'spell' ? 0 : 28 / FIELD_ASPECT_RATIO;
+  const jitter = primaryCard?.type === 'spell' ? 0 : 28 / arenaFieldAspectRatio(arena);
   const lateralPosition = sanitizeLateralPosition(
-    dropPoint.lateralPosition + (Math.random() - 0.5) * jitter
+    dropPoint.lateralPosition + (Math.random() - 0.5) * jitter,
+    arena
   );
-  const progress = sanitizeLanePosition(side, dropPoint.progress);
-  const dropY = side === 'left' ? WORLD_SCALE - progress : progress;
+  const progress = sanitizeLanePosition(side, dropPoint.progress, arena);
+  const dropY = side === 'left' ? arena.progressMax - progress : progress;
 
   return {
     cardIds: comboCards.map((card) => card.id),
@@ -363,7 +372,7 @@ export function chooseBotCombo(room, side, player, battlePlayer) {
 
   const enemyUnits = room.battle.units.filter((unit) => unit.side !== side && unit.hp > 0);
   const alliedUnits = room.battle.units.filter((unit) => unit.side === side && unit.hp > 0);
-  const threat = selectPriorityThreat(side, enemyUnits);
+  const threat = selectPriorityThreat(side, enemyUnits, arenaConfigForBattle(room.battle));
   const alliedFront = selectAlliedFront(side, alliedUnits);
 
   const scoredCards = [...playableJobs, ...playableUnits, ...playableSpells]

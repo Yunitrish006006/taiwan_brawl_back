@@ -1,9 +1,5 @@
 import {
-  CENTER_LATERAL,
-  FIELD_ASPECT_RATIO,
   GLOBAL_ATTACK_SPEED_MULTIPLIER,
-  LEFT_TOWER_X,
-  RIGHT_TOWER_X,
   BRUISE_DAMAGE_PER_SECOND,
   BLEED_DAMAGE_PER_SECOND,
   BRUISE_DURATION_MS,
@@ -15,6 +11,9 @@ import {
   SLOW_SPEED_FACTOR,
   UNIT_COLLISION_GAP,
   UNIT_FORMATION_BIAS_LIMIT,
+  arenaCenterLateral,
+  arenaConfigForBattle,
+  arenaFieldAspectRatio,
   bodyRadiusForUnitType,
   clamp,
   distanceBetweenPoints,
@@ -25,7 +24,8 @@ import {
   lateralOffsetForWorldDistance,
   minimumBodyContactDistance,
   sanitizeLateralPosition,
-  sideDirection
+  sideDirection,
+  towerPointForSide
 } from './royale_battle_rules.js';
 import {
   solveUnitMovementPlan,
@@ -49,12 +49,8 @@ export function getEnemySide(side) {
   return side === 'left' ? 'right' : 'left';
 }
 
-function getTowerProgressForSide(side) {
-  return side === 'left' ? LEFT_TOWER_X : RIGHT_TOWER_X;
-}
-
-function facingDirectionForVector(progressDelta, lateralDelta) {
-  const weightedLateralDelta = lateralDelta * FIELD_ASPECT_RATIO;
+function facingDirectionForVector(progressDelta, lateralDelta, arena) {
+  const weightedLateralDelta = lateralDelta * arenaFieldAspectRatio(arena);
   if (
     Math.abs(weightedLateralDelta) >
     Math.max(16, Math.abs(progressDelta) * 0.35)
@@ -64,7 +60,7 @@ function facingDirectionForVector(progressDelta, lateralDelta) {
   return 'forward';
 }
 
-function updateUnitFacing(unit, target) {
+function updateUnitFacing(unit, target, arena) {
   if (!target) {
     unit.facingDirection = 'forward';
     return;
@@ -73,14 +69,15 @@ function updateUnitFacing(unit, target) {
   const targetProgress =
     target.kind === 'unit'
       ? target.target.progress
-      : getTowerProgressForSide(target.target);
+      : towerPointForSide(target.target, arena).progress;
   const targetLateral =
     target.kind === 'unit'
       ? target.target.lateralPosition
-      : CENTER_LATERAL;
+      : towerPointForSide(target.target, arena).lateralPosition;
   unit.facingDirection = facingDirectionForVector(
     targetProgress - unit.progress,
-    targetLateral - unit.lateralPosition
+    targetLateral - unit.lateralPosition,
+    arena
   );
 }
 
@@ -100,13 +97,6 @@ export function regenerateBattleResources(room, dt) {
   }
 }
 
-function towerPointForSide(side) {
-  return {
-    progress: getTowerProgressForSide(side),
-    lateralPosition: CENTER_LATERAL
-  };
-}
-
 function triggerHeroAttackEvent(battlePlayer, targetUnit, attack) {
   const nextId = Number(battlePlayer.heroAttackEventId || battlePlayer.heroAttackEvent?.id || 0) + 1;
   battlePlayer.heroAttackEventId = nextId;
@@ -120,7 +110,8 @@ function triggerHeroAttackEvent(battlePlayer, targetUnit, attack) {
 }
 
 function selectHeroAttackTarget(room, side, attack) {
-  const origin = towerPointForSide(side);
+  const arena = arenaConfigForBattle(room.battle);
+  const origin = towerPointForSide(side, arena);
   return room.battle.units
     .filter((unit) => unit.side !== side && unit.hp > 0)
     .map((unit) => ({
@@ -129,7 +120,8 @@ function selectHeroAttackTarget(room, side, attack) {
         origin.progress,
         origin.lateralPosition,
         unit.progress,
-        unit.lateralPosition
+        unit.lateralPosition,
+        arena
       )
     }))
     .filter((entry) => entry.distance <= attack.range + Number(entry.unit.bodyRadius || bodyRadiusForUnitType(entry.unit.type)))
@@ -162,6 +154,7 @@ export function tickHeroAttacks(room, dt) {
 }
 
 export function resolveSpellEffect(room, side, card, dropPoint) {
+  const arena = arenaConfigForBattle(room.battle);
   const enemySide = getEnemySide(side);
   const enemyBattleState = room.battle.players[enemySide];
   const caster = room.players?.[side];
@@ -181,20 +174,22 @@ export function resolveSpellEffect(room, side, card, dropPoint) {
         unit.progress,
         unit.lateralPosition,
         dropPoint.progress,
-        dropPoint.lateralPosition
+        dropPoint.lateralPosition,
+        arena
       ) <= spellReach
     ) {
       unit.hp -= spellDamage;
     }
   }
 
-  const towerProgress = enemySide === 'left' ? LEFT_TOWER_X : RIGHT_TOWER_X;
+  const towerPoint = towerPointForSide(enemySide, arena);
   if (
     distanceBetweenPoints(
-      towerProgress,
-      CENTER_LATERAL,
+      towerPoint.progress,
+      towerPoint.lateralPosition,
       dropPoint.progress,
-      dropPoint.lateralPosition
+      dropPoint.lateralPosition,
+      arena
     ) <= effectiveSpellReachToTower(card.spellRadius)
   ) {
     applyBattlePlayerDamage(enemyBattleState, spellDamage, 'spirit');
@@ -209,6 +204,8 @@ export function spawnBattleUnits(
   equipmentEffects = [],
   groupLateralOffset = 0
 ) {
+  const arena = arenaConfigForBattle(room.battle);
+  const centerLateral = arenaCenterLateral(arena);
   const count = Math.max(1, card.spawnCount);
   const stats = applyEquipmentEffects(card, equipmentEffects);
   const caster = room.players?.[side];
@@ -217,7 +214,8 @@ export function spawnBattleUnits(
     count === 1
       ? 0
       : lateralOffsetForWorldDistance(
-          minimumBodyContactDistance(bodyRadius, bodyRadius, UNIT_COLLISION_GAP)
+          minimumBodyContactDistance(bodyRadius, bodyRadius, UNIT_COLLISION_GAP),
+          arena
         );
   const unitHpMultiplier = heroBonusMultiplier(
     caster?.heroId,
@@ -243,7 +241,8 @@ export function spawnBattleUnits(
   for (let index = 0; index < count; index += 1) {
     const offset = (index - (count - 1) / 2) * spacing;
     const spawnLateral = sanitizeLateralPosition(
-      dropPoint.lateralPosition + groupLateralOffset + offset
+      dropPoint.lateralPosition + groupLateralOffset + offset,
+      arena
     );
     room.battle.units.push({
       id: `unit-${room.battle.nextUnitId++}`,
@@ -283,7 +282,7 @@ export function spawnBattleUnits(
         inferCardCollisionBehavior(card)
       ),
       laneBias: clamp(
-        spawnLateral - CENTER_LATERAL,
+        spawnLateral - centerLateral,
         -UNIT_FORMATION_BIAS_LIMIT,
         UNIT_FORMATION_BIAS_LIMIT
       ),
@@ -303,15 +302,17 @@ export function spawnBattleUnits(
 }
 
 export function selectUnitTarget(room, unit) {
+  const arena = arenaConfigForBattle(room.battle);
   const direction = sideDirection(unit.side);
   const enemySide = getEnemySide(unit.side);
-  const towerProgress = enemySide === 'left' ? LEFT_TOWER_X : RIGHT_TOWER_X;
-  const towerForwardDistance = (towerProgress - unit.progress) * direction;
+  const towerPoint = towerPointForSide(enemySide, arena);
+  const towerForwardDistance = (towerPoint.progress - unit.progress) * direction;
   const towerDistance = distanceBetweenPoints(
     unit.progress,
     unit.lateralPosition,
-    towerProgress,
-    CENTER_LATERAL
+    towerPoint.progress,
+    towerPoint.lateralPosition,
+    arena
   );
   const towerReach = effectiveAttackReachToTower(unit);
 
@@ -336,7 +337,8 @@ export function selectUnitTarget(room, unit) {
         unit.progress,
         unit.lateralPosition,
         entry.progress,
-        entry.lateralPosition
+        entry.lateralPosition,
+        arena
       )
     }))
     .filter((entry) => entry.forwardDistance >= -20);
@@ -445,6 +447,8 @@ export function performUnitAttack(room, unit, target) {
 }
 
 export function tickBattleUnits(room, dt) {
+  const arena = arenaConfigForBattle(room.battle);
+  const fieldAspectRatio = arenaFieldAspectRatio(arena);
   // Phase 1: tick status effect DoT and expiry
   for (const unit of room.battle.units) {
     if (!unit.statusEffects?.length) continue;
@@ -495,7 +499,7 @@ export function tickBattleUnits(room, dt) {
           ? effectiveAttackReachToUnit(unit, target.target)
           : effectiveAttackReachToTower(unit);
     if (target && target.distance <= attackReach) {
-      updateUnitFacing(unit, target);
+      updateUnitFacing(unit, target, arena);
       unit.animationState = 'idle';
       if (unit.cooldown <= 0) {
         attackActions.push({
@@ -509,10 +513,10 @@ export function tickBattleUnits(room, dt) {
     } else {
       unit.animationState = 'move';
       const progressDelta = sideDirection(unit.side) * effectiveMoveSpeed * dt;
-      const desiredLateral = unitDesiredLateral(unit, target);
+      const desiredLateral = unitDesiredLateral(unit, target, arena);
       const lateralDelta = desiredLateral - unit.lateralPosition;
-      unit.facingDirection = facingDirectionForVector(progressDelta, lateralDelta);
-      const lateralStep = (effectiveMoveSpeed * 0.45 * dt) / FIELD_ASPECT_RATIO;
+      unit.facingDirection = facingDirectionForVector(progressDelta, lateralDelta, arena);
+      const lateralStep = (effectiveMoveSpeed * 0.45 * dt) / fieldAspectRatio;
       const intendedProgress = unit.progress + progressDelta;
       const intendedLateral =
         unit.lateralPosition + clamp(lateralDelta, -lateralStep, lateralStep);
@@ -528,7 +532,7 @@ export function tickBattleUnits(room, dt) {
   }
 
   // Phase 3: solve all movement plans before committing positions.
-  const solvedMoves = solveUnitMovementPlan(room.battle.units, movementPlans);
+  const solvedMoves = solveUnitMovementPlan(room.battle.units, movementPlans, arena);
   for (const { unit } of movementPlans) {
     const resolvedMove = solvedMoves.get(unit);
     if (!resolvedMove) {
@@ -538,7 +542,8 @@ export function tickBattleUnits(room, dt) {
     if (unit.hp > 0) {
       unit.facingDirection = facingDirectionForVector(
         resolvedMove.progress - unit.progress,
-        resolvedMove.lateralPosition - unit.lateralPosition
+        resolvedMove.lateralPosition - unit.lateralPosition,
+        arena
       );
       unit.progress = resolvedMove.progress;
       unit.lateralPosition = resolvedMove.lateralPosition;

@@ -19,6 +19,7 @@ import {
   effectiveSpellReachToUnit,
   lateralOffsetForWorldDistance,
   minimumBodyContactDistance,
+  normalizeArenaConfig,
   normalizeDropPoint,
   normalizeSimulationMode,
   sanitizeLateralPosition,
@@ -105,4 +106,55 @@ test('terrain helpers gate river crossings through the bridge', () => {
     BRIDGE_MIN_LATERAL
   );
   assert.equal(terrainNavigationLateralForMove(300, 430, 220), 220);
+});
+
+test('arena helpers support custom size, gates, and rectangular obstacles', () => {
+  const arena = normalizeArenaConfig({
+    id: 'wide_test',
+    width: 1200,
+    height: 1400,
+    progressMax: 1400,
+    lateralMax: 1200,
+    centerLateral: 600,
+    fieldAspectRatio: 0.75,
+    towers: {
+      left: { progress: 100, lateralPosition: 600 },
+      right: { progress: 1300, lateralPosition: 600 }
+    },
+    deploy: {
+      left: { min: 0, max: 540 },
+      right: { min: 860, max: 1400 }
+    },
+    terrainGates: [
+      {
+        id: 'wide_river',
+        kind: 'river',
+        progressMin: 650,
+        progressMax: 750,
+        passableLateralRanges: [{ min: 500, max: 700 }]
+      }
+    ],
+    obstacles: [
+      {
+        id: 'center_block',
+        progressMin: 600,
+        progressMax: 650,
+        lateralMin: 100,
+        lateralMax: 200
+      }
+    ]
+  });
+
+  assert.equal(arena.progressMax, 1400);
+  assert.equal(arena.lateralMax, 1200);
+  assert.equal(sanitizeLateralPosition(2000, arena), 1200);
+  assert.equal(
+    normalizeDropPoint('left', { lanePosition: 0.5 }, arena).progress,
+    540
+  );
+  assert.equal(sanitizeTerrainLateralForProgress(700, 300, arena), 500);
+  assert.equal(terrainNavigationLateralForMove(500, 900, 300, arena), 500);
+  assert.equal(terrainLimitedProgressForMove(640, 670, 300, arena), 650);
+  assert.equal(terrainLimitedProgressForMove(500, 620, 150, arena), 600);
+  assert.equal(distanceBetweenPoints(0, 0, 0, 100, arena), 75);
 });
