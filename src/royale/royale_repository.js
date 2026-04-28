@@ -6,8 +6,9 @@ import {
   inferCardCollisionBehavior,
   starterCards
 } from './royale_cards.js';
-import { cardLockState } from './royale_progression.js';
 import {
+  assertDeckCardsUnlockedForAge,
+  cardLockState,
   ensureDeckProgressionHero,
   listDeckProgressionForUser,
   listProgressionHeroOptions
@@ -1166,7 +1167,7 @@ export async function ensureUserStarterDeck(userId, env) {
   }
 }
 
-async function loadDeckCards(deckId, cardMap, env) {
+async function loadDeckCardIds(deckId, env) {
   const rows = await env.DB.prepare(
     `SELECT position, card_id
      FROM user_deck_cards
@@ -1174,8 +1175,12 @@ async function loadDeckCards(deckId, cardMap, env) {
      ORDER BY position ASC`
   ).bind(deckId).all();
 
-  return rows.results
-    .map((row) => cardMap.get(row.card_id))
+  return rows.results.map((row) => String(row.card_id));
+}
+
+async function loadDeckCards(deckId, cardMap, env) {
+  return (await loadDeckCardIds(deckId, env))
+    .map((cardId) => cardMap.get(cardId))
     .filter(Boolean);
 }
 
@@ -1260,6 +1265,16 @@ export async function saveDeckForUser(userId, payload, env) {
   ).bind(userId, slot).first();
 
   let deckId = existing?.id;
+  const progressionAge = deckId
+    ? (await ensureDeckProgressionHero(env, userId, Number(deckId))).age
+    : 0;
+  const existingCardIds = deckId ? await loadDeckCardIds(deckId, env) : [];
+  assertDeckCardsUnlockedForAge(
+    cardIds.map((cardId) => cardMap.get(cardId)).filter(Boolean),
+    progressionAge,
+    existingCardIds
+  );
+
   if (!deckId) {
     await env.DB.prepare(
       'INSERT INTO user_decks (user_id, name, slot) VALUES (?, ?, ?)'

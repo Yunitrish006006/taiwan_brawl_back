@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import {
   __resetGoogleJwkCacheForTests,
   verifyGoogleIdToken
-} from '../src/auth.js';
+} from '../src/core/auth.js';
 
 const CLIENT_ID = 'test-client.apps.googleusercontent.com';
 

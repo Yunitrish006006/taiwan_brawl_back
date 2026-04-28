@@ -16,7 +16,7 @@ import {
   matchRoomInviteRoute,
   matchRoomRoute,
   matchUserAvatarPath
-} from '../src/route_patterns.js';
+} from '../src/core/route_patterns.js';
 
 test('room and invite route matchers parse ids and actions', () => {
   assert.deepEqual(matchRoomRoute('/api/rooms/ABC123/join'), {

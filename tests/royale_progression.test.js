@@ -2,11 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  assertDeckCardsUnlockedForAge,
   cardLockState,
   listProgressionHeroOptions,
+  lockedDeckCardsForAge,
   normalizeProgressionHeroId,
   unlockedTiersForAge
-} from '../src/royale_progression.js';
+} from '../src/royale/royale_progression.js';
 
 test('age gates expose requested card unlock tiers', () => {
   assert.deepEqual(unlockedTiersForAge(0), {
@@ -29,6 +31,26 @@ test('cardLockState follows type and special id unlock ages', () => {
   assert.equal(cardLockState({ id: 'roadside_elder', type: 'melee' }, 8).locked, false);
   assert.equal(cardLockState({ id: 'delinquent_89', type: 'swarm' }, 13).unlockAge, 14);
   assert.equal(cardLockState({ id: 'convenience_shift', type: 'job' }, 15).locked, true);
+});
+
+test('deck unlock validation blocks newly added age locked cards', () => {
+  const cards = [
+    { id: 'betel_nut', nameEn: 'Betel Nut', type: 'equipment' },
+    { id: 'fireball', nameEn: 'Fireball', type: 'spell' },
+    { id: 'swordsman', nameEn: 'Swordsman', type: 'melee' }
+  ];
+
+  assert.deepEqual(
+    lockedDeckCardsForAge(cards, 0).map((card) => card.id),
+    ['fireball', 'swordsman']
+  );
+  assert.throws(
+    () => assertDeckCardsUnlockedForAge(cards, 0),
+    /Deck contains cards locked for age 0: Fireball \(age 5\), Swordsman \(age 8\)/
+  );
+  assert.doesNotThrow(() =>
+    assertDeckCardsUnlockedForAge(cards, 5, ['swordsman'])
+  );
 });
 
 test('unknown hero options fall back safely', () => {

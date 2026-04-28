@@ -37,7 +37,7 @@ import {
   terrainGateLateralForProgress,
   terrainLimitedProgressForMove,
   terrainNavigationLateralForMove
-} from '../src/royale_battle_rules.js';
+} from '../src/royale/royale_battle_rules.js';
 
 test('normalizeDropPoint maps normalized viewport coordinates into world space', () => {
   const leftPoint = normalizeDropPoint('left', { dropX: 0.5, dropY: 0.75 });

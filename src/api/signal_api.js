@@ -1,5 +1,5 @@
-import { requireUser } from './request_helpers.js';
-import { jsonResponse } from './utils.js';
+import { requireUser } from '../core/request_helpers.js';
+import { jsonResponse } from '../core/utils.js';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 

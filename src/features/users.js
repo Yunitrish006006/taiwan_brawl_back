@@ -4,12 +4,12 @@ import {
   getCurrentUser,
   jsonResponse,
   resolveAvatarUrlForSource
-} from './utils.js';
+} from '../core/utils.js';
 import {
   buildLlmBotSettingsSnapshot,
   normalizeLlmBotBaseUrl,
   normalizeLlmBotModel
-} from './royale_llm_bot.js';
+} from '../royale/royale_llm_bot.js';
 
 const VALID_AVATAR_SOURCES = ['google', 'custom', 'upload'];
 const VALID_LOCALES = ['zh-Hant', 'en', 'ja'];

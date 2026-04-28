@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { normalizeCardDefinition } from '../src/royale_cards.js';
+import { normalizeCardDefinition } from '../src/royale/royale_cards.js';
 
 test('equipment cards default to money cost type', () => {
   const card = normalizeCardDefinition({

@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { buildInitialBattlePlayerState } from '../src/royale_heroes.js';
-import { resolveJobCardEffect } from '../src/royale_job_events.js';
+import { buildInitialBattlePlayerState } from '../src/royale/royale_heroes.js';
+import { resolveJobCardEffect } from '../src/royale/royale_job_events.js';
 
 test('resolveJobCardEffect applies money gains and stage-two mental illness for ordinary people', () => {
   const room = {

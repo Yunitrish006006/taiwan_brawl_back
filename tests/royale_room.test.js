@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { RoyaleRoom } from '../src/royale_room.js';
-import { starterCards } from '../src/royale_cards.js';
+import { RoyaleRoom } from '../src/royale/royale_room.js';
+import { starterCards } from '../src/royale/royale_cards.js';
 
 function createStateStub() {
   const storageData = new Map();

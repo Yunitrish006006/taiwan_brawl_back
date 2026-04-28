@@ -7,7 +7,7 @@ import {
   listHeroUnitCards,
   normalizeHeroId,
   registerUnitHeroDefinitions
-} from '../src/royale_heroes.js';
+} from '../src/royale/royale_heroes.js';
 
 test('can register unit cards as heroes', () => {
   const customUnitCard = {

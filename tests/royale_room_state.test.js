@@ -6,12 +6,12 @@ import {
   buildPlayerSnapshot,
   createBattleState,
   normalizeHostBattleState
-} from '../src/royale_room_state.js';
+} from '../src/royale/royale_room_state.js';
 import {
   DEFAULT_ARENA_ID,
   DOUBLE_BRIDGE_ARENA_ID,
   TRIPLE_BRIDGE_ARENA_ID
-} from '../src/royale_battle_rules.js';
+} from '../src/royale/royale_battle_rules.js';
 
 test('createBattleState seeds hand, queue, and bot think time', () => {
   const battle = createBattleState({

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { resolveEventCard } from '../src/royale_event_cards.js';
+import { resolveEventCard } from '../src/royale/royale_event_cards.js';
 
 test('mom event grants money immediately', () => {
   const room = {

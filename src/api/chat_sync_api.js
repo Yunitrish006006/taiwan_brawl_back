@@ -1,5 +1,5 @@
-import { requireUser } from './request_helpers.js';
-import { jsonResponse } from './utils.js';
+import { requireUser } from '../core/request_helpers.js';
+import { jsonResponse } from '../core/utils.js';
 
 // Chat history sync via KV — lets a user upload a single conversation so another
 // device can download and merge it.  Data is stored per-conversation under key

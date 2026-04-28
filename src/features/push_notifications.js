@@ -1,6 +1,6 @@
 import webpush from 'web-push';
 
-import { jsonResponse } from './utils.js';
+import { jsonResponse } from '../core/utils.js';
 
 const VALID_PUSH_PLATFORMS = ['ios', 'web'];
 const APNS_INVALID_REASONS = new Set(['BadDeviceToken', 'DeviceTokenNotForTopic', 'Unregistered']);

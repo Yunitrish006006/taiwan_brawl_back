@@ -5,13 +5,13 @@ import {
   solveUnitMovementPlan,
   unitBodyContactDistance,
   unitDesiredLateral
-} from '../src/royale_collision_solver.js';
+} from '../src/royale/royale_collision_solver.js';
 import {
   BRIDGE_MIN_LATERAL,
   RIVER_MIN_PROGRESS,
   distanceBetweenPoints,
   normalizeArenaConfig
-} from '../src/royale_battle_rules.js';
+} from '../src/royale/royale_battle_rules.js';
 
 function unit(overrides = {}) {
   return {

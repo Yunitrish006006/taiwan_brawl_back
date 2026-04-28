@@ -1,11 +1,11 @@
-import { withAuthenticatedUser } from './request_helpers.js';
-import { jsonResponse } from './utils.js';
+import { withAuthenticatedUser } from '../core/request_helpers.js';
+import { jsonResponse } from '../core/utils.js';
 import {
   buildLlmBotSpec,
   decideLlmBotAction,
   fetchUserLlmBotSettings,
   handleLlmBotMcpPayload
-} from './royale_llm_bot.js';
+} from '../royale/royale_llm_bot.js';
 
 async function handleGetSpec(request) {
   return jsonResponse({ ok: true, spec: buildLlmBotSpec() }, 200, request);

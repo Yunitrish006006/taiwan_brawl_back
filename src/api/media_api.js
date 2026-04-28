@@ -3,7 +3,7 @@ import {
   getCardCharacterImageResponse,
   getCardCharacterAssetResponse,
   getCardBgImageResponse
-} from './royale_repository.js';
+} from '../royale/royale_repository.js';
 import {
   matchCardImagePath,
   matchCardCharacterAssetPath,
@@ -11,9 +11,9 @@ import {
   matchCardCharacterImagePath,
   matchCardBgImagePath,
   matchUserAvatarPath
-} from './route_patterns.js';
-import { getUserAvatarImageResponse } from './users.js';
-import { jsonResponse } from './utils.js';
+} from '../core/route_patterns.js';
+import { getUserAvatarImageResponse } from '../features/users.js';
+import { jsonResponse } from '../core/utils.js';
 
 export async function handleMediaRequest(request, env, url) {
   const cardImageId = matchCardImagePath(url.pathname);

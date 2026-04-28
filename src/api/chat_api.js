@@ -1,6 +1,6 @@
-import { requireUser } from './request_helpers.js';
-import { sendDirectMessagePush } from './push_notifications.js';
-import { jsonResponse } from './utils.js';
+import { requireUser } from '../core/request_helpers.js';
+import { sendDirectMessagePush } from '../features/push_notifications.js';
+import { jsonResponse } from '../core/utils.js';
 import { handleSyncUpload, handleSyncDownload } from './chat_sync_api.js';
 
 // ── helpers ──────────────────────────────────────────────────────────────────

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { GLOBAL_MOVE_SPEED_MULTIPLIER } from '../src/royale_battle_rules.js';
+import { GLOBAL_MOVE_SPEED_MULTIPLIER } from '../src/royale/royale_battle_rules.js';
 import {
   applyEquipmentEffects,
   applySelfEquipmentEffects,
@@ -12,7 +12,7 @@ import {
   equipmentEffects,
   recordCardUses,
   resolveComboCards
-} from '../src/royale_room_combat.js';
+} from '../src/royale/royale_room_combat.js';
 
 test('resolveComboCards validates hand membership and deck membership', () => {
   const player = {

@@ -1,31 +1,31 @@
-import { normalizeSimulationMode } from './royale_battle_rules.js';
+import { normalizeSimulationMode } from '../royale/royale_battle_rules.js';
 import {
   listHeroDefinitions,
   normalizeHeroId,
   registerUnitHeroDefinitions
-} from './royale_heroes.js';
-import { normalizeBotController } from './royale_llm_bot.js';
+} from '../royale/royale_heroes.js';
+import { normalizeBotController } from '../royale/royale_llm_bot.js';
 import {
   getDeckForUser,
   listCards,
   listDecksForUser,
   saveDeckForUser
-} from './royale_repository.js';
+} from '../royale/royale_repository.js';
 import {
   listDeckProgressionForUser,
   listProgressionHeroOptions,
   selectDeckProgressionHero
-} from './royale_progression.js';
-import { matchRoomRoute } from './route_patterns.js';
+} from '../royale/royale_progression.js';
+import { matchRoomRoute } from '../core/route_patterns.js';
 import { handleSendRoomInvite } from './friends_api.js';
-import { requireUser, withAuthenticatedUser } from './request_helpers.js';
+import { requireUser, withAuthenticatedUser } from '../core/request_helpers.js';
 import {
   getRoomStub,
   proxyRoomAction,
   proxyRoomJson,
   randomRoomCode
-} from './royale_room_proxy.js';
-import { jsonResponse } from './utils.js';
+} from '../royale/royale_room_proxy.js';
+import { jsonResponse } from '../core/utils.js';
 
 async function handleListCards(request, env) {
   const cards = await listCards(env);
@@ -68,8 +68,12 @@ async function handleSaveDeck(request, env) {
       return jsonResponse({ error: 'Invalid body' }, 400, request);
     }
 
-    const deck = await saveDeckForUser(user.id, body, env);
-    return jsonResponse({ ok: true, deck }, 200, request);
+    try {
+      const deck = await saveDeckForUser(user.id, body, env);
+      return jsonResponse({ ok: true, deck }, 200, request);
+    } catch (error) {
+      return jsonResponse({ error: error.message }, 400, request);
+    }
   });
 }
 

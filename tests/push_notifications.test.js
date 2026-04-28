@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { __testables } from '../src/push_notifications.js';
+import { __testables } from '../src/features/push_notifications.js';
 
 test('buildPublicPushConfig exposes ios and web only when provider config exists', () => {
   const config = __testables.buildPublicPushConfig({

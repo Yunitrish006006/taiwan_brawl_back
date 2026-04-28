@@ -1,4 +1,4 @@
-import { handleGoogleLogin, handleLogout, handleMe } from './auth.js';
+import { handleGoogleLogin, handleLogout, handleMe } from '../core/auth.js';
 import {
   exactAdminApiRouteHandler,
   handleDynamicAdminRoutes
@@ -24,8 +24,8 @@ import {
   handleUpdateThemeMode,
   handleUpdateUiPreferences,
   handleUploadAvatarImage
-} from './users.js';
-import { jsonResponse } from './utils.js';
+} from '../features/users.js';
+import { jsonResponse } from '../core/utils.js';
 
 async function handleHealth(request) {
   return jsonResponse({ ok: true, message: 'taiwan brawl api alive' }, 200, request);

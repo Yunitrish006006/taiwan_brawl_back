@@ -1,11 +1,11 @@
-import { requireUser, readJsonBody } from './request_helpers.js';
+import { requireUser, readJsonBody } from '../core/request_helpers.js';
 import {
   buildPublicPushConfig,
   registerPushDevice,
   unregisterPushDevice,
   validatePushRequestBody,
-} from './push_notifications.js';
-import { jsonResponse } from './utils.js';
+} from '../features/push_notifications.js';
+import { jsonResponse } from '../core/utils.js';
 
 async function handleNotificationsConfig(request, env) {
   return jsonResponse(

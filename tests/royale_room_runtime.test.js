@@ -9,12 +9,12 @@ import {
   tickBattleUnits,
   towerHitPoints,
   winnerSideFromTowers
-} from '../src/royale_room_runtime.js';
+} from '../src/royale/royale_room_runtime.js';
 import {
   distanceBetweenPoints,
   minimumBodyContactDistance,
   UNIT_COLLISION_GAP
-} from '../src/royale_battle_rules.js';
+} from '../src/royale/royale_battle_rules.js';
 
 test('regenerateBattleResources increases both players and clamps to max', () => {
   const room = {

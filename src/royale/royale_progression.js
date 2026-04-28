@@ -124,6 +124,40 @@ export function cardLockState(card, age) {
   };
 }
 
+export function lockedDeckCardsForAge(cards = [], age, allowedCardIds = []) {
+  const allowedIds = new Set(
+    Array.from(allowedCardIds || []).map((cardId) => String(cardId))
+  );
+  return cards
+    .filter((card) => {
+      const cardId = String(card?.id || '');
+      return cardId && !allowedIds.has(cardId) && cardLockState(card, age).locked;
+    })
+    .map((card) => ({
+      ...card,
+      ...cardLockState(card, age)
+    }));
+}
+
+export function assertDeckCardsUnlockedForAge(cards = [], age, allowedCardIds = []) {
+  const lockedCards = lockedDeckCardsForAge(cards, age, allowedCardIds);
+  if (!lockedCards.length) {
+    return;
+  }
+  const normalizedAge = Math.max(0, Math.floor(Number(age) || 0));
+  const lockedSummary = lockedCards
+    .slice(0, 3)
+    .map((card) => {
+      const name = String(card.nameEn || card.name || card.id || 'Unknown card');
+      return `${name} (age ${card.unlockAge})`;
+    })
+    .join(', ');
+  const extraCount = lockedCards.length > 3 ? `, +${lockedCards.length - 3} more` : '';
+  throw new Error(
+    `Deck contains cards locked for age ${normalizedAge}: ${lockedSummary}${extraCount}`
+  );
+}
+
 function startOptionsFromAchievements(achievements = {}) {
   const options = [DEFAULT_PROGRESSION_HERO_ID];
   if (achievements.firstWin) options.push('rich_heir');

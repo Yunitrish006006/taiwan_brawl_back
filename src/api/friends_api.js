@@ -9,19 +9,19 @@ import {
   sendFriendRequest,
   sendRoomInvite,
   unblockUser
-} from './friends_repository.js';
+} from '../features/friends_repository.js';
 import {
   matchBlockedUserRoute,
   matchFriendRequestRoute,
   matchFriendRoute,
   matchRoomInviteRoute
-} from './route_patterns.js';
+} from '../core/route_patterns.js';
 import {
   requireUser,
   readJsonBody,
   withAuthenticatedBadRequest
-} from './request_helpers.js';
-import { jsonResponse } from './utils.js';
+} from '../core/request_helpers.js';
+import { jsonResponse } from '../core/utils.js';
 
 async function handleFriendsOverview(request, env) {
   const user = await requireUser(request, env);

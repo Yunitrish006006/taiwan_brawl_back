@@ -1,5 +1,5 @@
-import { searchUsersForAdmin, updateUserRole } from './admin.js';
-import { canManageCards, isAdmin } from './permissions.js';
+import { searchUsersForAdmin, updateUserRole } from '../features/admin.js';
+import { canManageCards, isAdmin } from '../core/permissions.js';
 import {
   deleteCard,
   removeCardImage,
@@ -11,7 +11,7 @@ import {
   uploadCardBgImage,
   removeCardBgImage,
   upsertCard
-} from './royale_repository.js';
+} from '../royale/royale_repository.js';
 import {
   matchAdminUserRoleRoute,
   matchManagedCardCharacterAssetRoute,
@@ -20,12 +20,12 @@ import {
   matchManagedCardCharacterImageRoute,
   matchManagedCardBgImageRoute,
   matchManagedCardRoute
-} from './route_patterns.js';
+} from '../core/route_patterns.js';
 import {
   readJsonBody,
   withAuthorizedBadRequest
-} from './request_helpers.js';
-import { jsonResponse } from './utils.js';
+} from '../core/request_helpers.js';
+import { jsonResponse } from '../core/utils.js';
 
 function withAdminBadRequest(request, env, handler) {
   return withAuthorizedBadRequest(request, env, isAdmin, handler);

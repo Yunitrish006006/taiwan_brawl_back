@@ -1,5 +1,5 @@
-import { withAuthenticatedUser } from './request_helpers.js';
-import { jsonResponse } from './utils.js';
+import { withAuthenticatedUser } from '../core/request_helpers.js';
+import { jsonResponse } from '../core/utils.js';
 
 export function randomRoomCode() {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';

@@ -1,4 +1,4 @@
-import { assignableRoles, normalizeRole } from './permissions.js';
+import { assignableRoles, normalizeRole } from '../core/permissions.js';
 
 function mapManageUser(row) {
   return {

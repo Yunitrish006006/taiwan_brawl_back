@@ -1,10 +1,10 @@
 import { getAssetFromKV } from '@cloudflare/kv-asset-handler';
 
-import { handleApiRequest } from './api_router.js';
-import { handleMediaRequest } from './media_api.js';
-import { handlePrivacyPolicy } from './privacy_policy.js';
-import { RoyaleRoom } from './royale_room.js';
-import { corsHeaders, jsonResponse } from './utils.js';
+import { handleApiRequest } from './api/api_router.js';
+import { handleMediaRequest } from './api/media_api.js';
+import { handlePrivacyPolicy } from './core/privacy_policy.js';
+import { RoyaleRoom } from './royale/royale_room.js';
+import { corsHeaders, jsonResponse } from './core/utils.js';
 
 function buildAssetRequest(request, pathname) {
   if (pathname !== '/') {
@@ -38,8 +38,8 @@ async function handleStaticAssetRequest(request, env, url) {
 }
 
 export { RoyaleRoom };
-export { ChatRoom } from './chat_room.js';
-export { SignalRoom } from './signal_room.js';
+export { ChatRoom } from './rooms/chat_room.js';
+export { SignalRoom } from './rooms/signal_room.js';
 
 export default {
   async fetch(request, env, ctx) {

@@ -5,7 +5,7 @@ import {
   buildLlmBotProtocol,
   decideLlmBotAction,
   handleLlmBotMcpPayload
-} from '../src/royale_llm_bot.js';
+} from '../src/royale/royale_llm_bot.js';
 
 function sampleState() {
   return {
