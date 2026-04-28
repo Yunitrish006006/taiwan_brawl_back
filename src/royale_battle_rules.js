@@ -37,6 +37,9 @@ export const DOUBLE_BRIDGE_RIGHT_MAX_LATERAL = 780;
 
 export const DEFAULT_ARENA_ID = 'classic_bridge';
 export const DOUBLE_BRIDGE_ARENA_ID = 'classic_double_bridge';
+export const WIDE_BRIDGE_ARENA_ID = 'classic_wide_bridge';
+export const SIDE_BRIDGES_ARENA_ID = 'classic_side_bridges';
+export const TRIPLE_BRIDGE_ARENA_ID = 'classic_three_bridges';
 export const DEFAULT_ARENA_CONFIG = {
   id: DEFAULT_ARENA_ID,
   name: 'Classic Bridge',
@@ -87,36 +90,96 @@ export const DEFAULT_ARENA_CONFIG = {
   obstacles: []
 };
 
-export const DOUBLE_BRIDGE_ARENA_CONFIG = {
-  ...DEFAULT_ARENA_CONFIG,
-  id: DOUBLE_BRIDGE_ARENA_ID,
-  name: 'Classic Double Bridge',
-  terrainGates: [
+function bridgeArenaConfig(id, name, gateId, passableLateralRanges) {
+  return {
+    ...DEFAULT_ARENA_CONFIG,
+    id,
+    name,
+    terrainGates: [
+      {
+        id: gateId,
+        kind: 'river',
+        progressMin: RIVER_MIN_PROGRESS,
+        progressMax: RIVER_MAX_PROGRESS,
+        bridgeMinProgress: BRIDGE_MIN_PROGRESS,
+        bridgeMaxProgress: BRIDGE_MAX_PROGRESS,
+        passableLateralRanges
+      }
+    ],
+    obstacles: []
+  };
+}
+
+export const DOUBLE_BRIDGE_ARENA_CONFIG = bridgeArenaConfig(
+  DOUBLE_BRIDGE_ARENA_ID,
+  'Classic Double Bridge',
+  'central_river_double_bridge',
+  [
     {
-      id: 'central_river_double_bridge',
-      kind: 'river',
-      progressMin: RIVER_MIN_PROGRESS,
-      progressMax: RIVER_MAX_PROGRESS,
-      bridgeMinProgress: BRIDGE_MIN_PROGRESS,
-      bridgeMaxProgress: BRIDGE_MAX_PROGRESS,
-      passableLateralRanges: [
-        {
-          min: DOUBLE_BRIDGE_LEFT_MIN_LATERAL,
-          max: DOUBLE_BRIDGE_LEFT_MAX_LATERAL
-        },
-        {
-          min: DOUBLE_BRIDGE_RIGHT_MIN_LATERAL,
-          max: DOUBLE_BRIDGE_RIGHT_MAX_LATERAL
-        }
-      ]
+      min: DOUBLE_BRIDGE_LEFT_MIN_LATERAL,
+      max: DOUBLE_BRIDGE_LEFT_MAX_LATERAL
+    },
+    {
+      min: DOUBLE_BRIDGE_RIGHT_MIN_LATERAL,
+      max: DOUBLE_BRIDGE_RIGHT_MAX_LATERAL
     }
-  ],
-  obstacles: []
-};
+  ]
+);
+
+export const WIDE_BRIDGE_ARENA_CONFIG = bridgeArenaConfig(
+  WIDE_BRIDGE_ARENA_ID,
+  'Wide Center Bridge',
+  'central_river_wide_bridge',
+  [
+    {
+      min: 300,
+      max: 700
+    }
+  ]
+);
+
+export const SIDE_BRIDGES_ARENA_CONFIG = bridgeArenaConfig(
+  SIDE_BRIDGES_ARENA_ID,
+  'Side Bridges',
+  'central_river_side_bridges',
+  [
+    {
+      min: 140,
+      max: 320
+    },
+    {
+      min: 680,
+      max: 860
+    }
+  ]
+);
+
+export const TRIPLE_BRIDGE_ARENA_CONFIG = bridgeArenaConfig(
+  TRIPLE_BRIDGE_ARENA_ID,
+  'Three Bridge Crossing',
+  'central_river_three_bridges',
+  [
+    {
+      min: 150,
+      max: 270
+    },
+    {
+      min: 440,
+      max: 560
+    },
+    {
+      min: 730,
+      max: 850
+    }
+  ]
+);
 
 export const ARENA_CATALOG = [
   DEFAULT_ARENA_CONFIG,
-  DOUBLE_BRIDGE_ARENA_CONFIG
+  DOUBLE_BRIDGE_ARENA_CONFIG,
+  WIDE_BRIDGE_ARENA_CONFIG,
+  SIDE_BRIDGES_ARENA_CONFIG,
+  TRIPLE_BRIDGE_ARENA_CONFIG
 ];
 
 // Status effect constants

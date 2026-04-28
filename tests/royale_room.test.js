@@ -81,7 +81,9 @@ test('handleCreate forces bot rooms into host simulation mode', async () => {
   const payload = await response.json();
   assert.equal(response.status, 200);
   assert.equal(payload.room.simulationMode, 'host');
+  assert.ok(payload.room.arena?.id);
   assert.equal(state.storageData.get('room').simulationMode, 'host');
+  assert.equal(state.storageData.get('room').arena.id, payload.room.arena.id);
   assert.equal(state.storageData.get('room').players.left.heroId, 'low_income_household');
   assert.equal(state.storageData.get('room').players.right.heroId, 'low_income_household');
   assert.equal(state.storageData.get('room').players.right.botController, 'llm');
@@ -128,9 +130,11 @@ test('human rooms wait until both ready players are connected before starting', 
 
   room.room.players.right.connected = true;
 
+  const pendingArenaId = room.room.arena.id;
   assert.equal(await room.startBattleIfReady(), true);
   assert.equal(room.room.status, 'battle');
   assert.ok(room.room.battle);
+  assert.equal(room.room.battle.arena.id, pendingArenaId);
   room.stopTicking();
 });
 

@@ -12,6 +12,7 @@ import {
   normalizeDropPoint,
   normalizeArenaConfig,
   normalizeSimulationMode,
+  randomArenaConfig,
   randomBotThinkMs
 } from './royale_battle_rules.js';
 import {
@@ -124,6 +125,9 @@ export class RoyaleRoom {
           ? player.deckCards.map((card) => normalizeCardDefinition(card))
           : [];
       }
+    }
+    if (this.room) {
+      this.room.arena = normalizeArenaConfig(this.room.arena);
     }
     if (this.room?.status === 'battle') {
       this.room.battle.arena = normalizeArenaConfig(this.room.battle.arena);
@@ -326,6 +330,9 @@ export class RoyaleRoom {
       simulationMode,
       hostUserId: this.hostUserId(),
       viewerSide: viewer?.side ?? null,
+      arena: normalizeArenaConfig(
+        this.room.battle?.arena ?? this.room.arena
+      ),
       players: Object.values(this.room.players).map((player) => {
         const includeDeckState =
           player.side === viewer?.side || includeHostDecks;
@@ -382,6 +389,7 @@ export class RoyaleRoom {
       simulationMode: payload.vsBot ? 'host' : normalizeSimulationMode(payload.simulationMode),
       hostUserId: Number(payload.user.id),
       createdAt: new Date().toISOString(),
+      arena: randomArenaConfig(),
       players: {
         left: createPlayer('left', payload)
       },
@@ -710,8 +718,10 @@ export class RoyaleRoom {
   }
 
   startBattle() {
+    const arena = normalizeArenaConfig(this.room.arena);
     this.room.status = 'battle';
-    this.room.battle = createBattleState(this.room.players);
+    this.room.arena = arena;
+    this.room.battle = createBattleState(this.room.players, { arena });
     if (normalizeSimulationMode(this.room.simulationMode) === 'server') {
       this.ensureTicking();
     }
@@ -722,6 +732,7 @@ export class RoyaleRoom {
     this.stopTicking();
     this.room.status = 'lobby';
     this.room.battle = null;
+    this.room.arena = randomArenaConfig();
     for (const player of Object.values(this.room.players)) {
       player.ready = Boolean(player.isBot);
       player.connected = Boolean(player.isBot) || player.connected;

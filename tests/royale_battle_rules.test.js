@@ -14,7 +14,10 @@ import {
   LATERAL_MIN,
   RIVER_MAX_PROGRESS,
   RIVER_MIN_PROGRESS,
+  SIDE_BRIDGES_ARENA_ID,
+  TRIPLE_BRIDGE_ARENA_ID,
   UNIT_COLLISION_GAP,
+  WIDE_BRIDGE_ARENA_ID,
   arenaConfigById,
   bodyRadiusForUnitType,
   distanceBetweenPoints,
@@ -119,8 +122,12 @@ test('arena catalog supports random dual-bridge maps with separated bridge lanes
   const arenaIds = listArenaConfigs().map((arena) => arena.id);
   assert.ok(arenaIds.includes(DEFAULT_ARENA_ID));
   assert.ok(arenaIds.includes(DOUBLE_BRIDGE_ARENA_ID));
+  assert.ok(arenaIds.includes(WIDE_BRIDGE_ARENA_ID));
+  assert.ok(arenaIds.includes(SIDE_BRIDGES_ARENA_ID));
+  assert.ok(arenaIds.includes(TRIPLE_BRIDGE_ARENA_ID));
   assert.equal(randomArenaConfig(() => 0).id, DEFAULT_ARENA_ID);
-  assert.equal(randomArenaConfig(() => 0.99).id, DOUBLE_BRIDGE_ARENA_ID);
+  assert.equal(randomArenaConfig(() => 0.25).id, DOUBLE_BRIDGE_ARENA_ID);
+  assert.equal(randomArenaConfig(() => 0.99).id, TRIPLE_BRIDGE_ARENA_ID);
 
   const arena = arenaConfigById(DOUBLE_BRIDGE_ARENA_ID);
   assert.equal(arena.terrainGates[0].passableLateralRanges.length, 2);

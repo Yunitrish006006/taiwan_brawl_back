@@ -9,7 +9,8 @@ import {
 } from '../src/royale_room_state.js';
 import {
   DEFAULT_ARENA_ID,
-  DOUBLE_BRIDGE_ARENA_ID
+  DOUBLE_BRIDGE_ARENA_ID,
+  TRIPLE_BRIDGE_ARENA_ID
 } from '../src/royale_battle_rules.js';
 
 test('createBattleState seeds hand, queue, and bot think time', () => {
@@ -49,8 +50,12 @@ test('createBattleState randomly selects an arena for new battles', () => {
     DEFAULT_ARENA_ID
   );
   assert.equal(
-    createBattleState(players, { random: () => 0.99 }).arena.id,
+    createBattleState(players, { random: () => 0.25 }).arena.id,
     DOUBLE_BRIDGE_ARENA_ID
+  );
+  assert.equal(
+    createBattleState(players, { random: () => 0.99 }).arena.id,
+    TRIPLE_BRIDGE_ARENA_ID
   );
 });
 
