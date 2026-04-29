@@ -33,6 +33,34 @@ const CARD_WRITE_COLUMNS = `id, name, elixir_cost, energy_cost, energy_cost_type
       name_i18n`;
 const CARD_WRITE_PLACEHOLDERS =
   '?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?';
+const CARD_CACHE_TTL_MS = 60 * 1000;
+
+let cardsCache = {
+  expiresAt: 0,
+  cards: null,
+  pending: null
+};
+
+function cloneCard(card) {
+  return {
+    ...card,
+    characterAssets: Array.isArray(card.characterAssets)
+      ? card.characterAssets.map((asset) => ({ ...asset }))
+      : []
+  };
+}
+
+function cloneCards(cards) {
+  return cards.map(cloneCard);
+}
+
+function invalidateCardsCache() {
+  cardsCache = {
+    expiresAt: 0,
+    cards: null,
+    pending: null
+  };
+}
 
 function normalizeLocaleKey(locale) {
   const normalized = String(locale ?? '').trim();
@@ -577,7 +605,19 @@ function serializeDeckRow(deckRow, cards, progression = null) {
     name: deckRow.name,
     slot: Number(deckRow.slot),
     updatedAt: deckRow.updated_at,
+    cardCount: cards.length,
     cards,
+    progression
+  };
+}
+
+function serializeDeckSummaryRow(deckRow, progression = null) {
+  return {
+    id: Number(deckRow.id),
+    name: deckRow.name,
+    slot: Number(deckRow.slot),
+    updatedAt: deckRow.updated_at,
+    cardCount: Number(deckRow.card_count || 0),
     progression
   };
 }
@@ -632,7 +672,7 @@ export async function ensureCardsSeeded(env) {
   await insertStarterCards(env);
 }
 
-export async function listCards(env) {
+async function loadCardsFromDatabase(env) {
   await ensureCardsSeeded(env);
   const rows = await env.DB.prepare(
     `${CARD_SELECT_COLUMNS}
@@ -653,6 +693,31 @@ export async function listCards(env) {
     }
   }
   return cards;
+}
+
+export async function listCards(env, { bypassCache = false } = {}) {
+  const now = Date.now();
+  if (!bypassCache && cardsCache.cards && cardsCache.expiresAt > now) {
+    return cloneCards(cardsCache.cards);
+  }
+  if (!bypassCache && cardsCache.pending) {
+    return cloneCards(await cardsCache.pending);
+  }
+
+  const pending = loadCardsFromDatabase(env);
+  cardsCache.pending = pending;
+  try {
+    const cards = await pending;
+    cardsCache = {
+      expiresAt: Date.now() + CARD_CACHE_TTL_MS,
+      cards: cloneCards(cards),
+      pending: null
+    };
+    return cloneCards(cards);
+  } catch (error) {
+    cardsCache.pending = null;
+    throw error;
+  }
 }
 
 export async function upsertCard(env, payload) {
@@ -689,6 +754,7 @@ export async function upsertCard(env, payload) {
     .bind(...cardWriteBindings(card))
     .run();
 
+  invalidateCardsCache();
   return fetchCardById(env, card.id);
 }
 
@@ -735,6 +801,7 @@ export async function deleteCard(env, cardId) {
   }
   await env.STATIC_ASSETS?.delete?.(cardBgImageKey(normalizedCardId));
   await env.STATIC_ASSETS?.delete?.(cardBgImageMetaKey(normalizedCardId));
+  invalidateCardsCache();
 }
 
 function decodeBase64(value) {
@@ -799,6 +866,7 @@ export async function uploadCardImage(env, cardId, payload) {
     .bind(imageVersion, normalizedCardId)
     .run();
 
+  invalidateCardsCache();
   return fetchCardById(env, normalizedCardId);
 }
 
@@ -811,6 +879,7 @@ export async function removeCardImage(env, cardId) {
     .bind(normalizedCardId)
     .run();
 
+  invalidateCardsCache();
   return fetchCardById(env, normalizedCardId);
 }
 
@@ -886,6 +955,7 @@ async function _uploadCardLayerImage(
     .bind(imageVersion, normalizedCardId)
     .run();
 
+  invalidateCardsCache();
   return fetchCardById(env, normalizedCardId);
 }
 
@@ -961,6 +1031,7 @@ export async function removeCardCharacterImage(env, cardId, direction = 'front')
   )
     .bind(normalizedCardId)
     .run();
+  invalidateCardsCache();
   return fetchCardById(env, normalizedCardId);
 }
 
@@ -1064,9 +1135,10 @@ export async function uploadCardCharacterAsset(env, cardId, assetId, payload) {
       assetVersion,
       String(payload?.fileName ?? '').trim() || null,
       contentType
-    )
+  )
     .run();
 
+  invalidateCardsCache();
   return fetchCardById(env, normalizedCardId);
 }
 
@@ -1085,6 +1157,7 @@ export async function removeCardCharacterAsset(env, cardId, assetId) {
     .bind(normalizedCardId, normalizedAssetId)
     .run();
 
+  invalidateCardsCache();
   return fetchCardById(env, normalizedCardId);
 }
 
@@ -1126,6 +1199,7 @@ export async function removeCardBgImage(env, cardId) {
   await env.DB.prepare('UPDATE cards SET bg_image_version = 0 WHERE id = ?')
     .bind(normalizedCardId)
     .run();
+  invalidateCardsCache();
   return fetchCardById(env, normalizedCardId);
 }
 
@@ -1133,9 +1207,9 @@ export async function getCardBgImageResponse(env, cardId) {
   return _getCardLayerImageResponse(env, cardId, cardBgImageKey, cardBgImageMetaKey);
 }
 
-export async function getCardMap(env) {
-  const cards = await listCards(env);
-  return new Map(cards.map((card) => [card.id, card]));
+export async function getCardMap(env, { cards = null } = {}) {
+  const resolvedCards = Array.isArray(cards) ? cards : await listCards(env);
+  return new Map(resolvedCards.map((card) => [card.id, card]));
 }
 
 async function createStarterDeckForUser(userId, env) {
@@ -1214,7 +1288,43 @@ export async function listDecksForUser(userId, env) {
   return results;
 }
 
-export async function getDeckForUser(userId, deckId, env) {
+export async function listDeckSummariesForUser(userId, env) {
+  await ensureUserStarterDeck(userId, env);
+  const progressionByDeckId = new Map(
+    (await listDeckProgressionForUser(env, userId)).map((progression) => [
+      Number(progression.deckId),
+      progression
+    ])
+  );
+  const decks = await env.DB.prepare(
+    `SELECT d.id, d.name, d.slot, d.updated_at,
+            (SELECT COUNT(*)
+             FROM user_deck_cards dc
+             WHERE dc.deck_id = d.id) AS card_count
+     FROM user_decks d
+     WHERE d.user_id = ?
+     ORDER BY d.slot ASC, d.id ASC`
+  ).bind(userId).all();
+
+  const results = [];
+  for (const deckRow of decks.results) {
+    results.push(
+      serializeDeckSummaryRow(
+        deckRow,
+        progressionByDeckId.get(Number(deckRow.id)) ||
+        await ensureDeckProgressionHero(env, userId, Number(deckRow.id))
+      )
+    );
+  }
+  return results;
+}
+
+export async function getDeckForUser(
+  userId,
+  deckId,
+  env,
+  { cardMap = null } = {}
+) {
   await ensureUserStarterDeck(userId, env);
   const deck = await env.DB.prepare(
     `SELECT id, name, slot, updated_at
@@ -1226,10 +1336,31 @@ export async function getDeckForUser(userId, deckId, env) {
     return null;
   }
 
-  const cardMap = await getCardMap(env);
+  const resolvedCardMap = cardMap || (await getCardMap(env));
   return serializeDeckRow(
     deck,
-    await loadDeckCards(deck.id, cardMap, env),
+    await loadDeckCards(deck.id, resolvedCardMap, env),
+    await ensureDeckProgressionHero(env, userId, Number(deck.id))
+  );
+}
+
+export async function getDeckSummaryForUser(userId, deckId, env) {
+  await ensureUserStarterDeck(userId, env);
+  const deck = await env.DB.prepare(
+    `SELECT d.id, d.name, d.slot, d.updated_at,
+            (SELECT COUNT(*)
+             FROM user_deck_cards dc
+             WHERE dc.deck_id = d.id) AS card_count
+     FROM user_decks d
+     WHERE d.user_id = ? AND d.id = ?`
+  ).bind(userId, deckId).first();
+
+  if (!deck) {
+    return null;
+  }
+
+  return serializeDeckSummaryRow(
+    deck,
     await ensureDeckProgressionHero(env, userId, Number(deck.id))
   );
 }

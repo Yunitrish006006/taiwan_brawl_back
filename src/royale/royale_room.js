@@ -1,4 +1,8 @@
-import { recordMatchHistory } from './royale_repository.js';
+import {
+  getDeckForUser,
+  listCards,
+  recordMatchHistory
+} from './royale_repository.js';
 import {
   UNIT_COLLISION_GAP,
   bodyRadiusForUnitType,
@@ -53,6 +57,8 @@ import {
   nowMs
 } from './royale_room_state.js';
 import {
+  registerUnitHeroDefinitions,
+  normalizeHeroId,
   canSpendBattlePlayerEnergy,
   canSpendBattlePlayerMoney,
   spendBattlePlayerMoney,
@@ -96,6 +102,7 @@ export class RoyaleRoom {
     this.sockets = new Map();
     this.tickHandle = null;
     this.lastPersistedAt = 0;
+    this.lastStartError = null;
     this.mutationQueue = Promise.resolve();
     this.mutationDepth = 0;
     this.initialized = this.load();
@@ -122,10 +129,22 @@ export class RoyaleRoom {
   async load() {
     this.room = await this.state.storage.get('room');
     if (this.room?.players) {
+      const hostUserId = Number(
+        this.room.hostUserId ||
+        this.room.players?.left?.userId ||
+        0
+      );
       for (const player of Object.values(this.room.players)) {
         player.deckCards = Array.isArray(player.deckCards)
           ? player.deckCards.map((card) => normalizeCardDefinition(card))
           : [];
+        player.deckCardIds = Array.isArray(player.deckCardIds)
+          ? player.deckCardIds.map(String)
+          : player.deckCards.map((card) => card.id);
+        player.deckOwnerUserId = Number(
+          player.deckOwnerUserId ||
+          (player.isBot ? hostUserId : player.userId)
+        );
       }
     }
     if (this.room) {
@@ -292,14 +311,121 @@ export class RoyaleRoom {
     );
   }
 
+  playerHasBattleDeck(player) {
+    return (
+      Array.isArray(player?.deckCards) &&
+      player.deckCards.length > 0 &&
+      Array.isArray(player?.deckCardIds) &&
+      player.deckCardIds.length > 0
+    );
+  }
+
+  assignPlayerDeck(player, deck) {
+    const deckCards = Array.isArray(deck?.cards)
+      ? deck.cards.map((card) => normalizeCardDefinition(card))
+      : [];
+    player.deckName = String(deck?.name || player.deckName || 'Battle Deck');
+    player.deckCardIds = deckCards.map((card) => card.id);
+    player.deckCards = deckCards;
+  }
+
+  async prepareBattleDecksForStart() {
+    if (!this.room) {
+      return 'Room not found';
+    }
+
+    const players = Object.values(this.room.players);
+    const loadedDecks = new Map();
+    const needsDatabaseLoad = players.some(
+      (player) => !player.isBot && !this.playerHasBattleDeck(player)
+    );
+
+    if (needsDatabaseLoad) {
+      if (!this.env?.DB) {
+        return 'Deck data is unavailable';
+      }
+
+      const cards = await listCards(this.env);
+      registerUnitHeroDefinitions(cards);
+      const cardMap = new Map(cards.map((card) => [card.id, card]));
+
+      for (const player of players) {
+        if (player.isBot) {
+          continue;
+        }
+
+        const ownerUserId = Number(player.deckOwnerUserId || player.userId);
+        const deck = await getDeckForUser(
+          ownerUserId,
+          Number(player.deckId),
+          this.env,
+          { cardMap }
+        );
+        if (!deck) {
+          return `${player.name}'s deck was not found`;
+        }
+        if (!Array.isArray(deck.cards) || deck.cards.length === 0) {
+          return `${player.name}'s deck has no cards`;
+        }
+
+        player.deckOwnerUserId = ownerUserId;
+        this.assignPlayerDeck(player, deck);
+        loadedDecks.set(`${ownerUserId}:${player.deckId}`, {
+          deckName: player.deckName,
+          deckCardIds: player.deckCardIds.slice(),
+          deckCards: player.deckCards.map((card) => ({ ...card }))
+        });
+      }
+    } else {
+      registerUnitHeroDefinitions(players.flatMap((player) => player.deckCards || []));
+      for (const player of players) {
+        if (player.isBot) {
+          continue;
+        }
+        const ownerUserId = Number(player.deckOwnerUserId || player.userId);
+        player.deckOwnerUserId = ownerUserId;
+        loadedDecks.set(`${ownerUserId}:${player.deckId}`, {
+          deckName: player.deckName,
+          deckCardIds: player.deckCardIds.slice(),
+          deckCards: player.deckCards.map((card) => ({ ...card }))
+        });
+      }
+    }
+
+    const fallbackDeck = loadedDecks.values().next().value;
+    for (const player of players) {
+      if (player.isBot && !this.playerHasBattleDeck(player)) {
+        const ownerUserId = Number(player.deckOwnerUserId || this.hostUserId());
+        const source = loadedDecks.get(`${ownerUserId}:${player.deckId}`) || fallbackDeck;
+        if (!source) {
+          return `${player.name}'s deck has no cards`;
+        }
+        player.deckOwnerUserId = ownerUserId;
+        player.deckName = source.deckName;
+        player.deckCardIds = source.deckCardIds.slice();
+        player.deckCards = source.deckCards.map((card) => normalizeCardDefinition(card));
+      }
+      player.heroId = normalizeHeroId(player.heroId);
+    }
+
+    return null;
+  }
+
   async startBattleIfReady() {
     return this.enqueueMutation(() => this.startBattleIfReadyMutation());
   }
 
   async startBattleIfReadyMutation() {
     if (!this.canStartBattle()) {
+      this.lastStartError = null;
       return false;
     }
+    const deckError = await this.prepareBattleDecksForStart();
+    if (deckError) {
+      this.lastStartError = deckError;
+      return false;
+    }
+    this.lastStartError = null;
     this.startBattle();
     await this.broadcast('battle_started');
     return true;
@@ -326,7 +452,12 @@ export class RoyaleRoom {
 
     player.ready = true;
     await this.persistAndBroadcast('room_state');
-    await this.startBattleIfReady();
+    const started = await this.startBattleIfReady();
+    if (!started && this.lastStartError) {
+      player.ready = false;
+      await this.persistAndBroadcast('room_state');
+      return false;
+    }
     return true;
   }
 
@@ -469,7 +600,10 @@ export class RoyaleRoom {
       return json({ error: 'Match has ended, start a rematch first' }, 409);
     }
 
-    await this.markPlayerReady(payload.userId);
+    const ready = await this.markPlayerReady(payload.userId);
+    if (!ready && this.lastStartError) {
+      return json({ error: this.lastStartError }, 409);
+    }
     return this.okRoom(payload.userId);
   }
 
@@ -612,7 +746,12 @@ export class RoyaleRoom {
         this.sendToUser(userId, { type: 'pong' });
         return;
       case 'ready':
-        await this.markPlayerReady(userId);
+        if (!(await this.markPlayerReady(userId)) && this.lastStartError) {
+          this.sendToUser(userId, {
+            type: 'error',
+            message: this.lastStartError
+          });
+        }
         return;
       case 'play_card':
         await this.routeSocketCombo(userId, this.normalizeComboPayload(payload));
@@ -790,6 +929,8 @@ export class RoyaleRoom {
     for (const player of Object.values(this.room.players)) {
       player.ready = Boolean(player.isBot);
       player.connected = Boolean(player.isBot) || player.connected;
+      player.deckCardIds = [];
+      player.deckCards = [];
     }
   }
 

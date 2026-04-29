@@ -5,6 +5,7 @@ import {
   buildBattleSnapshot,
   buildPlayerSnapshot,
   createBattleState,
+  createPlayer,
   normalizeHostBattleState
 } from '../src/royale/royale_room_state.js';
 import {
@@ -57,6 +58,26 @@ test('createBattleState randomly selects an arena for new battles', () => {
     createBattleState(players, { random: () => 0.99 }).arena.id,
     TRIPLE_BRIDGE_ARENA_ID
   );
+});
+
+test('createPlayer accepts deck summaries before battle hydration', () => {
+  const player = createPlayer('left', {
+    user: { id: 7, name: 'Alice' },
+    deck: {
+      id: 10,
+      name: 'Fast Lobby Deck',
+      ownerUserId: 7,
+      cardCount: 8
+    },
+    heroId: 'knight'
+  });
+
+  assert.equal(player.deckId, 10);
+  assert.equal(player.deckName, 'Fast Lobby Deck');
+  assert.equal(player.deckOwnerUserId, 7);
+  assert.deepEqual(player.deckCardIds, []);
+  assert.deepEqual(player.deckCards, []);
+  assert.equal(player.heroId, 'knight');
 });
 
 test('build snapshots include battle state for host viewers', () => {

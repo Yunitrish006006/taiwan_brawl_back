@@ -9,9 +9,9 @@ import {
   randomArenaConfig
 } from './royale_battle_rules.js';
 import {
+  DEFAULT_HERO_ID,
   buildHeroSnapshot,
   buildInitialBattlePlayerState,
-  normalizeHeroId,
   syncBattlePlayerTotals
 } from './royale_heroes.js';
 import { normalizeBotController } from './royale_llm_bot.js';
@@ -46,6 +46,11 @@ function normalizeAnimationEvent(event) {
     return null;
   }
   return { animation, id };
+}
+
+function requestedHeroId(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  return normalized || DEFAULT_HERO_ID;
 }
 
 export function createBattleState(playersBySide, options = {}) {
@@ -88,15 +93,27 @@ export function createBattleState(playersBySide, options = {}) {
 }
 
 export function createPlayer(side, payload) {
+  const deckCards = Array.isArray(payload.deck?.cards)
+    ? payload.deck.cards.map((card) => normalizeCardDefinition(card))
+    : [];
+  const deckCardIds = Array.isArray(payload.deck?.cardIds)
+    ? payload.deck.cardIds.map(String)
+    : deckCards.map((card) => card.id);
+
   return {
     side,
     userId: Number(payload.user.id),
     name: payload.user.name,
     deckId: Number(payload.deck.id),
     deckName: payload.deck.name,
-    deckCardIds: payload.deck.cards.map((card) => card.id),
-    deckCards: payload.deck.cards.map((card) => normalizeCardDefinition(card)),
-    heroId: normalizeHeroId(payload.heroId),
+    deckOwnerUserId: Number(
+      payload.deckOwnerUserId ||
+      payload.deck.ownerUserId ||
+      payload.user.id
+    ),
+    deckCardIds,
+    deckCards,
+    heroId: requestedHeroId(payload.heroId),
     botController: Boolean(payload.user.isBot)
       ? normalizeBotController(payload.user.botController)
       : 'heuristic',

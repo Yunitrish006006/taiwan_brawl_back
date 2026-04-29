@@ -1,14 +1,15 @@
 import { normalizeSimulationMode } from '../royale/royale_battle_rules.js';
 import {
   listHeroDefinitions,
-  normalizeHeroId,
   registerUnitHeroDefinitions
 } from '../royale/royale_heroes.js';
 import { normalizeBotController } from '../royale/royale_llm_bot.js';
 import {
+  getDeckSummaryForUser,
   getDeckForUser,
   listCards,
   listDecksForUser,
+  listDeckSummariesForUser,
   saveDeckForUser
 } from '../royale/royale_repository.js';
 import {
@@ -56,7 +57,13 @@ async function handleListProgression(request, env) {
 
 async function handleListDecks(request, env) {
   return withAuthenticatedUser(request, env, async (user) => {
-    const decks = await listDecksForUser(user.id, env);
+    const url = new URL(request.url);
+    const summary = ['1', 'true', 'yes'].includes(
+      String(url.searchParams.get('summary') || '').toLowerCase()
+    );
+    const decks = summary
+      ? await listDeckSummariesForUser(user.id, env)
+      : await listDecksForUser(user.id, env);
     return jsonResponse({ ok: true, decks }, 200, request);
   });
 }
@@ -87,12 +94,13 @@ async function handleSelectDeckHero(request, env) {
     if (!Number.isInteger(deckId) || deckId <= 0) {
       return jsonResponse({ error: 'deckId is required' }, 400, request);
     }
-    const deck = await getDeckForUser(user.id, deckId, env);
+    const cards = await listCards(env);
+    const cardMap = new Map(cards.map((card) => [card.id, card]));
+    const deck = await getDeckForUser(user.id, deckId, env, { cardMap });
     if (!deck) {
       return jsonResponse({ error: 'Deck not found' }, 404, request);
     }
     try {
-      const cards = await listCards(env);
       const progression = await selectDeckProgressionHero(
         env,
         user.id,
@@ -107,18 +115,28 @@ async function handleSelectDeckHero(request, env) {
   });
 }
 
-async function resolveOwnedDeck(request, env, user, body) {
+async function resolveOwnedDeck(
+  request,
+  env,
+  user,
+  body
+) {
   const deckId = Number(body?.deckId);
   if (!Number.isInteger(deckId) || deckId <= 0) {
     return { error: jsonResponse({ error: 'deckId is required' }, 400, request) };
   }
 
-  const deck = await getDeckForUser(user.id, deckId, env);
+  const deck = await getDeckSummaryForUser(user.id, deckId, env);
   if (!deck) {
     return { error: jsonResponse({ error: 'Deck not found' }, 404, request) };
   }
 
-  return { deck };
+  return { deck: { ...deck, ownerUserId: user.id } };
+}
+
+function requestedHeroId(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  return normalized || 'ordinary_person';
 }
 
 async function handleCreateRoom(request, env) {
@@ -128,11 +146,9 @@ async function handleCreateRoom(request, env) {
     if (error) {
       return error;
     }
-    const cards = await listCards(env);
-    registerUnitHeroDefinitions(cards);
     const vsBot = Boolean(body?.vsBot);
     const simulationMode = vsBot ? 'host' : normalizeSimulationMode(body?.simulationMode);
-    const heroId = normalizeHeroId(body?.heroId || deck.progression?.heroId);
+    const heroId = requestedHeroId(body?.heroId || deck.progression?.heroId);
     const botController = vsBot ? normalizeBotController(body?.botController) : 'heuristic';
 
     for (let attempt = 0; attempt < 5; attempt += 1) {
@@ -175,13 +191,10 @@ async function handleJoinRoom(request, env, code) {
       return error;
     }
 
-    const cards = await listCards(env);
-    registerUnitHeroDefinitions(cards);
-
     return proxyRoomAction(request, env, code, '/internal/join', async () => ({
       user: { id: user.id, name: user.name },
       deck,
-      heroId: normalizeHeroId(body?.heroId || deck.progression?.heroId)
+      heroId: requestedHeroId(body?.heroId || deck.progression?.heroId)
     }));
   });
 }
