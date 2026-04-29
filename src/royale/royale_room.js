@@ -3,6 +3,7 @@ import {
   UNIT_COLLISION_GAP,
   bodyRadiusForUnitType,
   DISCONNECT_GRACE_MS,
+  DISCARD_SPIRIT_COST,
   PERSIST_INTERVAL_MS,
   TICK_MS,
   clamp,
@@ -20,6 +21,7 @@ import {
   buildBotPayload,
   canCastEquipmentOnHero,
   chooseBotCombo,
+  discardHandCard,
   drawReplacementCards,
   equipmentEffects,
   recordCardUses,
@@ -220,12 +222,26 @@ export class RoyaleRoom {
     };
   }
 
+  normalizeDiscardPayload(payload) {
+    return {
+      cardId: String(payload?.cardId || '')
+    };
+  }
+
   async routeSocketCombo(userId, payload) {
     if (this.simulationMode() === 'host') {
       await this.forwardHostCommand(userId, payload);
       return;
     }
     await this.handlePlayCombo(userId, payload);
+  }
+
+  async routeSocketDiscard(userId, payload) {
+    if (this.simulationMode() === 'host') {
+      await this.forwardHostDiscardCommand(userId, payload);
+      return;
+    }
+    await this.handleDiscardCard(userId, payload);
   }
 
   findPlayerByUserId(userId) {
@@ -604,6 +620,9 @@ export class RoyaleRoom {
       case 'play_combo':
         await this.routeSocketCombo(userId, this.normalizeComboPayload(payload));
         return;
+      case 'discard_card':
+        await this.routeSocketDiscard(userId, this.normalizeDiscardPayload(payload));
+        return;
       case 'host_state':
         await this.handleHostState(userId, payload.state);
         return;
@@ -651,6 +670,41 @@ export class RoyaleRoom {
         type: 'play_combo',
         side: player.side,
         ...this.normalizeComboPayload(payload)
+      }
+    });
+  }
+
+  async forwardHostDiscardCommand(userId, payload) {
+    if (!this.isBattleRunning()) {
+      return;
+    }
+    if (this.simulationMode() !== 'host') {
+      await this.handleDiscardCard(userId, payload);
+      return;
+    }
+
+    const player = this.findPlayerByUserId(userId);
+    if (!player) {
+      return;
+    }
+
+    const hostUserId = this.hostUserId();
+    if (userId === hostUserId) {
+      return;
+    }
+
+    const hostSocket = this.hostSocket();
+    if (!hostSocket) {
+      this.sendError(userId, 'Host is offline');
+      return;
+    }
+
+    this.sendSocketPayload(hostSocket, {
+      type: 'host_command',
+      command: {
+        type: 'discard_card',
+        side: player.side,
+        cardId: String(payload?.cardId || '')
       }
     });
   }
@@ -780,6 +834,48 @@ export class RoyaleRoom {
 
   async handlePlayCombo(userId, payload) {
     return this.enqueueMutation(() => this.handlePlayComboMutation(userId, payload));
+  }
+
+  async handleDiscardCard(userId, payload) {
+    return this.enqueueMutation(() => this.handleDiscardCardMutation(userId, payload));
+  }
+
+  async handleDiscardCardMutation(userId, payload) {
+    if (!this.room?.battle || this.room.status !== 'battle') {
+      return;
+    }
+
+    const player = this.findPlayerByUserId(userId);
+    if (!player) {
+      return;
+    }
+
+    const battlePlayer = this.room.battle.players[player.side];
+    if (!canSpendBattlePlayerEnergy(battlePlayer, DISCARD_SPIRIT_COST, 'spirit')) {
+      this.sendError(userId, 'Not enough Spirit Energy');
+      return;
+    }
+
+    if (!discardHandCard(
+      battlePlayer,
+      payload?.cardId,
+      (message) => this.sendError(userId, message)
+    )) {
+      return;
+    }
+    spendBattlePlayerEnergy(battlePlayer, DISCARD_SPIRIT_COST, 'spirit');
+
+    await this.broadcast('battle_event', {
+      event: {
+        type: 'card_discarded',
+        side: player.side,
+        cardId: String(payload?.cardId || ''),
+        spiritCost: DISCARD_SPIRIT_COST
+      }
+    });
+    await this.broadcast('state_snapshot');
+
+    await this.persist();
   }
 
   async handlePlayComboMutation(userId, payload) {

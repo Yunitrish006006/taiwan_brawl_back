@@ -284,7 +284,7 @@ resolve_wrangler_package() {
 }
 
 run_wrangler() {
-  npm exec --package="${WRANGLER_PACKAGE}" -- wrangler "$@"
+  npm exec --yes --package="${WRANGLER_PACKAGE}" -- wrangler "$@"
 }
 
 looks_like_auth_expired() {
@@ -303,6 +303,7 @@ looks_like_auth_expired() {
 
 ensure_cloudflare_auth() {
   local whoami_output
+  echo "Checking Cloudflare auth..."
   if whoami_output="$(run_wrangler whoami 2>&1)"; then
     echo "Cloudflare auth check passed"
     return 0

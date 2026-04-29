@@ -1240,8 +1240,8 @@ export async function saveDeckForUser(userId, payload, env) {
   const slot = Number(payload?.slot || 1);
   const cardIds = Array.isArray(payload?.cardIds) ? payload.cardIds.map(String) : [];
 
-  if (!Number.isInteger(slot) || slot < 1 || slot > 3) {
-    throw new Error('slot must be between 1 and 3');
+  if (!Number.isInteger(slot) || slot < 1) {
+    throw new Error('slot must be a positive integer');
   }
 
   if (cardIds.length !== 8) {

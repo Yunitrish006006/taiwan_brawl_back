@@ -464,6 +464,20 @@ export function resolveComboCards(player, battlePlayer, cardIds, sendError) {
 
 export { recordCardUses };
 
+export function discardHandCard(battlePlayer, cardId, sendError) {
+  const normalizedCardId = String(cardId || '');
+  if (!normalizedCardId) {
+    sendError('Select a card to discard');
+    return false;
+  }
+  if (!battlePlayer.hand.includes(normalizedCardId)) {
+    sendError('Selected card is not in hand');
+    return false;
+  }
+  drawReplacementCards(battlePlayer, [normalizedCardId]);
+  return true;
+}
+
 export function drawReplacementCards(battlePlayer, cardIds) {
   for (const cardId of cardIds) {
     const handIndex = battlePlayer.hand.findIndex((entry) => entry === cardId);

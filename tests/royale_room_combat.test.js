@@ -8,6 +8,7 @@ import {
   buildBotPayload,
   canCastEquipmentOnHero,
   chooseBotCombo,
+  discardHandCard,
   drawReplacementCards,
   equipmentEffects,
   recordCardUses,
@@ -47,6 +48,23 @@ test('drawReplacementCards rotates used cards to the queue tail', () => {
 
   assert.deepEqual(battlePlayer.hand, ['a', 'c', 'e', 'f']);
   assert.deepEqual(battlePlayer.queue, ['b', 'd']);
+});
+
+test('discardHandCard rotates one hand card without recording card use', () => {
+  const battlePlayer = {
+    hand: ['a', 'b', 'c', 'd'],
+    queue: ['e', 'f'],
+    cardUses: {},
+    cardUseLimits: { b: 8 }
+  };
+  const errors = [];
+
+  assert.equal(discardHandCard(battlePlayer, 'b', (message) => errors.push(message)), true);
+
+  assert.deepEqual(errors, []);
+  assert.deepEqual(battlePlayer.hand, ['a', 'c', 'd', 'e']);
+  assert.deepEqual(battlePlayer.queue, ['f', 'b']);
+  assert.deepEqual(battlePlayer.cardUses, {});
 });
 
 test('card use limits reject exhausted cards and remove spent cards from cycle', () => {

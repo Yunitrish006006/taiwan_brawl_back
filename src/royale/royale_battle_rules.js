@@ -14,6 +14,7 @@ export const TOWER_HP = 3000;
 export const DISCONNECT_GRACE_MS = 15000;
 export const PERSIST_INTERVAL_MS = 1000;
 export const MAX_COMBO_CARDS = 3;
+export const DISCARD_SPIRIT_COST = 1;
 export const LATERAL_MIN = 0;
 export const LATERAL_MAX = 1000;
 export const BOT_MIN_THINK_MS = 950;
