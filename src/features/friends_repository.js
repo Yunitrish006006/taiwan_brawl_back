@@ -136,6 +136,18 @@ async function createFriendship(userIdA, userIdB, env) {
 
 async function deleteFriendshipBetween(userIdA, userIdB, env) {
   const [userOneId, userTwoId] = friendPair(userIdA, userIdB);
+
+  // Check if friendship exists before deleting
+  const existing = await env.DB.prepare(
+    `SELECT 1 FROM friendships WHERE user_one_id = ? AND user_two_id = ? LIMIT 1`
+  )
+    .bind(userOneId, userTwoId)
+    .first();
+
+  if (!existing) {
+    return; // Already deleted, no-op
+  }
+
   await env.DB.prepare(
     `DELETE FROM friendships
      WHERE user_one_id = ? AND user_two_id = ?`
@@ -442,6 +454,18 @@ export async function blockUser(currentUserId, rawTargetUserId, env) {
 
 export async function unblockUser(currentUserId, rawTargetUserId, env) {
   const targetUserId = normalizeUserId(rawTargetUserId, 'targetUserId');
+
+  // Check if block exists before deleting
+  const existing = await env.DB.prepare(
+    `SELECT 1 FROM user_blocks WHERE blocker_user_id = ? AND blocked_user_id = ? LIMIT 1`
+  )
+    .bind(currentUserId, targetUserId)
+    .first();
+
+  if (!existing) {
+    return { ok: true }; // Already unblocked, no-op
+  }
+
   await env.DB.prepare(
     `DELETE FROM user_blocks
      WHERE blocker_user_id = ? AND blocked_user_id = ?`

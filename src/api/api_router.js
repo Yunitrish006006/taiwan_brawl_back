@@ -25,7 +25,8 @@ import {
   handleUpdateUiPreferences,
   handleUploadAvatarImage
 } from '../features/users.js';
-import { jsonResponse } from '../core/utils.js';
+import { corsHeaders, jsonResponse } from '../core/utils.js';
+import { checkRateLimit, rateLimitHeaders } from '../core/rate_limit.js';
 
 async function handleHealth(request) {
   return jsonResponse({ ok: true, message: 'taiwan brawl api alive' }, 200, request);
@@ -68,10 +69,49 @@ function exactApiRouteHandler(request, env, url) {
   }
 }
 
+async function applyRateLimitResponse(rateResult, response, request) {
+  if (!response || rateResult.allowed) {
+    return response;
+  }
+
+  const headers = {
+    ...corsHeaders(request),
+    'Content-Type': 'application/json',
+    ...rateLimitHeaders(rateResult),
+  };
+
+  return new Response(
+    JSON.stringify({
+      error: 'Too Many Requests',
+      detail: `Rate limit exceeded. Try again in ${rateResult.retryAfter} seconds.`,
+    }),
+    { status: 429, headers }
+  );
+}
+
 export async function handleApiRequest(request, env, url, ctx) {
+  // Check rate limit before processing
+  const rateResult = await checkRateLimit(request, env, url);
+  if (!rateResult.allowed) {
+    return applyRateLimitResponse(rateResult, null, request);
+  }
+
   const exactRouteHandler = exactApiRouteHandler(request, env, url);
   if (exactRouteHandler) {
-    return exactRouteHandler();
+    const response = await exactRouteHandler();
+    // Add rate limit headers to successful responses
+    if (response && rateResult.limit !== undefined) {
+      const responseHeaders = new Headers(response.headers);
+      const rlHeaders = rateLimitHeaders(rateResult);
+      for (const [key, value] of Object.entries(rlHeaders)) {
+        responseHeaders.set(key, value);
+      }
+      return new Response(response.body, {
+        status: response.status,
+        headers: responseHeaders,
+      });
+    }
+    return response;
   }
 
   const dynamicHandlers = [

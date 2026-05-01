@@ -6,8 +6,32 @@ export const USER_SELECT_COLUMNS = `SELECT id, name, email, role, bio, avatar_ur
         llm_base_url, llm_model, llm_api_key
  FROM users`;
 
+// Request ID generation and tracking
+const REQUEST_ID_HEADER = 'X-Request-ID';
+
+export function generateRequestId() {
+  const timestamp = Date.now().toString(36);
+  const random = crypto.randomUUID().split('-')[0];
+  return `${timestamp}-${random}`;
+}
+
+export function getRequestId(request) {
+  return request.headers.get(REQUEST_ID_HEADER) || generateRequestId();
+}
+
 const DEFAULT_ALLOWED_ORIGINS = new Set([
   'https://taiwan-brawl-api.yunitrish0419.workers.dev'
+]);
+
+// Strict list of allowed localhost ports for development
+const ALLOWED_LOCALHOST_PORTS = new Set([
+  '3000', '3001', '3002',    // Common React/Vite dev servers
+  '4200', '4201',            // Angular default
+  '5000', '5001',            // Flask/Django
+  '5173', '5174',            // Vite
+  '8080', '8081',           // General dev
+  '8888', '8889',           // Jupyter/Flask
+  '4000', '4001',           // Flutter web default
 ]);
 
 function requestOrigin(request) {
@@ -18,18 +42,30 @@ function requestOrigin(request) {
   }
 }
 
-function isLocalDevOrigin(origin) {
-  return /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
+function isAllowedLocalDevOrigin(origin) {
+  if (!origin) return false;
+
+  // Only allow http://localhost or http://127.0.0.1 (not https for local dev)
+  const match = origin.match(/^https?:\/\/(localhost|127\.0\.0\.1):(\d+)$/);
+  if (!match) return false;
+
+  const port = match[2];
+  // For localhost, only allow specific development ports
+  // For 127.0.0.1, be slightly more permissive but still limited
+  if (match[1] === '127.0.0.1') {
+    return true; // Allow 127.0.0.1 with any port (less restrictive for local testing)
+  }
+  return ALLOWED_LOCALHOST_PORTS.has(port);
 }
 
 function isAllowedCorsOrigin(origin, request) {
   if (!origin) {
-    return true;
+    return false; // Reject requests with no Origin header for API endpoints
   }
   return (
     origin === requestOrigin(request) ||
     DEFAULT_ALLOWED_ORIGINS.has(origin) ||
-    isLocalDevOrigin(origin)
+    isAllowedLocalDevOrigin(origin)
   );
 }
 
@@ -37,24 +73,30 @@ export function corsHeaders(request) {
   const origin = request?.headers?.get('Origin') ?? null;
   const headers = {
     'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization'
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Request-ID'
   };
   if (isAllowedCorsOrigin(origin, request)) {
-    headers['Access-Control-Allow-Origin'] =
-      origin ?? requestOrigin(request) ?? [...DEFAULT_ALLOWED_ORIGINS][0];
+    headers['Access-Control-Allow-Origin'] = origin;
     headers['Access-Control-Allow-Credentials'] = 'true';
+    headers['Access-Control-Max-Age'] = '86400'; // Cache preflight for 24 hours
   }
   return headers;
 }
 
 export function jsonResponse(data, status = 200, request) {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: {
-      ...corsHeaders(request),
-      'Content-Type': 'application/json'
-    }
-  });
+  const requestId = getRequestId(request);
+  const headers = {
+    ...corsHeaders(request),
+    'Content-Type': 'application/json',
+    [REQUEST_ID_HEADER]: requestId,
+  };
+
+  // Add requestId to error responses
+  if (status >= 400 && data && typeof data === 'object') {
+    data = { ...data, requestId };
+  }
+
+  return new Response(JSON.stringify(data), { status, headers });
 }
 
 export function generateSessionId() {

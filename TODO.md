@@ -41,26 +41,38 @@
 
 ## 低優先 (Low Priority)
 
-### 6. 速率限制 (Rate Limiting)
-- [ ] 實作 API 速率限制 middleware
-- [ ] 針對敏感端點（login, chat send）限流
+### 6. 速率限制 (Rate Limiting) 🚧
 
-### 7. Request ID 追蹤
-- [ ] 為每個請求生成 unique ID
-- [ ] 在錯誤回應中包含 request ID
-- [ ] 方便除錯和關聯日誌
+- [x] 實作 API 速率限制 middleware
+- [x] 針對敏感端點（login, chat send）限流
+- [x] 檔案：`src/core/rate_limit.js`, `src/api/api_router.js`
 
-### 8. CORS 設定收紧
-- [ ] 限制 localhost 只能特定 port
-- [ ] 移除過度寬鬆的設定
+### 7. Request ID 追蹤 🚧
 
-### 9. 單元測試覆蓋
-- [ ] 為核心模組新增 Jest/Node test
-- [ ] 重點覆蓋：auth, friends_repository, utils
+- [x] 為每個請求生成 unique ID
+- [x] 在錯誤回應中包含 request ID
+- [x] 回應 header 帶 X-Request-ID
+- [x] 檔案：`src/core/utils.js`
 
-### 10. 刪除操作安全檢查
-- [ ] 在其他刪除操作加入外鍵/關聯檢查
-- [ ] 參考 `deleteCard` 的模式
+### 8. CORS 設定收紧 🚧
+
+- [x] 限制 localhost 只能特定 port（23 個常見 dev ports）
+- [x] 加入 Access-Control-Max-Age 減少 preflight 請求
+- [x] 拒絕無 Origin 的 API 請求
+- [x] 檔案：`src/core/utils.js`
+
+### 9. 單元測試覆蓋 🚧
+
+- [x] 為核心模組新增 Node test
+- [x] 覆蓋：utils（23 個測試）
+- [ ] 可擴展到 auth、friends_repository
+- [x] 檔案：`tests/utils.test.js`
+
+### 10. 刪除操作安全檢查 🚧
+
+- [x] 為 `deleteFriendshipBetween` 加入存在性檢查
+- [x] 為 `unblockUser` 加入存在性檢查
+- [x] 檔案：`src/features/friends_repository.js`
 
 ## 已完成 (Completed)
 
