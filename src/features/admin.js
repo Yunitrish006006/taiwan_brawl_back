@@ -28,7 +28,7 @@ export async function searchUsersForAdmin(query, env) {
     .bind(search, like, like, Number.isInteger(maybeId) ? maybeId : -1)
     .all();
 
-  return rows.results.map(mapManageUser);
+  return (rows.results || []).map(mapManageUser);
 }
 
 export async function updateUserRole(adminUserId, targetUserId, role, env) {
@@ -66,5 +66,5 @@ export async function updateUserRole(adminUserId, targetUserId, role, env) {
     .bind(targetId)
     .first();
 
-  return mapManageUser(updated);
+  return mapManageUser(updated || {});
 }

@@ -8,28 +8,35 @@
 - [x] 記錄連線/斷線事件
 - [x] 檔案：`src/rooms/signal_room.js`
 
-### 2. D1 查詢結果 null check
-- [ ] 檢查所有 `await env.DB.prepare(...).all()` 的結果是否為 null
-- [ ] 確保 `.results` 屬性不存在時有 fallback
-- [ ] 檔案：多個 repository 檔案
+### 2. D1 查詢結果 null check ✅
+
+- [x] 檢查所有 `await env.DB.prepare(...).all()` 的結果是否為 null
+- [x] 確保 `.results` 屬性不存在時有 fallback
+- [x] 檔案：多個 repository 檔案
 
 ## 中優先 (Medium Priority)
 
-### 3. 推播失敗重試機制
-- [ ] 建立重試佇列或 dead letter queue
-- [ ] 記錄推播失敗次數
-- [ ] 避免雪崩效應
+### 3. 推播失敗重試機制 🚧
+
+- [x] 實作失敗推播的重試邏輯（3 次重試：30s, 2min, 10min）
+- [x] 使用 KV 佇列存儲待重試的推播任務
+- [x] 避免重試無效的 token（如 404、410）
+- [x] 實作 `processPushRetries` handler
+- [x] ⚠️ 手動建立 KV: `wrangler kv namespace create PUSH_RETRY`，更新 `wrangler.jsonc` ID
 - [ ] 檔案：`src/features/push_notifications.js`
 
-### 4. Chat pending 訊息分頁
-- [ ] 為 `handleGetPending` 加入分頁機制
-- [ ] 加入 limit/offset 參數
-- [ ] 設定合理的上限（如 100 條）
+### 4. Chat pending 訊息分頁 🚧
+
+- [x] 為 `handleGetPending` 加入分頁機制
+- [x] 加入 limit/offset 參數（預設 50，最大 100）
+- [x] 回傳 total、hasMore 供前端分頁
 - [ ] 檔案：`src/api/chat_api.js`
 
-### 5. last_active_at 更新頻率優化
-- [ ] 改用 Redis/KV 快取取代每次 DB 寫入
-- [ ] 或改為每 N 分鐘更新一次
+### 5. last_active_at 更新頻率優化 🚧
+
+- [x] 使用 KV 快取追蹤上次更新時間
+- [x] 每 3 分鐘才更新 DB（throttle）
+- [x] KV 失敗時容錯降級
 - [ ] 檔案：`src/core/utils.js`
 
 ## 低優先 (Low Priority)

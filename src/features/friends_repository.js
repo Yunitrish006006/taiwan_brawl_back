@@ -290,11 +290,11 @@ export async function getFriendsOverview(userId, env) {
     .all();
 
   return {
-    friends: friendsRows.results.map(serializeUser),
-    incomingRequests: incomingRows.results.map(serializeRequest),
-    outgoingRequests: outgoingRows.results.map(serializeRequest),
-    blockedUsers: blockedRows.results.map(serializeUser),
-    roomInvites: roomInviteRows.results.map(serializeRoomInvite),
+    friends: (friendsRows.results || []).map(serializeUser),
+    incomingRequests: (incomingRows.results || []).map(serializeRequest),
+    outgoingRequests: (outgoingRows.results || []).map(serializeRequest),
+    blockedUsers: (blockedRows.results || []).map(serializeUser),
+    roomInvites: (roomInviteRows.results || []).map(serializeRoomInvite),
   };
 }
 
@@ -321,7 +321,7 @@ export async function searchUsersByName(currentUserId, rawQuery, env) {
     .all();
 
   return Promise.all(
-    rows.results.map(async (row) => ({
+    (rows.results || []).map(async (row) => ({
       user: serializeUser(row),
       relationshipStatus: await resolveRelationshipStatus(
         currentUserId,

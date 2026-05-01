@@ -130,13 +130,33 @@ async function handleGetPending(request, env) {
   const user = await requireUser(request, env);
   if (!user) return jsonResponse({ error: 'Not logged in' }, 401, request);
 
-  const rows = await env.DB.prepare(
-    'SELECT id, sender_id, receiver_id, text, created_at, type FROM pending_messages WHERE receiver_id = ?1 ORDER BY created_at ASC'
-  )
-    .bind(user.id)
-    .all();
+  const url = new URL(request.url);
+  const rawLimit = Number(url.searchParams.get('limit') ?? 50);
+  const rawOffset = Number(url.searchParams.get('offset') ?? 0);
+  const limit = Math.max(1, Math.min(100, Number.isInteger(rawLimit) ? rawLimit : 50));
+  const offset = Math.max(0, Number.isInteger(rawOffset) ? rawOffset : 0);
 
-  return jsonResponse({ messages: rows.results }, 200, request);
+  const [rows, countRow] = await Promise.all([
+    env.DB.prepare(
+      'SELECT id, sender_id, receiver_id, text, created_at, type FROM pending_messages WHERE receiver_id = ?1 ORDER BY created_at ASC LIMIT ?2 OFFSET ?3'
+    )
+      .bind(user.id, limit, offset)
+      .all(),
+    env.DB.prepare(
+      'SELECT COUNT(*) AS total FROM pending_messages WHERE receiver_id = ?1'
+    )
+      .bind(user.id)
+      .first(),
+  ]);
+
+  const total = Number(countRow?.total || 0);
+  return jsonResponse({
+    messages: rows.results || [],
+    total,
+    limit,
+    offset,
+    hasMore: offset + limit < total,
+  }, 200, request);
 }
 
 async function handleAckPending(request, env) {

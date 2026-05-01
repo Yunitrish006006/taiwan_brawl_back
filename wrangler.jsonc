@@ -61,6 +61,10 @@
 		{
 			"binding": "CHAT_SYNC",
 			"id": "e03f7c3739f6492287dd13b3fb6429eb"
+		},
+		{
+			"binding": "PUSH_RETRY",
+			"id": "310f941d8b714565955556fafb13d76c"
 		}
 	]
 }

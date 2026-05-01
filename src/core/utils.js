@@ -153,6 +153,34 @@ export async function fetchMappedUserById(env, userId) {
   return mapUserRow(row);
 }
 
+const LAST_ACTIVE_KV_PREFIX = 'last_active:';
+const LAST_ACTIVE_THROTTLE_MS = 180_000; // 3 minutes
+
+async function shouldUpdateLastActive(env, userId) {
+  const key = `${LAST_ACTIVE_KV_PREFIX}${userId}`;
+  try {
+    const lastUpdate = await env.CHAT_SYNC?.get(key);
+    if (lastUpdate) {
+      const elapsed = Date.now() - Number(lastUpdate);
+      if (elapsed < LAST_ACTIVE_THROTTLE_MS) {
+        return false;
+      }
+    }
+    return true;
+  } catch (_) {
+    return true; // KV unavailable, allow update
+  }
+}
+
+async function markLastActiveUpdated(env, userId) {
+  const key = `${LAST_ACTIVE_KV_PREFIX}${userId}`;
+  try {
+    await env.CHAT_SYNC?.put(key, String(Date.now()), { expirationTtl: 86400 });
+  } catch (_) {
+    // KV write failure is non-critical
+  }
+}
+
 export async function getCurrentUser(request, env) {
   const sessionId = parseSessionId(request);
   if (!sessionId) return null;
@@ -165,11 +193,15 @@ export async function getCurrentUser(request, env) {
     return null;
   }
 
-  await env.DB.prepare(
-    'UPDATE users SET last_active_at = CURRENT_TIMESTAMP WHERE id = ?'
-  )
-    .bind(session.user_id)
-    .run();
+  // Throttle DB writes: only update if 3+ minutes since last update
+  if (await shouldUpdateLastActive(env, session.user_id)) {
+    await env.DB.prepare(
+      'UPDATE users SET last_active_at = CURRENT_TIMESTAMP WHERE id = ?'
+    )
+      .bind(session.user_id)
+      .run();
+    await markLastActiveUpdated(env, session.user_id);
+  }
 
   return fetchMappedUserById(env, session.user_id);
 }

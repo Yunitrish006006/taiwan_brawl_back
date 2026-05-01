@@ -6,6 +6,33 @@ const VALID_PUSH_PLATFORMS = ['ios', 'web'];
 const APNS_INVALID_REASONS = new Set(['BadDeviceToken', 'DeviceTokenNotForTopic', 'Unregistered']);
 const WEB_PUSH_INVALID_STATUS_CODES = new Set([404, 410]);
 
+// Push retry configuration
+const PUSH_RETRY_MAX_ATTEMPTS = 3;
+const PUSH_RETRY_DELAYS_MS = [30_000, 120_000, 600_000]; // 30s, 2min, 10min
+const PUSH_RETRY_KV_PREFIX = 'push_retry:';
+const PUSH_RETRY_LIST_KEY = 'push_retry_queue';
+
+function pushRetryKey(receiverId, notificationId) {
+  return `${PUSH_RETRY_KV_PREFIX}${receiverId}:${notificationId}`;
+}
+
+function shouldRetryPush(attemptCount, maxAttempts = PUSH_RETRY_MAX_ATTEMPTS) {
+  return attemptCount < maxAttempts;
+}
+
+function nextRetryDelayMs(attemptCount) {
+  const index = Math.max(0, Math.min(attemptCount - 1, PUSH_RETRY_DELAYS_MS.length - 1));
+  return PUSH_RETRY_DELAYS_MS[index];
+}
+
+function retryMetadataKey(notificationId) {
+  return `retry_meta:${notificationId}`;
+}
+
+function nowMs() {
+  return Date.now();
+}
+
 function trimString(value) {
   return String(value ?? '').trim();
 }
@@ -568,7 +595,7 @@ export async function sendDirectMessagePush(
     ? await createApnsAuthToken(env).catch(() => null)
     : null;
 
-  await Promise.allSettled(
+  const results = await Promise.allSettled(
     registrations.map(async (registration) => {
       const notificationId = buildPushNotificationId();
       const messageText = localizedChatText({
@@ -588,7 +615,7 @@ export async function sendDirectMessagePush(
 
       if (registration.provider === 'apns') {
         if (!apnsAuthToken) {
-          return;
+          return { ok: false, reason: 'NO_AUTH_TOKEN' };
         }
         return sendApnsNotification(env, registration, messagePayload, apnsAuthToken);
       }
@@ -596,6 +623,157 @@ export async function sendDirectMessagePush(
       return sendWebPushNotification(env, registration, messagePayload);
     })
   );
+
+  // Queue failed pushes for retry
+  const failedRegistrations = registrations.filter((reg, index) => {
+    const result = results[index];
+    return result?.status === 'rejected' || (result?.value && result.value.ok === false);
+  });
+
+  for (let i = 0; i < failedRegistrations.length; i++) {
+    const registration = failedRegistrations[i];
+    const result = results[registrations.indexOf(registration)];
+    const pushResult = result?.value || { ok: false, reason: 'UNKNOWN' };
+
+    if (pushResult.reason && APNS_INVALID_REASONS.has(pushResult.reason)) {
+      continue; // Permanent failure, don't retry
+    }
+    if (WEB_PUSH_INVALID_STATUS_CODES.has(pushResult.status)) {
+      continue; // Permanent failure, don't retry
+    }
+
+    const notificationId = buildPushNotificationId();
+    const retryPayload = {
+      receiverId,
+      senderId,
+      senderName,
+      text,
+      kind,
+      appOrigin,
+      attemptCount: 0,
+      registeredAt: nowMs(),
+      provider: registration.provider,
+      registrationId: registration.id,
+    };
+
+    try {
+      await env.PUSH_RETRY?.put?.(
+        pushRetryKey(receiverId, notificationId),
+        JSON.stringify(retryPayload),
+        { expirationTtl: 3600 } // 1 hour TTL
+      );
+    } catch (_) {
+      // KV not available, skip retry
+    }
+  }
+}
+
+/**
+ * Process push notification retries from KV queue.
+ * Should be called periodically by a scheduled handler.
+ * @param {*} env
+ */
+export async function processPushRetries(env) {
+  if (!env.PUSH_RETRY) {
+    return { processed: 0, skipped: 0 };
+  }
+
+  // List all retry keys (using list with prefix for KV namespace)
+  const listResult = await env.PUSH_RETRY.list({ prefix: PUSH_RETRY_KV_PREFIX });
+  const processedCount = 0;
+  const skippedCount = 0;
+
+  for (const key of (listResult.keys || [])) {
+    let payload;
+    try {
+      const raw = await env.PUSH_RETRY.get(key.name);
+      if (!raw) {
+        await env.PUSH_RETRY.delete(key.name);
+        continue;
+      }
+      payload = JSON.parse(raw);
+    } catch (_) {
+      await env.PUSH_RETRY.delete(key.name);
+      continue;
+    }
+
+    const { receiverId, senderId, senderName, text, kind, appOrigin, attemptCount, provider, registrationId } = payload;
+    const currentAttempt = Number(attemptCount || 0);
+
+    if (!shouldRetryPush(currentAttempt)) {
+      await env.PUSH_RETRY.delete(key.name);
+      continue;
+    }
+
+    // Find registration and retry push
+    const registrations = await listActivePushRegistrations(receiverId, env);
+    const registration = registrations.find((r) => r.id === registrationId);
+
+    if (!registration) {
+      // Registration deleted, remove retry entry
+      await env.PUSH_RETRY.delete(key.name);
+      continue;
+    }
+
+    const apnsAuthToken = provider === 'apns'
+      ? await createApnsAuthToken(env).catch(() => null)
+      : null;
+
+    const messageText = localizedChatText({
+      locale: registration.locale,
+      senderName,
+      text,
+      kind,
+    });
+
+    const notificationId = key.name.split(':')[2] || buildPushNotificationId();
+    const messagePayload = {
+      ...messageText,
+      type: kind === 'recall' ? 'dm_recall' : 'dm_message',
+      notificationId,
+      conversationUserId: senderId,
+      senderId,
+      appOrigin,
+    };
+
+    let pushResult;
+    if (provider === 'apns' && apnsAuthToken) {
+      pushResult = await sendApnsNotification(env, registration, messagePayload, apnsAuthToken);
+    } else {
+      pushResult = await sendWebPushNotification(env, registration, messagePayload);
+    }
+
+    if (pushResult.ok) {
+      // Success, remove retry entry
+      await env.PUSH_RETRY.delete(key.name);
+      continue;
+    }
+
+    // Check if should continue retry
+    const isPermanentFailure =
+      (provider === 'apns' && APNS_INVALID_REASONS.has(pushResult.reason)) ||
+      (provider === 'web' && WEB_PUSH_INVALID_STATUS_CODES.has(pushResult.status));
+
+    if (isPermanentFailure || !shouldRetryPush(currentAttempt + 1)) {
+      await env.PUSH_RETRY.delete(key.name);
+      continue;
+    }
+
+    // Update retry entry with incremented attempt
+    const nextAttempt = currentAttempt + 1;
+    const updatedPayload = {
+      ...payload,
+      attemptCount: nextAttempt,
+      lastAttemptAt: nowMs(),
+      lastError: pushResult.reason || `HTTP_${pushResult.status}`,
+    };
+
+    await env.PUSH_RETRY.put(key.name, JSON.stringify(updatedPayload), {
+      expirationTtl: 3600,
+    });
+  }
+
+  return { processed: processedCount, skipped: skippedCount };
 }
 
 export const __testables = {

@@ -1275,7 +1275,7 @@ export async function listDecksForUser(userId, env) {
   ).bind(userId).all();
 
   const results = [];
-  for (const deckRow of decks.results) {
+  for (const deckRow of (decks.results || [])) {
     results.push(
       serializeDeckRow(
         deckRow,
@@ -1307,7 +1307,7 @@ export async function listDeckSummariesForUser(userId, env) {
   ).bind(userId).all();
 
   const results = [];
-  for (const deckRow of decks.results) {
+  for (const deckRow of (decks.results || [])) {
     results.push(
       serializeDeckSummaryRow(
         deckRow,
