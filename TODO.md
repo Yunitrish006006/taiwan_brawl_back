@@ -1,0 +1,61 @@
+# Taiwan Brawl Backend - TODO
+
+## 高優先 (High Priority)
+
+### 1. SignalRoom 錯誤處理與日誌 ✅
+- [x] 為 WebSocket 訊息處理加上 try-catch
+- [x] 加入訊號轉發失敗的錯誤追蹤
+- [x] 記錄連線/斷線事件
+- [x] 檔案：`src/rooms/signal_room.js`
+
+### 2. D1 查詢結果 null check
+- [ ] 檢查所有 `await env.DB.prepare(...).all()` 的結果是否為 null
+- [ ] 確保 `.results` 屬性不存在時有 fallback
+- [ ] 檔案：多個 repository 檔案
+
+## 中優先 (Medium Priority)
+
+### 3. 推播失敗重試機制
+- [ ] 建立重試佇列或 dead letter queue
+- [ ] 記錄推播失敗次數
+- [ ] 避免雪崩效應
+- [ ] 檔案：`src/features/push_notifications.js`
+
+### 4. Chat pending 訊息分頁
+- [ ] 為 `handleGetPending` 加入分頁機制
+- [ ] 加入 limit/offset 參數
+- [ ] 設定合理的上限（如 100 條）
+- [ ] 檔案：`src/api/chat_api.js`
+
+### 5. last_active_at 更新頻率優化
+- [ ] 改用 Redis/KV 快取取代每次 DB 寫入
+- [ ] 或改為每 N 分鐘更新一次
+- [ ] 檔案：`src/core/utils.js`
+
+## 低優先 (Low Priority)
+
+### 6. 速率限制 (Rate Limiting)
+- [ ] 實作 API 速率限制 middleware
+- [ ] 針對敏感端點（login, chat send）限流
+
+### 7. Request ID 追蹤
+- [ ] 為每個請求生成 unique ID
+- [ ] 在錯誤回應中包含 request ID
+- [ ] 方便除錯和關聯日誌
+
+### 8. CORS 設定收紧
+- [ ] 限制 localhost 只能特定 port
+- [ ] 移除過度寬鬆的設定
+
+### 9. 單元測試覆蓋
+- [ ] 為核心模組新增 Jest/Node test
+- [ ] 重點覆蓋：auth, friends_repository, utils
+
+### 10. 刪除操作安全檢查
+- [ ] 在其他刪除操作加入外鍵/關聯檢查
+- [ ] 參考 `deleteCard` 的模式
+
+## 已完成 (Completed)
+
+- [ ]
+</parameter>
