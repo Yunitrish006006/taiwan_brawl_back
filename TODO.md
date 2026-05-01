@@ -92,9 +92,10 @@
 
 ### C. 展開單元測試覆蓋 🟡
 
-- [ ] 為 auth 模組新增測試
+- [x] 為 auth 模組新增測試（15 個測試）
 - [ ] 為 friends_repository 新增測試
-- [ ] 增加測試覆蓋率
+- [x] 測試：utils (23) + auth (15) = 38 個通過
+- [x] 檔案：`tests/auth.test.js`
 
 ### D. Push Retry KV 初始化 🟡
 
