@@ -26,6 +26,10 @@ import {
   withAuthorizedBadRequest
 } from '../core/request_helpers.js';
 import { jsonResponse } from '../core/utils.js';
+import {
+  handleGetSessionStats,
+  handleCleanupSessions,
+} from './session_cleanup_api.js';
 
 function withAdminBadRequest(request, env, handler) {
   return withAuthorizedBadRequest(request, env, isAdmin, handler);
@@ -151,6 +155,10 @@ export function exactAdminApiRouteHandler(request, env, url) {
       return () => handleAdminSearchUsers(request, env, url);
     case 'POST /api/admin/cards':
       return () => handleManageCard(request, env);
+    case 'GET /api/admin/sessions/stats':
+      return () => handleGetSessionStats(request, env);
+    case 'POST /api/admin/sessions/cleanup':
+      return () => handleCleanupSessions(request, env);
     default:
       return null;
   }

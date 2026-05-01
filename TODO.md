@@ -74,6 +74,33 @@
 - [x] 為 `unblockUser` 加入存在性檢查
 - [x] 檔案：`src/features/friends_repository.js`
 
+## 改進建議 (Improvements)
+
+### A. Sessions 清理機制 🔴
+
+- [x] 建立清理過期 sessions 的 handler
+- [x] 提供統計 API 和清理 API
+- [x] 需要設定 CLEANUP_SECRET_KEY secret
+- [ ] 可整合 Cloudflare Cron Trigger 定時執行
+- [x] 檔案：`src/features/session_cleanup.js`, `src/api/session_cleanup_api.js`
+
+### B. Sessions user_id index 🔴
+
+- [x] 新增 migration 為 sessions.user_id 建立 index
+- [x] 提升大量用戶同時登入時的效能
+- [x] 檔案：`migrations/0027_sessions_user_id_index.sql` ✅ 已執行
+
+### C. 展開單元測試覆蓋 🟡
+
+- [ ] 為 auth 模組新增測試
+- [ ] 為 friends_repository 新增測試
+- [ ] 增加測試覆蓋率
+
+### D. Push Retry KV 初始化 🟡
+
+- [ ] 在部署時自動建立 PUSH_RETRY KV（若有需要）
+- [ ] 或在文件說明需手動建立
+
 ## 已完成 (Completed)
 
 - [ ]
