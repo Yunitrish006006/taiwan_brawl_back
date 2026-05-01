@@ -16,59 +16,59 @@
 
 ## 中優先 (Medium Priority)
 
-### 3. 推播失敗重試機制 🚧
+### 3. 推播失敗重試機制 ✅
 
 - [x] 實作失敗推播的重試邏輯（3 次重試：30s, 2min, 10min）
 - [x] 使用 KV 佇列存儲待重試的推播任務
 - [x] 避免重試無效的 token（如 404、410）
 - [x] 實作 `processPushRetries` handler
 - [x] ⚠️ 手動建立 KV: `wrangler kv namespace create PUSH_RETRY`，更新 `wrangler.jsonc` ID
-- [ ] 檔案：`src/features/push_notifications.js`
+- [x] 檔案：`src/features/push_notifications.js`
 
-### 4. Chat pending 訊息分頁 🚧
+### 4. Chat pending 訊息分頁 ✅
 
 - [x] 為 `handleGetPending` 加入分頁機制
 - [x] 加入 limit/offset 參數（預設 50，最大 100）
 - [x] 回傳 total、hasMore 供前端分頁
-- [ ] 檔案：`src/api/chat_api.js`
+- [x] 檔案：`src/api/chat_api.js`
 
-### 5. last_active_at 更新頻率優化 🚧
+### 5. last_active_at 更新頻率優化 ✅
 
 - [x] 使用 KV 快取追蹤上次更新時間
 - [x] 每 3 分鐘才更新 DB（throttle）
 - [x] KV 失敗時容錯降級
-- [ ] 檔案：`src/core/utils.js`
+- [x] 檔案：`src/core/utils.js`
 
 ## 低優先 (Low Priority)
 
-### 6. 速率限制 (Rate Limiting) 🚧
+### 6. 速率限制 (Rate Limiting) ✅
 
 - [x] 實作 API 速率限制 middleware
 - [x] 針對敏感端點（login, chat send）限流
 - [x] 檔案：`src/core/rate_limit.js`, `src/api/api_router.js`
 
-### 7. Request ID 追蹤 🚧
+### 7. Request ID 追蹤 ✅
 
 - [x] 為每個請求生成 unique ID
 - [x] 在錯誤回應中包含 request ID
 - [x] 回應 header 帶 X-Request-ID
 - [x] 檔案：`src/core/utils.js`
 
-### 8. CORS 設定收紧 🚧
+### 8. CORS 設定收紧 ✅
 
 - [x] 限制 localhost 只能特定 port（23 個常見 dev ports）
 - [x] 加入 Access-Control-Max-Age 減少 preflight 請求
 - [x] 拒絕無 Origin 的 API 請求
 - [x] 檔案：`src/core/utils.js`
 
-### 9. 單元測試覆蓋 🚧
+### 9. 單元測試覆蓋 ✅
 
 - [x] 為核心模組新增 Node test
 - [x] 覆蓋：utils（23 個測試）
-- [ ] 可擴展到 auth、friends_repository
+- [ ] 可擴展到 auth、friends_repository（未來）
 - [x] 檔案：`tests/utils.test.js`
 
-### 10. 刪除操作安全檢查 🚧
+### 10. 刪除操作安全檢查 ✅
 
 - [x] 為 `deleteFriendshipBetween` 加入存在性檢查
 - [x] 為 `unblockUser` 加入存在性檢查
