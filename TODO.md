@@ -99,8 +99,10 @@
 
 ### D. Push Retry KV 初始化 🟡
 
-- [ ] 在部署時自動建立 PUSH_RETRY KV（若有需要）
-- [ ] 或在文件說明需手動建立
+- [x] 建立 `scripts/ensure-kv-namespaces.js` 自動檢查/建立 KV
+- [x] 自動更新 `wrangler.jsonc` 加入缺失的 binding
+- [x] 使用方式：`npm run ensure-kv`
+- [x] 檢查 KV：STATIC_ASSETS, CHAT_SYNC, PUSH_RETRY
 
 ## 已完成 (Completed)
 
