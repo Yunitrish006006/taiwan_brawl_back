@@ -1,12 +1,13 @@
 # Push Notifications Setup
 
-This implementation does not use Firebase.
+Push delivery is unified on Firebase Cloud Messaging (FCM).
 
-Current delivery providers:
+Current delivery provider:
 
-- `iOS`: Apple Push Notification service (`APNs`)
-- `Web`: Web Push (`VAPID`)
-- `Android`: no background native push in this repo; it remains foreground polling only
+- `Android`: FCM registration token
+- `iOS`: FCM registration token, backed by APNs through Firebase
+- `macOS`: FCM registration token, backed by APNs through Firebase
+- `Web`: FCM registration token with a Firebase Web VAPID key
 
 Current app-side behavior:
 
@@ -15,93 +16,68 @@ Current app-side behavior:
 - Public push bootstrap config: `GET /api/notifications/config`
 - Server-side dispatch: direct message send / recall events
 
-## 1. APNs setup
+## 1. Firebase project setup
 
-Required Worker secrets / vars:
+Create or use one Firebase project for Taiwan Brawl, then register these apps:
 
-- `APNS_TEAM_ID`
-- `APNS_KEY_ID`
-- `APNS_PRIVATE_KEY`
-- `APNS_BUNDLE_ID`
-- `APNS_USE_SANDBOX`
+- Android package: `com.yunitrish.taiwanbrawl`
+- iOS bundle ID: the Runner bundle ID used by the release build
+- macOS bundle ID, if macOS push is shipped
+- Web app for Flutter Web
+
+For Apple platforms, upload the APNs key or certificates in Firebase Console so FCM can deliver through APNs.
+
+For Web, create a Web Push certificate key pair in Firebase Console. The public VAPID key is exposed to the client as `FCM_WEB_VAPID_KEY`.
+
+## 2. Worker secrets / vars
+
+Public Firebase app config, safe to expose through `/api/notifications/config`:
+
+- `FCM_PROJECT_ID`
+- `FCM_API_KEY`
+- `FCM_APP_ID`
+- `FCM_MESSAGING_SENDER_ID`
+- `FCM_AUTH_DOMAIN`
+- `FCM_STORAGE_BUCKET`
+- `FCM_MEASUREMENT_ID`
+- `FCM_IOS_BUNDLE_ID`
+- `FCM_WEB_VAPID_KEY`
+
+Server-side FCM HTTP v1 credentials, store as secrets:
+
+- `FCM_CLIENT_EMAIL`
+- `FCM_PRIVATE_KEY`
 
 Recommended Wrangler commands:
 
 ```bash
-wrangler secret put APNS_TEAM_ID
-wrangler secret put APNS_KEY_ID
-wrangler secret put APNS_PRIVATE_KEY
-wrangler secret put APNS_BUNDLE_ID
+wrangler secret put FCM_API_KEY
+wrangler secret put FCM_APP_ID
+wrangler secret put FCM_MESSAGING_SENDER_ID
+wrangler secret put FCM_PROJECT_ID
+wrangler secret put FCM_WEB_VAPID_KEY
+wrangler secret put FCM_CLIENT_EMAIL
+wrangler secret put FCM_PRIVATE_KEY
 ```
 
-For development builds, set:
+`FCM_PRIVATE_KEY` can be pasted from the Firebase service account JSON. Keep the `-----BEGIN PRIVATE KEY-----` / `-----END PRIVATE KEY-----` wrapper. Escaped `\n` line breaks are accepted.
 
-- `APNS_USE_SANDBOX=true`
-
-For TestFlight / App Store builds, either omit it or set:
-
-- `APNS_USE_SANDBOX=false`
-
-You still need to finish the Apple-side capability setup in Xcode / Apple Developer:
-
-- Enable `Push Notifications` capability for `Runner`
-- Ensure the app ID / provisioning profile supports push
-- Use the same bundle ID as `APNS_BUNDLE_ID`
-
-## 2. Web Push setup
-
-Required Worker secrets / vars:
-
-- `WEB_PUSH_PUBLIC_KEY`
-- `WEB_PUSH_PRIVATE_KEY`
-- `WEB_PUSH_SUBJECT`
-
-Generate a VAPID key pair once:
-
-```bash
-npx web-push generate-vapid-keys
-```
-
-Then store them:
-
-```bash
-wrangler secret put WEB_PUSH_PUBLIC_KEY
-wrangler secret put WEB_PUSH_PRIVATE_KEY
-wrangler secret put WEB_PUSH_SUBJECT
-```
-
-Notes:
-
-- `WEB_PUSH_SUBJECT` should be a real `mailto:` or `https:` URI
-- Do not use `https://localhost` as the subject if you need Safari web push
-- The web app must be served over `HTTPS`
-
-## 3. Worker runtime requirement
-
-`web-push` requires Node.js compatibility in Cloudflare Workers.
-
-`wrangler.jsonc` now enables:
-
-- `compatibility_flags: ["nodejs_compat"]`
-
-## 4. Database migration
+## 3. Database migration
 
 Apply:
 
-- `migrations/0020_push_registrations.sql`
+- `migrations/0028_fcm_push_registrations.sql`
 
-It stores:
+The migration keeps the old APNs/Web Push registrations in `push_registrations_legacy_0028`, then creates a new `push_registrations` table for FCM tokens.
 
-- iOS APNs tokens
-- Web Push subscriptions
+## 4. Frontend behavior
 
-## 5. Frontend behavior
+- Flutter initializes Firebase from `/api/notifications/config`.
+- `firebase_messaging` requests permission and retrieves one FCM token per installation/platform.
+- Web uses `/firebase-messaging-sw.js` for background notification display and notification-click routing.
+- The existing DM polling flow remains the source of message data; push is still only a background reminder/open affordance.
 
-- `iOS`: requests notification permission and registers directly with APNs
-- `Web`: registers `web-push-sw.js`, asks browser permission, subscribes via VAPID
-- `Android`: still uses the in-app polling flow only
-
-## 6. Current notification coverage
+## 5. Current notification coverage
 
 Already implemented:
 
@@ -113,4 +89,3 @@ Not yet implemented:
 
 - Friend request pushes
 - Room invite pushes
-- Android background native push

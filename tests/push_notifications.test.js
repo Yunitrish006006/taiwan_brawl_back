@@ -3,22 +3,92 @@ import assert from 'node:assert/strict';
 
 import { __testables } from '../src/features/push_notifications.js';
 
-test('buildPublicPushConfig exposes ios and web only when provider config exists', () => {
+test('buildPublicPushConfig exposes FCM platforms when client and delivery config exist', () => {
   const config = __testables.buildPublicPushConfig({
-    APNS_TEAM_ID: 'TEAM123456',
-    APNS_KEY_ID: 'KEY1234567',
-    APNS_PRIVATE_KEY: '-----BEGIN PRIVATE KEY-----\\nabc\\n-----END PRIVATE KEY-----',
-    APNS_BUNDLE_ID: 'com.yunitrish.taiwanbrawl',
-    WEB_PUSH_PUBLIC_KEY: 'PUBLIC_KEY',
-    WEB_PUSH_PRIVATE_KEY: 'PRIVATE_KEY',
-    WEB_PUSH_SUBJECT: 'mailto:push@example.com',
+    FCM_PROJECT_ID: 'taiwan-brawl',
+    FCM_API_KEY: 'public-api-key',
+    FCM_APP_ID: '1:123:web:abc',
+    FCM_MESSAGING_SENDER_ID: '123',
+    FCM_CLIENT_EMAIL: 'firebase-adminsdk@example.iam.gserviceaccount.com',
+    FCM_PRIVATE_KEY: '-----BEGIN PRIVATE KEY-----\\nabc\\n-----END PRIVATE KEY-----',
+    FCM_WEB_VAPID_KEY: 'PUBLIC_VAPID_KEY',
+    FCM_AUTH_DOMAIN: 'taiwan-brawl.firebaseapp.com',
   });
 
   assert.equal(config.enabled, true);
   assert.equal(config.deliveryEnabled, true);
-  assert.deepEqual(config.enabledPlatforms, ['ios', 'web']);
-  assert.equal(config.web.publicKey, 'PUBLIC_KEY');
-  assert.equal(config.web.serviceWorkerPath, '/web-push-sw.js');
+  assert.equal(config.provider, 'fcm');
+  assert.deepEqual(config.enabledPlatforms, ['android', 'ios', 'macos', 'web']);
+  assert.equal(config.fcm.projectId, 'taiwan-brawl');
+  assert.equal(config.fcm.webVapidKey, 'PUBLIC_VAPID_KEY');
+  assert.equal(config.fcm.serviceWorkerPath, '/firebase-messaging-sw.js');
+});
+
+test('buildPublicPushConfig disables delivery without service account credentials', () => {
+  const config = __testables.buildPublicPushConfig({
+    FCM_PROJECT_ID: 'taiwan-brawl',
+    FCM_API_KEY: 'public-api-key',
+    FCM_APP_ID: '1:123:web:abc',
+    FCM_MESSAGING_SENDER_ID: '123',
+  });
+
+  assert.equal(config.enabled, false);
+  assert.equal(config.deliveryEnabled, false);
+  assert.deepEqual(config.enabledPlatforms, []);
+});
+
+test('validatePushRequestBody accepts FCM token registrations', () => {
+  const request = new Request('https://example.com/api/notifications/register');
+  const validation = __testables.validatePushRequestBody(request, {
+    installationId: 'install-1',
+    platform: 'android',
+    provider: 'fcm',
+    token: 'a'.repeat(64),
+  });
+
+  assert.equal(validation.error, undefined);
+});
+
+test('validatePushRequestBody rejects legacy provider and subscription payloads', async () => {
+  const request = new Request('https://example.com/api/notifications/register');
+
+  const providerValidation = __testables.validatePushRequestBody(request, {
+    installationId: 'install-1',
+    platform: 'web',
+    provider: 'webpush',
+    token: 'a'.repeat(64),
+  });
+  assert.equal(providerValidation.error.status, 400);
+  assert.equal((await providerValidation.error.json()).error, 'provider must be fcm');
+
+  const subscriptionValidation = __testables.validatePushRequestBody(request, {
+    installationId: 'install-1',
+    platform: 'web',
+    subscription: {
+      endpoint: 'https://example.com/push',
+      keys: {
+        p256dh: 'public-key',
+        auth: 'auth-secret',
+      },
+    },
+  });
+  assert.equal(subscriptionValidation.error.status, 400);
+  assert.equal((await subscriptionValidation.error.json()).error, 'token is required for fcm');
+});
+
+test('validatePushRequestBody rejects unsupported platforms', async () => {
+  const request = new Request('https://example.com/api/notifications/register');
+  const validation = __testables.validatePushRequestBody(request, {
+    installationId: 'install-1',
+    platform: 'linux',
+    token: 'a'.repeat(64),
+  });
+
+  assert.equal(validation.error.status, 400);
+  assert.equal(
+    (await validation.error.json()).error,
+    'platform must be android, ios, macos, or web'
+  );
 });
 
 test('localizedChatText returns localized recall copy', () => {
@@ -55,38 +125,30 @@ test('buildPushNotificationId normalizes UUIDs into topic-safe unique ids', () =
   );
 });
 
-test('parseWebSubscription accepts valid subscription JSON and rejects bad payloads', () => {
-  assert.deepEqual(
-    __testables.parseWebSubscription({
-      subscription_json: JSON.stringify({
-        endpoint: 'https://example.com/push',
-        expirationTime: null,
-        keys: {
-          p256dh: 'public-key',
-          auth: 'auth-secret',
-        },
-      }),
-    }),
+test('buildFcmMessage uses string-only data and platform overrides', () => {
+  const message = __testables.buildFcmMessage(
+    { push_token: 'token-123' },
     {
-      endpoint: 'https://example.com/push',
-      expirationTime: null,
-      keys: {
-        p256dh: 'public-key',
-        auth: 'auth-secret',
-      },
+      title: 'Alex',
+      body: 'Hello',
+      type: 'dm_message',
+      notificationId: 'abc123',
+      conversationUserId: 42,
+      senderId: 42,
+      appOrigin: 'https://example.com',
     }
   );
 
-  assert.equal(
-    __testables.parseWebSubscription({
-      subscription_json: '{"endpoint":"","keys":{"p256dh":"","auth":""}}',
-    }),
-    null
-  );
+  assert.equal(message.token, 'token-123');
+  assert.deepEqual(message.notification, { title: 'Alex', body: 'Hello' });
+  assert.equal(message.data.conversationUserId, '42');
+  assert.equal(message.data.senderId, '42');
+  assert.equal(message.webpush.fcm_options.link, 'https://example.com/?conversationUserId=42');
+  assert.equal(message.android.notification.click_action, 'FLUTTER_NOTIFICATION_CLICK');
 });
 
-test('shouldInvalidateApnsToken recognizes APNs permanent failures', () => {
-  assert.equal(__testables.shouldInvalidateApnsToken(410, 'Unregistered'), true);
-  assert.equal(__testables.shouldInvalidateApnsToken(400, 'BadDeviceToken'), true);
-  assert.equal(__testables.shouldInvalidateApnsToken(500, 'InternalServerError'), false);
+test('shouldInvalidateFcmToken recognizes permanent FCM token failures', () => {
+  assert.equal(__testables.shouldInvalidateFcmToken(404, 'NOT_FOUND'), true);
+  assert.equal(__testables.shouldInvalidateFcmToken(400, 'UNREGISTERED'), true);
+  assert.equal(__testables.shouldInvalidateFcmToken(500, 'INTERNAL'), false);
 });

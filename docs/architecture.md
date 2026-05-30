@@ -158,18 +158,16 @@ Flutter App / Browser
 
 即時戰鬥狀態透過房間 WebSocket 接收，後端核心狀態由 `ROYALE_ROOM` Durable Object 持有。
 
-### 4.6 Web Push 橋接
+### 4.6 FCM 推播橋接
 
-Web Push 由三層組成：
+FCM 推播由三層組成：
 
-- `lib/services/web_push_bridge_web.dart`
-  - Flutter 與瀏覽器 JS bridge 的 Dart interop
-- `web/push_notifications.js`
-  - 註冊 service worker
-  - 向瀏覽器要求通知權限
-  - 建立 Web Push subscription
-- `web/web-push-sw.js`
-  - 在背景收到 push 時 `showNotification()`
+- `lib/services/notification_service.dart`
+  - 從 `/api/notifications/config` 載入 Firebase public config
+  - 透過 `firebase_messaging` 取得 FCM registration token
+  - 把 token 註冊到後端 `push_registrations`
+- `web/firebase-messaging-sw.js`
+  - Web 背景收到 FCM 時 `showNotification()`
   - 點通知後導回 `/?conversationUserId=<senderId>`
 
 ## 5. 後端架構
@@ -275,11 +273,7 @@ Session 特性：
 
 推播 API 在 `notifications_api.js`，真正實作在 `push_notifications.js`。
 
-目前支援：
-
-- iOS：APNs
-- Web：VAPID Web Push
-- Android：沒有背景 native push，仍以前景 polling 為主
+目前支援 Android / iOS / macOS / Web，底層 provider 統一為 FCM。
 
 主要 API：
 
@@ -293,8 +287,8 @@ DM 送出後：
 
 1. 寫入 `pending_messages`
 2. 背景呼叫 `sendDirectMessagePush()`
-3. 依裝置類型分送 APNs 或 Web Push
-4. 無效 token / subscription 會標記 `invalidated_at`
+3. 透過 FCM HTTP v1 發送到各平台 token
+4. 無效 FCM token 會標記 `invalidated_at`
 
 目前每一則新訊息都會產生獨立 `notificationId`，避免新通知覆蓋舊通知。
 
@@ -335,18 +329,18 @@ Receiver
     -> POST /api/chat/dm/ack
 ```
 
-### 6.4 Web Push 資料流
+### 6.4 FCM Push 資料流
 
 ```text
-Browser
+Flutter app / Browser
     -> /api/notifications/config
     -> /api/notifications/register
     -> D1 push_registrations
 
 New DM
     -> sendDirectMessagePush()
-    -> web-push sendNotification()
-    -> web-push-sw.js showNotification()
+    -> FCM HTTP v1 messages:send
+    -> platform notification / firebase-messaging-sw.js
     -> click -> /?conversationUserId=<senderId>
 ```
 
@@ -424,11 +418,7 @@ DM 不是只靠推播。
 
 ### 8.3 Android 背景推播尚未完成
 
-目前文件與程式都一致：
-
-- iOS：APNs
-- Web：Web Push
-- Android：前景 polling only
+目前文件與程式都一致：Android / iOS / macOS / Web 的背景提醒統一走 FCM，聊天內容同步仍由 `pending_messages` polling 保底。
 
 ### 8.4 同一個 Worker 承載所有對外入口
 

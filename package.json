@@ -7,7 +7,6 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "ensure-kv": "node scripts/ensure-kv-namespaces.js",
-    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
     "test": "node --test",
     "assets:generate": "node upload.js",
     "kv:upload": "wrangler kv bulk put assets.json --binding=STATIC_ASSETS --remote",
@@ -16,8 +15,7 @@
     "android:build": "bash tool/build_android.sh"
   },
   "dependencies": {
-    "@cloudflare/kv-asset-handler": "^0.4.0",
-    "web-push": "^3.6.7"
+    "@cloudflare/kv-asset-handler": "^0.4.0"
   },
   "devDependencies": {
     "@types/jest": "^30.0.0",

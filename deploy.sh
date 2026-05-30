@@ -334,7 +334,7 @@ ensure_cloudflare_auth() {
 }
 
 WRANGLER_PACKAGE="$(resolve_wrangler_package)"
-REQUIRED_BACKEND_PACKAGES=("@cloudflare/kv-asset-handler" "web-push")
+REQUIRED_BACKEND_PACKAGES=("@cloudflare/kv-asset-handler")
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RULES_FILE="${SCRIPT_DIR}/conventional_commit_rules.sh"

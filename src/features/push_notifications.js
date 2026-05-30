@@ -1,16 +1,19 @@
-import webpush from 'web-push';
-
 import { jsonResponse } from '../core/utils.js';
 
-const VALID_PUSH_PLATFORMS = ['ios', 'web'];
-const APNS_INVALID_REASONS = new Set(['BadDeviceToken', 'DeviceTokenNotForTopic', 'Unregistered']);
-const WEB_PUSH_INVALID_STATUS_CODES = new Set([404, 410]);
+const VALID_PUSH_PLATFORMS = ['android', 'ios', 'macos', 'web'];
+const FCM_INVALID_ERROR_CODES = new Set([
+  'INVALID_ARGUMENT',
+  'NOT_FOUND',
+  'REGISTRATION_TOKEN_NOT_REGISTERED',
+  'UNREGISTERED',
+]);
+const FCM_OAUTH_TOKEN_URL = 'https://oauth2.googleapis.com/token';
+const FCM_MESSAGING_SCOPE = 'https://www.googleapis.com/auth/firebase.messaging';
 
 // Push retry configuration
 const PUSH_RETRY_MAX_ATTEMPTS = 3;
 const PUSH_RETRY_DELAYS_MS = [30_000, 120_000, 600_000]; // 30s, 2min, 10min
 const PUSH_RETRY_KV_PREFIX = 'push_retry:';
-const PUSH_RETRY_LIST_KEY = 'push_retry_queue';
 
 function pushRetryKey(receiverId, notificationId) {
   return `${PUSH_RETRY_KV_PREFIX}${receiverId}:${notificationId}`;
@@ -23,10 +26,6 @@ function shouldRetryPush(attemptCount, maxAttempts = PUSH_RETRY_MAX_ATTEMPTS) {
 function nextRetryDelayMs(attemptCount) {
   const index = Math.max(0, Math.min(attemptCount - 1, PUSH_RETRY_DELAYS_MS.length - 1));
   return PUSH_RETRY_DELAYS_MS[index];
-}
-
-function retryMetadataKey(notificationId) {
-  return `retry_meta:${notificationId}`;
 }
 
 function nowMs() {
@@ -76,67 +75,59 @@ function createBadRequest(message, request) {
   return { error: jsonResponse({ error: message }, 400, request) };
 }
 
-export function hasApnsDeliveryConfig(env) {
+function configuredPlatforms(env) {
+  if (!hasFcmClientConfig(env) || !hasFcmDeliveryConfig(env)) {
+    return [];
+  }
+
+  return [
+    'android',
+    'ios',
+    'macos',
+    ...(trimString(env.FCM_WEB_VAPID_KEY) ? ['web'] : []),
+  ];
+}
+
+export function hasFcmClientConfig(env) {
   return Boolean(
-    trimString(env.APNS_TEAM_ID) &&
-      trimString(env.APNS_KEY_ID) &&
-      normalizePrivateKey(env.APNS_PRIVATE_KEY) &&
-      trimString(env.APNS_BUNDLE_ID)
+    trimString(env.FCM_PROJECT_ID) &&
+      trimString(env.FCM_API_KEY) &&
+      trimString(env.FCM_APP_ID) &&
+      trimString(env.FCM_MESSAGING_SENDER_ID)
   );
 }
 
-export function hasWebPushDeliveryConfig(env) {
+export function hasFcmDeliveryConfig(env) {
   return Boolean(
-    trimString(env.WEB_PUSH_PUBLIC_KEY) &&
-      trimString(env.WEB_PUSH_PRIVATE_KEY) &&
-      trimString(env.WEB_PUSH_SUBJECT)
+    trimString(env.FCM_PROJECT_ID) &&
+      trimString(env.FCM_CLIENT_EMAIL) &&
+      normalizePrivateKey(env.FCM_PRIVATE_KEY)
   );
 }
 
 export function buildPublicPushConfig(env) {
-  const iosEnabled = hasApnsDeliveryConfig(env);
-  const webEnabled = hasWebPushDeliveryConfig(env);
-  const enabledPlatforms = [
-    ...(iosEnabled ? ['ios'] : []),
-    ...(webEnabled ? ['web'] : []),
-  ];
+  const deliveryEnabled = hasFcmDeliveryConfig(env);
+  const clientEnabled = hasFcmClientConfig(env);
+  const enabledPlatforms = configuredPlatforms(env);
+  const fcmEnabled = clientEnabled && deliveryEnabled && enabledPlatforms.length > 0;
 
   return {
-    enabled: enabledPlatforms.length > 0,
-    deliveryEnabled: iosEnabled || webEnabled,
+    enabled: fcmEnabled,
+    deliveryEnabled,
+    provider: 'fcm',
     enabledPlatforms,
-    ios: {
-      enabled: iosEnabled,
-    },
-    web: {
-      enabled: webEnabled,
-      publicKey: webEnabled ? trimString(env.WEB_PUSH_PUBLIC_KEY) : null,
-      serviceWorkerPath: '/web-push-sw.js',
-      serviceWorkerScope: '/push-notifications/',
-    },
-  };
-}
-
-function normalizedWebSubscription(body) {
-  const raw = body?.subscription;
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
-    return null;
-  }
-
-  const endpoint = trimString(raw.endpoint);
-  const keys = raw.keys && typeof raw.keys === 'object' ? raw.keys : {};
-  const p256dh = trimString(keys?.p256dh);
-  const auth = trimString(keys?.auth);
-  if (!endpoint || !p256dh || !auth) {
-    return null;
-  }
-
-  return {
-    endpoint,
-    expirationTime: raw.expirationTime ?? null,
-    keys: {
-      p256dh,
-      auth,
+    fcm: {
+      enabled: fcmEnabled,
+      projectId: clientEnabled ? trimString(env.FCM_PROJECT_ID) : null,
+      apiKey: clientEnabled ? trimString(env.FCM_API_KEY) : null,
+      appId: clientEnabled ? trimString(env.FCM_APP_ID) : null,
+      messagingSenderId: clientEnabled ? trimString(env.FCM_MESSAGING_SENDER_ID) : null,
+      authDomain: normalizeOptionalText(env.FCM_AUTH_DOMAIN),
+      storageBucket: normalizeOptionalText(env.FCM_STORAGE_BUCKET),
+      measurementId: normalizeOptionalText(env.FCM_MEASUREMENT_ID),
+      iosBundleId: normalizeOptionalText(env.FCM_IOS_BUNDLE_ID),
+      webVapidKey: normalizeOptionalText(env.FCM_WEB_VAPID_KEY, 512),
+      serviceWorkerPath: '/firebase-messaging-sw.js',
     },
   };
 }
@@ -155,30 +146,21 @@ export function validatePushRequestBody(request, body, options = {}) {
 
   const platform = normalizePlatform(body?.platform);
   if (requirePlatform && !platform) {
-    return createBadRequest('platform must be ios or web', request);
+    return createBadRequest('platform must be android, ios, macos, or web', request);
   }
 
-  if (!platform) {
+  if (!platform || !requireRegistrationFields) {
     return {};
   }
 
-  if (!requireRegistrationFields) {
-    return {};
+  const provider = trimString(body?.provider || 'fcm').toLowerCase();
+  if (provider !== 'fcm') {
+    return createBadRequest('provider must be fcm', request);
   }
 
-  if (platform === 'ios') {
-    const token = trimString(body?.token);
-    if (token.length < 32) {
-      return createBadRequest('token is required for ios', request);
-    }
-    return {};
-  }
-
-  if (!normalizedWebSubscription(body)) {
-    return createBadRequest(
-      'subscription with endpoint, p256dh, and auth is required for web',
-      request
-    );
+  const token = trimString(body?.token);
+  if (token.length < 32) {
+    return createBadRequest('token is required for fcm', request);
   }
 
   return {};
@@ -187,8 +169,9 @@ export function validatePushRequestBody(request, body, options = {}) {
 export async function registerPushDevice(userId, body, env) {
   const installationId = trimString(body?.installationId);
   const platform = normalizePlatform(body?.platform);
-  if (!installationId || !platform) {
-    throw new Error('installationId and platform are required');
+  const token = trimString(body?.token);
+  if (!installationId || !platform || token.length < 32) {
+    throw new Error('installationId, platform, and token are required');
   }
 
   const locale = normalizeLocale(body?.locale);
@@ -196,64 +179,10 @@ export async function registerPushDevice(userId, body, env) {
   const appVersion = normalizeOptionalText(body?.appVersion, 64);
   const userAgent = normalizeOptionalText(body?.userAgent, 512);
 
-  if (platform === 'ios') {
-    const token = trimString(body?.token);
-    if (token.length < 32) {
-      throw new Error('token is required for ios');
-    }
-
-    await env.DB.prepare(
-      'DELETE FROM push_registrations WHERE push_token = ?1 AND installation_id != ?2'
-    )
-      .bind(token, installationId)
-      .run();
-
-    await env.DB.prepare(
-      `INSERT INTO push_registrations (
-        user_id,
-        installation_id,
-        platform,
-        provider,
-        push_token,
-        device_name,
-        locale,
-        app_version,
-        user_agent,
-        updated_at,
-        last_seen_at,
-        invalidated_at,
-        last_error_code,
-        last_error_at
-      ) VALUES (?1, ?2, 'ios', 'apns', ?3, ?4, ?5, ?6, ?7, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, NULL, NULL, NULL)
-      ON CONFLICT(installation_id, platform) DO UPDATE SET
-        user_id = excluded.user_id,
-        provider = excluded.provider,
-        push_token = excluded.push_token,
-        device_name = excluded.device_name,
-        locale = excluded.locale,
-        app_version = excluded.app_version,
-        user_agent = excluded.user_agent,
-        updated_at = CURRENT_TIMESTAMP,
-        last_seen_at = CURRENT_TIMESTAMP,
-        invalidated_at = NULL,
-        last_error_code = NULL,
-        last_error_at = NULL`
-    )
-      .bind(userId, installationId, token, deviceName, locale, appVersion, userAgent)
-      .run();
-
-    return;
-  }
-
-  const subscription = normalizedWebSubscription(body);
-  if (!subscription) {
-    throw new Error('valid web subscription is required');
-  }
-
   await env.DB.prepare(
-    'DELETE FROM push_registrations WHERE endpoint = ?1 AND installation_id != ?2'
+    'DELETE FROM push_registrations WHERE push_token = ?1 AND installation_id != ?2'
   )
-    .bind(subscription.endpoint, installationId)
+    .bind(token, installationId)
     .run();
 
   await env.DB.prepare(
@@ -262,10 +191,7 @@ export async function registerPushDevice(userId, body, env) {
       installation_id,
       platform,
       provider,
-      endpoint,
-      subscription_json,
-      p256dh_key,
-      auth_key,
+      push_token,
       device_name,
       locale,
       app_version,
@@ -275,14 +201,11 @@ export async function registerPushDevice(userId, body, env) {
       invalidated_at,
       last_error_code,
       last_error_at
-    ) VALUES (?1, ?2, 'web', 'webpush', ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, NULL, NULL, NULL)
+    ) VALUES (?1, ?2, ?3, 'fcm', ?4, ?5, ?6, ?7, ?8, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, NULL, NULL, NULL)
     ON CONFLICT(installation_id, platform) DO UPDATE SET
       user_id = excluded.user_id,
       provider = excluded.provider,
-      endpoint = excluded.endpoint,
-      subscription_json = excluded.subscription_json,
-      p256dh_key = excluded.p256dh_key,
-      auth_key = excluded.auth_key,
+      push_token = excluded.push_token,
       device_name = excluded.device_name,
       locale = excluded.locale,
       app_version = excluded.app_version,
@@ -293,18 +216,7 @@ export async function registerPushDevice(userId, body, env) {
       last_error_code = NULL,
       last_error_at = NULL`
   )
-    .bind(
-      userId,
-      installationId,
-      subscription.endpoint,
-      JSON.stringify(subscription),
-      subscription.keys.p256dh,
-      subscription.keys.auth,
-      deviceName,
-      locale,
-      appVersion,
-      userAgent
-    )
+    .bind(userId, installationId, platform, token, deviceName, locale, appVersion, userAgent)
     .run();
 }
 
@@ -324,9 +236,10 @@ export async function unregisterPushDevice(body, env) {
 
 async function listActivePushRegistrations(userId, env) {
   const rows = await env.DB.prepare(
-    `SELECT id, installation_id, platform, provider, push_token, endpoint, subscription_json, locale
+    `SELECT id, installation_id, platform, provider, push_token, locale
      FROM push_registrations
      WHERE user_id = ?1
+       AND provider = 'fcm'
        AND invalidated_at IS NULL
      ORDER BY updated_at DESC`
   )
@@ -367,9 +280,9 @@ export function buildPushNotificationId(
     return normalized.slice(0, 32);
   }
 
-  return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 14)}`
-    .replace(/[^a-z0-9]/g, '')
-    .slice(0, 32);
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
 function base64UrlEncodeBytes(bytes) {
@@ -397,41 +310,68 @@ function pemToArrayBuffer(pem) {
   return bytes.buffer;
 }
 
-async function importApnsPrivateKey(pem) {
+async function importServiceAccountPrivateKey(pem) {
   return crypto.subtle.importKey(
     'pkcs8',
     pemToArrayBuffer(pem),
-    { name: 'ECDSA', namedCurve: 'P-256' },
+    { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
     false,
     ['sign']
   );
 }
 
-async function createApnsAuthToken(env) {
-  const teamId = trimString(env.APNS_TEAM_ID);
-  const keyId = trimString(env.APNS_KEY_ID);
-  const privateKeyPem = normalizePrivateKey(env.APNS_PRIVATE_KEY);
-  if (!teamId || !keyId || !privateKeyPem) {
-    throw new Error('APNs delivery is not configured');
+async function createFcmServiceAccountJwt(env) {
+  const clientEmail = trimString(env.FCM_CLIENT_EMAIL);
+  const privateKeyPem = normalizePrivateKey(env.FCM_PRIVATE_KEY);
+  if (!clientEmail || !privateKeyPem) {
+    throw new Error('FCM delivery is not configured');
   }
 
-  const key = await importApnsPrivateKey(privateKeyPem);
+  const key = await importServiceAccountPrivateKey(privateKeyPem);
   const nowSeconds = Math.floor(Date.now() / 1000);
   const unsignedToken =
-    `${base64UrlEncodeJson({ alg: 'ES256', kid: keyId })}.` +
-    `${base64UrlEncodeJson({ iss: teamId, iat: nowSeconds })}`;
+    `${base64UrlEncodeJson({ alg: 'RS256', typ: 'JWT' })}.` +
+    `${base64UrlEncodeJson({
+      iss: clientEmail,
+      scope: FCM_MESSAGING_SCOPE,
+      aud: FCM_OAUTH_TOKEN_URL,
+      iat: nowSeconds,
+      exp: nowSeconds + 3600,
+    })}`;
   const signature = await crypto.subtle.sign(
-    { name: 'ECDSA', hash: 'SHA-256' },
+    'RSASSA-PKCS1-v1_5',
     key,
     new TextEncoder().encode(unsignedToken)
   );
   return `${unsignedToken}.${base64UrlEncodeBytes(new Uint8Array(signature))}`;
 }
 
-function apnsBaseUrl(env) {
-  return trimString(env.APNS_USE_SANDBOX).toLowerCase() === 'true'
-    ? 'https://api.sandbox.push.apple.com'
-    : 'https://api.push.apple.com';
+async function createFcmAccessToken(env) {
+  const assertion = await createFcmServiceAccountJwt(env);
+  const body = new URLSearchParams({
+    grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+    assertion,
+  });
+
+  const response = await fetch(FCM_OAUTH_TOKEN_URL, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/x-www-form-urlencoded',
+    },
+    body,
+  });
+
+  const payload = await response.json().catch(() => null);
+  if (!response.ok) {
+    const reason = trimString(payload?.error_description || payload?.error) || `HTTP_${response.status}`;
+    throw new Error(`FCM OAuth failed: ${reason}`);
+  }
+
+  const token = trimString(payload?.access_token);
+  if (!token) {
+    throw new Error('FCM OAuth response did not include access_token');
+  }
+  return token;
 }
 
 async function invalidatePushRegistration(id, errorCode, env) {
@@ -457,129 +397,136 @@ async function markPushRegistrationError(id, errorCode, env) {
     .run();
 }
 
-export function shouldInvalidateApnsToken(status, reason) {
-  return status === 410 || APNS_INVALID_REASONS.has(reason);
+function fcmSendUrl(env) {
+  return `https://fcm.googleapis.com/v1/projects/${encodeURIComponent(
+    trimString(env.FCM_PROJECT_ID)
+  )}/messages:send`;
 }
 
-async function sendApnsNotification(env, registration, messagePayload, authToken) {
-  if (!hasApnsDeliveryConfig(env)) {
-    return { skipped: true };
-  }
+function buildMessageData(messagePayload) {
+  const conversationUserId = String(messagePayload.conversationUserId);
+  const senderId = String(messagePayload.senderId);
+  return {
+    type: trimString(messagePayload.type),
+    notificationId: trimString(messagePayload.notificationId),
+    conversationUserId,
+    senderId,
+    url: `${messagePayload.appOrigin}/?conversationUserId=${encodeURIComponent(conversationUserId)}`,
+  };
+}
 
-  const response = await fetch(
-    `${apnsBaseUrl(env)}/3/device/${encodeURIComponent(registration.push_token)}`,
-    {
-      method: 'POST',
-      headers: {
-        authorization: `bearer ${authToken}`,
-        'apns-topic': trimString(env.APNS_BUNDLE_ID),
-        'apns-push-type': 'alert',
-        'apns-priority': '10',
-        'content-type': 'application/json',
+export function buildFcmMessage(registration, messagePayload) {
+  const data = buildMessageData(messagePayload);
+  const tag = `${messagePayload.type}-${messagePayload.notificationId}`;
+
+  return {
+    token: trimString(registration.push_token),
+    notification: {
+      title: messagePayload.title,
+      body: messagePayload.body,
+    },
+    data,
+    android: {
+      priority: 'HIGH',
+      notification: {
+        tag,
+        click_action: 'FLUTTER_NOTIFICATION_CLICK',
       },
-      body: JSON.stringify({
+    },
+    apns: {
+      headers: {
+        'apns-priority': '10',
+      },
+      payload: {
         aps: {
           alert: {
             title: messagePayload.title,
             body: messagePayload.body,
           },
           sound: 'default',
+          'thread-id': `dm-${data.conversationUserId}`,
         },
-        type: messagePayload.type,
-        conversationUserId: String(messagePayload.conversationUserId),
-        senderId: String(messagePayload.senderId),
-      }),
+      },
+    },
+    webpush: {
+      headers: {
+        TTL: '60',
+        Urgency: 'high',
+        Topic: messagePayload.notificationId,
+      },
+      notification: {
+        title: messagePayload.title,
+        body: messagePayload.body,
+        icon: '/icons/Icon-192.png',
+        badge: '/icons/Icon-192.png',
+        tag,
+        data,
+      },
+      fcm_options: {
+        link: data.url,
+      },
+    },
+  };
+}
+
+function fcmErrorCode(errorPayload) {
+  const status = trimString(errorPayload?.error?.status).toUpperCase();
+  const details = Array.isArray(errorPayload?.error?.details)
+    ? errorPayload.error.details
+    : [];
+  for (const detail of details) {
+    const code = trimString(detail?.errorCode).toUpperCase();
+    if (code) {
+      return code;
     }
-  );
+  }
+  return status;
+}
+
+export function shouldInvalidateFcmToken(status, errorCode) {
+  const normalized = trimString(errorCode).toUpperCase();
+  return status === 404 || FCM_INVALID_ERROR_CODES.has(normalized);
+}
+
+function isPermanentFcmFailure(result) {
+  return shouldInvalidateFcmToken(result?.status, result?.reason);
+}
+
+async function sendFcmNotification(env, registration, messagePayload, accessToken) {
+  if (!hasFcmDeliveryConfig(env)) {
+    return { skipped: true };
+  }
+  if (!accessToken) {
+    return { ok: false, reason: 'NO_AUTH_TOKEN' };
+  }
+
+  const response = await fetch(fcmSendUrl(env), {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${accessToken}`,
+      'content-type': 'application/json; charset=UTF-8',
+    },
+    body: JSON.stringify({
+      message: buildFcmMessage(registration, messagePayload),
+    }),
+  });
 
   if (response.ok) {
     return { ok: true };
   }
 
   const errorPayload = await response.json().catch(() => null);
-  const reason = trimString(errorPayload?.reason) || `HTTP_${response.status}`;
-  if (shouldInvalidateApnsToken(response.status, reason)) {
+  const reason =
+    fcmErrorCode(errorPayload) ||
+    trimString(errorPayload?.error?.message) ||
+    `HTTP_${response.status}`;
+  if (shouldInvalidateFcmToken(response.status, reason)) {
     await invalidatePushRegistration(registration.id, reason, env);
   } else {
     await markPushRegistrationError(registration.id, reason, env);
   }
 
   return { ok: false, status: response.status, reason };
-}
-
-export function parseWebSubscription(registration) {
-  try {
-    const parsed = JSON.parse(registration.subscription_json);
-    if (!parsed || typeof parsed !== 'object') {
-      return null;
-    }
-    const endpoint = trimString(parsed.endpoint);
-    const keys = parsed.keys && typeof parsed.keys === 'object' ? parsed.keys : {};
-    const p256dh = trimString(keys?.p256dh);
-    const auth = trimString(keys?.auth);
-    if (!endpoint || !p256dh || !auth) {
-      return null;
-    }
-    return {
-      endpoint,
-      expirationTime: parsed.expirationTime ?? null,
-      keys: {
-        p256dh,
-        auth,
-      },
-    };
-  } catch (_) {
-    return null;
-  }
-}
-
-async function sendWebPushNotification(env, registration, messagePayload) {
-  if (!hasWebPushDeliveryConfig(env)) {
-    return { skipped: true };
-  }
-
-  const subscription = parseWebSubscription(registration);
-  if (!subscription) {
-    await invalidatePushRegistration(registration.id, 'INVALID_SUBSCRIPTION', env);
-    return { ok: false, status: 400, reason: 'INVALID_SUBSCRIPTION' };
-  }
-
-  const payload = JSON.stringify({
-    title: messagePayload.title,
-    body: messagePayload.body,
-    icon: '/icons/Icon-192.png',
-    badge: '/icons/Icon-192.png',
-    tag: `${messagePayload.type}-${messagePayload.notificationId}`,
-    data: {
-      type: messagePayload.type,
-      conversationUserId: messagePayload.conversationUserId,
-      senderId: messagePayload.senderId,
-      url: `${messagePayload.appOrigin}/?conversationUserId=${encodeURIComponent(messagePayload.conversationUserId)}`,
-    },
-  });
-
-  try {
-    await webpush.sendNotification(subscription, payload, {
-      TTL: 60,
-      urgency: 'high',
-      topic: messagePayload.notificationId,
-      vapidDetails: {
-        subject: trimString(env.WEB_PUSH_SUBJECT),
-        publicKey: trimString(env.WEB_PUSH_PUBLIC_KEY),
-        privateKey: trimString(env.WEB_PUSH_PRIVATE_KEY),
-      },
-    });
-    return { ok: true };
-  } catch (error) {
-    const status = Number(error?.statusCode) || 500;
-    const reason = trimString(error?.body || error?.message) || `HTTP_${status}`;
-    if (WEB_PUSH_INVALID_STATUS_CODES.has(status)) {
-      await invalidatePushRegistration(registration.id, reason, env);
-    } else {
-      await markPushRegistrationError(registration.id, reason, env);
-    }
-    return { ok: false, status, reason };
-  }
 }
 
 export async function sendDirectMessagePush(
@@ -591,10 +538,7 @@ export async function sendDirectMessagePush(
     return;
   }
 
-  const apnsAuthToken = registrations.some((item) => item.provider === 'apns')
-    ? await createApnsAuthToken(env).catch(() => null)
-    : null;
-
+  const accessToken = await createFcmAccessToken(env).catch(() => null);
   const results = await Promise.allSettled(
     registrations.map(async (registration) => {
       const notificationId = buildPushNotificationId();
@@ -613,18 +557,10 @@ export async function sendDirectMessagePush(
         appOrigin,
       };
 
-      if (registration.provider === 'apns') {
-        if (!apnsAuthToken) {
-          return { ok: false, reason: 'NO_AUTH_TOKEN' };
-        }
-        return sendApnsNotification(env, registration, messagePayload, apnsAuthToken);
-      }
-
-      return sendWebPushNotification(env, registration, messagePayload);
+      return sendFcmNotification(env, registration, messagePayload, accessToken);
     })
   );
 
-  // Queue failed pushes for retry
   const failedRegistrations = registrations.filter((reg, index) => {
     const result = results[index];
     return result?.status === 'rejected' || (result?.value && result.value.ok === false);
@@ -635,11 +571,8 @@ export async function sendDirectMessagePush(
     const result = results[registrations.indexOf(registration)];
     const pushResult = result?.value || { ok: false, reason: 'UNKNOWN' };
 
-    if (pushResult.reason && APNS_INVALID_REASONS.has(pushResult.reason)) {
-      continue; // Permanent failure, don't retry
-    }
-    if (WEB_PUSH_INVALID_STATUS_CODES.has(pushResult.status)) {
-      continue; // Permanent failure, don't retry
+    if (isPermanentFcmFailure(pushResult)) {
+      continue;
     }
 
     const notificationId = buildPushNotificationId();
@@ -652,7 +585,7 @@ export async function sendDirectMessagePush(
       appOrigin,
       attemptCount: 0,
       registeredAt: nowMs(),
-      provider: registration.provider,
+      provider: 'fcm',
       registrationId: registration.id,
     };
 
@@ -660,16 +593,16 @@ export async function sendDirectMessagePush(
       await env.PUSH_RETRY?.put?.(
         pushRetryKey(receiverId, notificationId),
         JSON.stringify(retryPayload),
-        { expirationTtl: 3600 } // 1 hour TTL
+        { expirationTtl: 3600 }
       );
     } catch (_) {
-      // KV not available, skip retry
+      // KV not available, skip retry.
     }
   }
 }
 
 /**
- * Process push notification retries from KV queue.
+ * Process push notification retries from KV.
  * Should be called periodically by a scheduled handler.
  * @param {*} env
  */
@@ -678,10 +611,10 @@ export async function processPushRetries(env) {
     return { processed: 0, skipped: 0 };
   }
 
-  // List all retry keys (using list with prefix for KV namespace)
   const listResult = await env.PUSH_RETRY.list({ prefix: PUSH_RETRY_KV_PREFIX });
-  const processedCount = 0;
-  const skippedCount = 0;
+  let processedCount = 0;
+  let skippedCount = 0;
+  const accessToken = await createFcmAccessToken(env).catch(() => null);
 
   for (const key of (listResult.keys || [])) {
     let payload;
@@ -689,35 +622,48 @@ export async function processPushRetries(env) {
       const raw = await env.PUSH_RETRY.get(key.name);
       if (!raw) {
         await env.PUSH_RETRY.delete(key.name);
+        skippedCount += 1;
         continue;
       }
       payload = JSON.parse(raw);
     } catch (_) {
       await env.PUSH_RETRY.delete(key.name);
+      skippedCount += 1;
       continue;
     }
 
-    const { receiverId, senderId, senderName, text, kind, appOrigin, attemptCount, provider, registrationId } = payload;
+    const {
+      receiverId,
+      senderId,
+      senderName,
+      text,
+      kind,
+      appOrigin,
+      attemptCount,
+      provider,
+      registrationId,
+    } = payload;
     const currentAttempt = Number(attemptCount || 0);
+
+    if (provider && provider !== 'fcm') {
+      await env.PUSH_RETRY.delete(key.name);
+      skippedCount += 1;
+      continue;
+    }
 
     if (!shouldRetryPush(currentAttempt)) {
       await env.PUSH_RETRY.delete(key.name);
+      skippedCount += 1;
       continue;
     }
 
-    // Find registration and retry push
     const registrations = await listActivePushRegistrations(receiverId, env);
     const registration = registrations.find((r) => r.id === registrationId);
-
     if (!registration) {
-      // Registration deleted, remove retry entry
       await env.PUSH_RETRY.delete(key.name);
+      skippedCount += 1;
       continue;
     }
-
-    const apnsAuthToken = provider === 'apns'
-      ? await createApnsAuthToken(env).catch(() => null)
-      : null;
 
     const messageText = localizedChatText({
       locale: registration.locale,
@@ -736,34 +682,31 @@ export async function processPushRetries(env) {
       appOrigin,
     };
 
-    let pushResult;
-    if (provider === 'apns' && apnsAuthToken) {
-      pushResult = await sendApnsNotification(env, registration, messagePayload, apnsAuthToken);
-    } else {
-      pushResult = await sendWebPushNotification(env, registration, messagePayload);
-    }
+    const pushResult = await sendFcmNotification(
+      env,
+      registration,
+      messagePayload,
+      accessToken
+    );
+
+    processedCount += 1;
 
     if (pushResult.ok) {
-      // Success, remove retry entry
       await env.PUSH_RETRY.delete(key.name);
       continue;
     }
 
-    // Check if should continue retry
-    const isPermanentFailure =
-      (provider === 'apns' && APNS_INVALID_REASONS.has(pushResult.reason)) ||
-      (provider === 'web' && WEB_PUSH_INVALID_STATUS_CODES.has(pushResult.status));
-
-    if (isPermanentFailure || !shouldRetryPush(currentAttempt + 1)) {
+    if (isPermanentFcmFailure(pushResult) || !shouldRetryPush(currentAttempt + 1)) {
       await env.PUSH_RETRY.delete(key.name);
       continue;
     }
 
-    // Update retry entry with incremented attempt
     const nextAttempt = currentAttempt + 1;
     const updatedPayload = {
       ...payload,
+      provider: 'fcm',
       attemptCount: nextAttempt,
+      nextAttemptAfter: nowMs() + nextRetryDelayMs(nextAttempt),
       lastAttemptAt: nowMs(),
       lastError: pushResult.reason || `HTTP_${pushResult.status}`,
     };
@@ -777,11 +720,12 @@ export async function processPushRetries(env) {
 }
 
 export const __testables = {
+  buildFcmMessage,
   buildPublicPushConfig,
   buildPushNotificationId,
-  hasApnsDeliveryConfig,
-  hasWebPushDeliveryConfig,
+  hasFcmClientConfig,
+  hasFcmDeliveryConfig,
   localizedChatText,
-  parseWebSubscription,
-  shouldInvalidateApnsToken,
+  shouldInvalidateFcmToken,
+  validatePushRequestBody,
 };
