@@ -13,9 +13,6 @@ import {
 const SESSION_TTL_SECONDS = 30 * 24 * 3600;
 const SESSION_DURATION_MS = SESSION_TTL_SECONDS * 1000;
 const GOOGLE_JWKS_URL = 'https://www.googleapis.com/oauth2/v3/certs';
-const DEFAULT_GOOGLE_CLIENT_IDS = [
-  '310421071956-1ctfspu1f772ehkatigsgd2vq1ui4bks.apps.googleusercontent.com'
-];
 
 let googleJwkCache = {
   keys: null,
@@ -165,8 +162,10 @@ function configuredGoogleClientIds(env, clientIds) {
     .flatMap((value) => String(value).split(','))
     .map((value) => value.trim())
     .filter(Boolean);
-  const values = configured.length > 0 ? configured : DEFAULT_GOOGLE_CLIENT_IDS;
-  return new Set(values);
+  // OAuth audiences are deployment configuration. Never silently accept a
+  // repository-owned client id: each Worker environment must opt in through
+  // GOOGLE_CLIENT_ID(S), while tests can pass options.clientIds explicitly.
+  return new Set(configured);
 }
 
 function cacheMaxAgeMs(cacheControl) {

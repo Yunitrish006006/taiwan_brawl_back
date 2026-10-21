@@ -86,14 +86,20 @@ async function handleUnblockUser(request, env, targetUserId) {
   });
 }
 
-export async function handleSendRoomInvite(request, env, roomCode) {
+export async function handleSendRoomInvite(
+  request,
+  env,
+  roomCode,
+  gameId = 'game.mini-royale',
+) {
   return withAuthenticatedBadRequest(request, env, async (user) => {
     const body = await readJsonBody(request);
     const result = await sendRoomInvite(
       user.id,
       body?.inviteeUserId,
       roomCode,
-      env
+      env,
+      gameId
     );
     return jsonResponse(result, 200, request);
   });

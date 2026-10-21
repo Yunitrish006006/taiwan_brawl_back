@@ -34,6 +34,27 @@ test('createBattleState seeds hand, queue, and bot think time', () => {
   assert.ok(battle.players.right.botThinkMs > 0);
 });
 
+test('createBattleState applies resolved gameplay tuning to duration and tower health', () => {
+  const battle = createBattleState({
+    left: { deckCardIds: ['a'], isBot: false },
+    right: { deckCardIds: ['b'], isBot: false },
+  }, {
+    gameplayRules: {
+      schemaVersion: 1,
+      rulesetId: 'mini-royale-ranked',
+      rulesetVersion: 1,
+      matchDurationMs: 240000,
+      towerHitPoints: 4000,
+      attackSpeedMultiplier: 1.25,
+      moveSpeedMultiplier: 0.7,
+    },
+  });
+
+  assert.equal(battle.timeRemainingMs, 240000);
+  assert.equal(battle.players.left.towerHp, 4000);
+  assert.equal(battle.players.right.towerHp, 4000);
+});
+
 test('createBattleState randomly selects an arena for new battles', () => {
   const players = {
     left: {

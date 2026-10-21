@@ -20,6 +20,7 @@ function serializeRequest(row) {
 function serializeRoomInvite(row) {
   return {
     id: Number(row.invite_id),
+    gameId: row.game_id ?? 'game.mini-royale',
     roomCode: row.room_code,
     createdAt: row.created_at,
     inviter: serializeUser(row),
@@ -182,7 +183,7 @@ async function loadPendingFriendRequest(requestId, env) {
 
 async function loadPendingRoomInvite(inviteId, env) {
   return env.DB.prepare(
-    `SELECT id, room_code, invitee_user_id, status
+    `SELECT id, game_id, room_code, invitee_user_id, status
      FROM room_invites
      WHERE id = ?`
   )
@@ -292,7 +293,7 @@ export async function getFriendsOverview(userId, env) {
     .all();
 
   const roomInviteRows = await env.DB.prepare(
-    `SELECT ri.id AS invite_id, ri.room_code, ri.created_at, ${userSelectFields('u')}
+    `SELECT ri.id AS invite_id, ri.game_id, ri.room_code, ri.created_at, ${userSelectFields('u')}
      FROM room_invites ri
      JOIN users u ON u.id = ri.inviter_user_id
      WHERE ri.invitee_user_id = ? AND ri.status = 'pending'
@@ -479,8 +480,12 @@ export async function sendRoomInvite(
   currentUserId,
   rawInviteeUserId,
   roomCode,
-  env
+  env,
+  gameId = 'game.mini-royale'
 ) {
+  if (typeof gameId !== 'string' || !/^game\.[a-z0-9]+(?:[.-][a-z0-9]+)*$/.test(gameId)) {
+    throw new Error('A valid gameId is required');
+  }
   const inviteeUserId = await requireTargetUser(
     currentUserId,
     rawInviteeUserId,
@@ -507,14 +512,15 @@ export async function sendRoomInvite(
 
   await env.DB.prepare(
     `INSERT INTO room_invites (
+      game_id,
       room_code,
       inviter_user_id,
       invitee_user_id,
       status,
       updated_at
-    ) VALUES (?, ?, ?, 'pending', CURRENT_TIMESTAMP)`
+    ) VALUES (?, ?, ?, ?, 'pending', CURRENT_TIMESTAMP)`
   )
-    .bind(roomCode, currentUserId, inviteeUserId)
+    .bind(gameId, roomCode, currentUserId, inviteeUserId)
     .run();
 
   return { ok: true };
@@ -533,6 +539,7 @@ export async function respondToRoomInvite(currentUserId, inviteId, action, env) 
   return {
     ok: true,
     status,
+    gameId: invite.game_id ?? 'game.mini-royale',
     roomCode: invite.room_code,
   };
 }

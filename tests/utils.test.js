@@ -12,6 +12,7 @@ import {
   parseSessionIdFromCookie,
   buildUploadedAvatarUrl,
   resolveAvatarUrlForSource,
+  corsHeaders,
 } from '../src/core/utils.js';
 
 // ── generateRequestId ──────────────────────────────────────────────────────
@@ -47,6 +48,27 @@ describe('getRequestId', () => {
     const id = getRequestId(req);
     assert.strictEqual(typeof id, 'string');
     assert.ok(id.length > 0);
+  });
+});
+
+describe('corsHeaders', () => {
+  it('allows same-origin requests without a deployment hostname allowlist', () => {
+    const request = new Request('https://api.example.test/api/health', {
+      headers: { Origin: 'https://api.example.test' },
+    });
+    const headers = corsHeaders(request);
+    assert.strictEqual(
+      headers['Access-Control-Allow-Origin'],
+      'https://api.example.test',
+    );
+  });
+
+  it('does not allow an unrelated production origin', () => {
+    const request = new Request('https://api.example.test/api/health', {
+      headers: { Origin: 'https://other.example.test' },
+    });
+    const headers = corsHeaders(request);
+    assert.strictEqual(headers['Access-Control-Allow-Origin'], undefined);
   });
 });
 

@@ -1,5 +1,6 @@
 import {
   GLOBAL_ATTACK_SPEED_MULTIPLIER,
+  GLOBAL_MOVE_SPEED_MULTIPLIER,
   BRUISE_DAMAGE_PER_SECOND,
   BLEED_DAMAGE_PER_SECOND,
   BRUISE_DURATION_MS,
@@ -27,6 +28,7 @@ import {
   sideDirection,
   towerPointForSide
 } from './royale_battle_rules.js';
+import { DEFAULT_MINI_ROYALE_GAMEPLAY_RULES } from './royale_gameplay_rules.js';
 import {
   solveUnitMovementPlan,
   unitDesiredLateral
@@ -205,6 +207,7 @@ export function spawnBattleUnits(
   groupLateralOffset = 0
 ) {
   const arena = arenaConfigForBattle(room.battle);
+  const gameplayRules = room.gameplayRules ?? DEFAULT_MINI_ROYALE_GAMEPLAY_RULES;
   const centerLateral = arenaCenterLateral(arena);
   const count = Math.max(1, card.spawnCount);
   const stats = applyEquipmentEffects(card, equipmentEffects);
@@ -286,10 +289,12 @@ export function spawnBattleUnits(
         -UNIT_FORMATION_BIAS_LIMIT,
         UNIT_FORMATION_BIAS_LIMIT
       ),
-      moveSpeed: stats.moveSpeed,
+      moveSpeed: stats.moveSpeed *
+        (gameplayRules.moveSpeedMultiplier / GLOBAL_MOVE_SPEED_MULTIPLIER),
       attackSpeed:
         (card.attackSpeed || 1) *
         GLOBAL_ATTACK_SPEED_MULTIPLIER *
+        (gameplayRules.attackSpeedMultiplier / GLOBAL_ATTACK_SPEED_MULTIPLIER) *
         (stats.attackSpeedMultiplier ?? 1),
       degenerationPerSecond: Number(stats.degenerationPerSecond || 0),
       targetRule: card.targetRule,

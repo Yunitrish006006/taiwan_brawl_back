@@ -14,6 +14,13 @@ import {
 export const DEFAULT_LLM_BOT_BASE_URL = 'https://api.openai.com/v1';
 export const DEFAULT_LLM_BOT_MODEL = 'gpt-4o-mini';
 
+export function llmBotDefaults(env = {}) {
+  return {
+    baseUrl: String(env.LLM_DEFAULT_BASE_URL || DEFAULT_LLM_BOT_BASE_URL).trim(),
+    model: String(env.LLM_DEFAULT_MODEL || DEFAULT_LLM_BOT_MODEL).trim()
+  };
+}
+
 const LLM_BOT_SPEC_VERSION = 'ghost-island-brawl-llm-bot/v1';
 const MCP_PROTOCOL_VERSION = '2024-11-05';
 const MCP_SERVER_INFO = {
@@ -146,14 +153,14 @@ function assertValidDecisionState(state) {
   }
 }
 
-export function normalizeLlmBotBaseUrl(value) {
+export function normalizeLlmBotBaseUrl(value, fallback = DEFAULT_LLM_BOT_BASE_URL) {
   const normalized = String(value ?? '').trim().replace(/\/+$/, '');
-  return normalized || DEFAULT_LLM_BOT_BASE_URL;
+  return normalized || fallback;
 }
 
-export function normalizeLlmBotModel(value) {
+export function normalizeLlmBotModel(value, fallback = DEFAULT_LLM_BOT_MODEL) {
   const normalized = String(value ?? '').trim();
-  return normalized || DEFAULT_LLM_BOT_MODEL;
+  return normalized || fallback;
 }
 
 export function normalizeBotController(value) {
@@ -171,17 +178,19 @@ export function maskLlmBotApiKey(value) {
   return `${'*'.repeat(Math.max(0, normalized.length - 4))}${normalized.slice(-4)}`;
 }
 
-export function buildLlmBotSettingsSnapshot(row = {}) {
+export function buildLlmBotSettingsSnapshot(row = {}, env = {}) {
+  const defaults = llmBotDefaults(env);
   const apiKey = String(row.llm_api_key ?? '').trim();
   return {
-    llm_base_url: normalizeLlmBotBaseUrl(row.llm_base_url),
-    llm_model: normalizeLlmBotModel(row.llm_model),
+    llm_base_url: normalizeLlmBotBaseUrl(row.llm_base_url, defaults.baseUrl),
+    llm_model: normalizeLlmBotModel(row.llm_model, defaults.model),
     llm_has_api_key: apiKey.length > 0,
     llm_api_key_mask: apiKey.length > 0 ? maskLlmBotApiKey(apiKey) : ''
   };
 }
 
 export async function fetchUserLlmBotSettings(env, userId) {
+  const defaults = llmBotDefaults(env);
   const row =
     (await env.DB.prepare(
       `SELECT llm_base_url, llm_model, llm_api_key
@@ -192,8 +201,8 @@ export async function fetchUserLlmBotSettings(env, userId) {
       .first()) ?? {};
 
   return {
-    baseUrl: normalizeLlmBotBaseUrl(row.llm_base_url),
-    model: normalizeLlmBotModel(row.llm_model),
+    baseUrl: normalizeLlmBotBaseUrl(row.llm_base_url, defaults.baseUrl),
+    model: normalizeLlmBotModel(row.llm_model, defaults.model),
     apiKey: String(row.llm_api_key ?? '').trim()
   };
 }
@@ -908,7 +917,8 @@ function mcpToolDefinitions() {
   ];
 }
 
-export function buildLlmBotSpec() {
+export function buildLlmBotSpec(env = {}) {
+  const defaults = llmBotDefaults(env);
   return {
     name: MCP_SERVER_INFO.name,
     version: MCP_SERVER_INFO.version,
@@ -924,8 +934,8 @@ export function buildLlmBotSpec() {
       }
     },
     defaults: {
-      baseUrl: DEFAULT_LLM_BOT_BASE_URL,
-      model: DEFAULT_LLM_BOT_MODEL,
+      baseUrl: defaults.baseUrl,
+      model: defaults.model,
       botControllers: ['heuristic', 'llm']
     },
     rules: buildProtocolRules(),
@@ -964,7 +974,7 @@ function mcpToolContent(data) {
   };
 }
 
-export async function handleLlmBotMcpPayload(payload, settingsLoader) {
+export async function handleLlmBotMcpPayload(payload, settingsLoader, env = {}) {
   const id = payload?.id ?? null;
   switch (payload?.method) {
     case 'initialize':
@@ -984,7 +994,7 @@ export async function handleLlmBotMcpPayload(payload, settingsLoader) {
       const args = payload?.params?.arguments ?? {};
       switch (toolName) {
         case 'get_rules':
-          return mcpResult(id, mcpToolContent(buildLlmBotSpec()));
+          return mcpResult(id, mcpToolContent(buildLlmBotSpec(env)));
         case 'list_legal_actions':
           return mcpResult(id, mcpToolContent(buildLlmBotProtocol(args.state)));
         case 'decide_action': {

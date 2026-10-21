@@ -33,6 +33,17 @@ import {
 } from './royale_room_combat.js';
 import { isJobCard, resolveJobCardEffect } from './royale_job_events.js';
 import { isEventCard } from './royale_card_progression.js';
+import {
+  isCompatibleRoyaleClient,
+  isCompatibleRoyaleProtocol,
+  normalizeRoyaleGameContract,
+  ROYALE_GAME_CONTRACT
+} from './royale_compatibility.js';
+import { resolveMiniRoyaleGameplayRules } from './royale_gameplay_resource_loader.js';
+import {
+  DEFAULT_MINI_ROYALE_GAMEPLAY_RULES,
+  normalizeMiniRoyaleGameplayRules,
+} from './royale_gameplay_rules.js';
 import { resolveEventCard } from './royale_event_cards.js';
 import { tickFieldEvents } from './royale_field_events.js';
 import {
@@ -128,6 +139,28 @@ export class RoyaleRoom {
 
   async load() {
     this.room = await this.state.storage.get('room');
+    if (this.room) {
+      // Rooms persisted before gameplay contracts existed could only have
+      // used the bundled rules. Migrate those snapshots explicitly.
+      if (!this.room.gameContract) {
+        this.room.gameContract = ROYALE_GAME_CONTRACT;
+      }
+      const normalizedContract = normalizeRoyaleGameContract(
+        this.room.gameContract,
+      );
+      if (normalizedContract) {
+        this.room.gameContract = normalizedContract;
+      }
+      const savedRules = this.room.gameplayRules ?? DEFAULT_MINI_ROYALE_GAMEPLAY_RULES;
+      const normalizedRules = normalizeMiniRoyaleGameplayRules(savedRules);
+      if (!normalizedRules ||
+          normalizedRules.rulesetId !== this.room.gameContract?.rulesetId ||
+          normalizedRules.rulesetVersion !== this.room.gameContract?.rulesetVersion) {
+        this.room = null;
+        return;
+      }
+      this.room.gameplayRules = normalizedRules;
+    }
     if (this.room?.players) {
       const hostUserId = Number(
         this.room.hostUserId ||
@@ -475,6 +508,7 @@ export class RoyaleRoom {
       code: this.room.code,
       status: this.room.status,
       simulationMode,
+      gameContract: this.room.gameContract,
       hostUserId: this.hostUserId(),
       viewerSide: viewer?.side ?? null,
       arena: normalizeArenaConfig(
@@ -530,8 +564,44 @@ export class RoyaleRoom {
       return json({ error: 'Room already exists' }, 409);
     }
 
+    // A multiplayer room must be pinned to the creator's declared client
+    // contract. Inferring the current contract for an older client hides
+    // version skew instead of rejecting it.
+    const clientContract = normalizeRoyaleGameContract(payload.gameContract);
+    if (!clientContract) {
+      return json({ error: 'INVALID_GAME_CONTRACT' }, 400);
+    }
+    if (!isCompatibleRoyaleProtocol(clientContract, ROYALE_GAME_CONTRACT)) {
+      return json({
+        error: 'GAME_VERSION_INCOMPATIBLE',
+        detail: 'Update the game to a protocol supported by this server.',
+        required: ROYALE_GAME_CONTRACT,
+        retryable: false,
+      }, 409);
+    }
+    const resolvedRules = await resolveMiniRoyaleGameplayRules(clientContract, this.env);
+    if (!resolvedRules.ok) {
+      return json({
+        error: 'GAME_VERSION_INCOMPATIBLE',
+        detail: resolvedRules.reason,
+        required: ROYALE_GAME_CONTRACT,
+        retryable: false,
+      }, 409);
+    }
+
+    // Pin room admission to the server's protocol policy, not a range chosen
+    // by the creator. Keep only the publisher-verified gameplay identity from
+    // the client's contract after the rules loader has validated it.
+    const gameContract = Object.freeze({
+      ...ROYALE_GAME_CONTRACT,
+      gameplayContentDigest: clientContract.gameplayContentDigest,
+      gameplayResources: clientContract.gameplayResources,
+    });
+
     this.room = {
       code: payload.code,
+      gameContract,
+      gameplayRules: resolvedRules.rules,
       status: 'lobby',
       simulationMode: payload.vsBot ? 'host' : normalizeSimulationMode(payload.simulationMode),
       hostUserId: Number(payload.user.id),
@@ -569,6 +639,15 @@ export class RoyaleRoom {
     const payload = await request.json();
     if (!this.room) {
       return json({ error: 'Room not found' }, 404);
+    }
+
+    const requiredContract = this.room.gameContract ?? ROYALE_GAME_CONTRACT;
+    if (!isCompatibleRoyaleClient(payload.gameContract, requiredContract)) {
+      return json({
+        error: 'GAME_VERSION_INCOMPATIBLE',
+        detail: 'Update the game before joining this room.',
+        required: requiredContract,
+      }, 409);
     }
 
     const existing = this.findPlayerByUserId(payload.user.id);
@@ -693,6 +772,21 @@ export class RoyaleRoom {
 
   async handleWebSocket(request) {
     const userId = Number(request.headers.get('x-user-id'));
+    const encodedContract = new URL(request.url).searchParams.get('gameContract');
+    let clientContract = null;
+    try {
+      clientContract = encodedContract ? JSON.parse(encodedContract) : null;
+    } catch (_) {
+      clientContract = null;
+    }
+    const requiredContract = this.room?.gameContract ?? ROYALE_GAME_CONTRACT;
+    if (!isCompatibleRoyaleClient(clientContract, requiredContract)) {
+      return json({
+        error: 'GAME_VERSION_INCOMPATIBLE',
+        detail: 'Update the game before reconnecting to this room.',
+        required: requiredContract,
+      }, 409);
+    }
     const player = this.findPlayerByUserId(userId);
     if (!player) {
       return new Response('Forbidden', { status: 403 });
@@ -914,7 +1008,10 @@ export class RoyaleRoom {
     const arena = normalizeArenaConfig(this.room.arena);
     this.room.status = 'battle';
     this.room.arena = arena;
-    this.room.battle = createBattleState(this.room.players, { arena });
+    this.room.battle = createBattleState(this.room.players, {
+      arena,
+      gameplayRules: this.room.gameplayRules,
+    });
     if (normalizeSimulationMode(this.room.simulationMode) === 'server') {
       this.ensureTicking();
     }

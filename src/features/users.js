@@ -7,6 +7,7 @@ import {
 } from '../core/utils.js';
 import {
   buildLlmBotSettingsSnapshot,
+  llmBotDefaults,
   normalizeLlmBotBaseUrl,
   normalizeLlmBotModel
 } from '../royale/royale_llm_bot.js';
@@ -357,11 +358,14 @@ export async function handleUpdateLlmBotSettings(request, env) {
       return jsonResponse({ error: 'Invalid body' }, 400, request);
     }
 
+    const defaults = llmBotDefaults(env);
     const baseUrl = normalizeLlmBotBaseUrl(
-      body.base_url !== undefined ? body.base_url : user.llm_base_url
+      body.base_url !== undefined ? body.base_url : user.llm_base_url,
+      defaults.baseUrl
     );
     const model = normalizeLlmBotModel(
-      body.model !== undefined ? body.model : user.llm_model
+      body.model !== undefined ? body.model : user.llm_model,
+      defaults.model
     );
 
     if (!baseUrl.startsWith('https://') && !baseUrl.startsWith('http://')) {
@@ -409,7 +413,7 @@ export async function handleUpdateLlmBotSettings(request, env) {
                 ? 'configured'
                 : null
               : nextApiKey
-        })
+        }, env)
       },
       200,
       request

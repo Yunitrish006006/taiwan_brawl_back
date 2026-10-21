@@ -2,6 +2,12 @@ import { requireUser } from '../core/request_helpers.js';
 import { sendDirectMessagePush } from '../features/push_notifications.js';
 import { jsonResponse } from '../core/utils.js';
 import { handleSyncUpload, handleSyncDownload } from './chat_sync_api.js';
+import {
+  eventFromPendingRow,
+  normalizeChatEvent,
+  pendingRowMatchesEvent,
+  pendingTypeForEvent
+} from './chat_event_contract.js';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -126,26 +132,126 @@ async function handleSendPending(request, env, friendId, ctx) {
   return jsonResponse({ ok: true, createdAt }, 201, request);
 }
 
+async function handleSendEvent(request, env, friendId, ctx) {
+  const user = await requireUser(request, env);
+  if (!user) return jsonResponse({ error: 'Not logged in' }, 401, request);
+
+  const friends = await areFriends(user.id, friendId, env);
+  if (!friends) return jsonResponse({ error: 'Not friends' }, 403, request);
+
+  const body = await request.json().catch(() => null);
+  const normalized = normalizeChatEvent(body?.event, {
+    actorId: user.id,
+    friendId
+  });
+  if (normalized.error) return jsonResponse({ error: normalized.error }, 400, request);
+  const event = normalized.event;
+  const pendingType = pendingTypeForEvent(event.type);
+
+  const existing = await env.DB.prepare(
+    'SELECT id, event_id, message_id, sender_id, receiver_id, text, created_at, revision, event_type, signature, device_id FROM pending_messages WHERE event_id = ?1 LIMIT 1'
+  )
+    .bind(event.eventId)
+    .first();
+  if (existing) {
+    if (
+      !pendingRowMatchesEvent(existing, event, {
+        actorId: user.id,
+        friendId
+      })
+    ) {
+      return jsonResponse({ error: 'event_id conflicts with an existing event' }, 409, request);
+    }
+    return jsonResponse({ ok: true, event }, 200, request);
+  }
+
+  await env.DB.prepare(
+    `INSERT INTO pending_messages
+      (sender_id, receiver_id, text, created_at, type, event_id, message_id, revision, event_type, signature, device_id)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)`
+  )
+    .bind(
+      user.id,
+      friendId,
+      event.body ?? '',
+      event.createdAt,
+      pendingType,
+      event.eventId,
+      event.messageId,
+      event.revision,
+      event.type,
+      event.signature,
+      event.deviceId
+    )
+    .run();
+
+  if (event.type === 'created' || event.type === 'edited' || event.type === 'recalled') {
+    await runBackgroundTask(
+      ctx,
+      sendDirectMessagePush(env, {
+        senderId: user.id,
+        senderName: user.name,
+        receiverId: friendId,
+        text: event.type === 'recalled' ? '' : event.body ?? '',
+        kind: event.type === 'recalled' ? 'recall' : 'message',
+        appOrigin: new URL(request.url).origin,
+      })
+    );
+  }
+
+  return jsonResponse({ ok: true, event }, 201, request);
+}
+
 async function handleGetPending(request, env) {
   const user = await requireUser(request, env);
   if (!user) return jsonResponse({ error: 'Not logged in' }, 401, request);
 
   const url = new URL(request.url);
+  const friendIdParam = url.searchParams.get('friendId');
+  const friendId = friendIdParam == null ? null : Number(friendIdParam);
+  if (friendIdParam != null && (!Number.isInteger(friendId) || friendId <= 0)) {
+    return jsonResponse({ error: 'Invalid friendId' }, 400, request);
+  }
+  if (friendId != null && !(await areFriends(user.id, friendId, env))) {
+    return jsonResponse({ error: 'Not friends' }, 403, request);
+  }
+  const afterIdParam = url.searchParams.get('afterId');
+  const afterId = afterIdParam == null ? null : Number(afterIdParam);
+  if (afterIdParam != null && (!Number.isInteger(afterId) || afterId < 0)) {
+    return jsonResponse({ error: 'Invalid afterId' }, 400, request);
+  }
   const rawLimit = Number(url.searchParams.get('limit') ?? 50);
   const rawOffset = Number(url.searchParams.get('offset') ?? 0);
   const limit = Math.max(1, Math.min(100, Number.isInteger(rawLimit) ? rawLimit : 50));
   const offset = Math.max(0, Number.isInteger(rawOffset) ? rawOffset : 0);
 
+  const conditions = ['receiver_id = ?1'];
+  const bindings = [user.id];
+  let nextBinding = 2;
+  if (friendId != null) {
+    conditions.push(`sender_id = ?${nextBinding}`);
+    bindings.push(friendId);
+    nextBinding += 1;
+  }
+  if (afterId != null) {
+    conditions.push(`id > ?${nextBinding}`);
+    bindings.push(afterId);
+    nextBinding += 1;
+  }
+  const where = conditions.join(' AND ');
+  const limitBinding = nextBinding;
+  const offsetBinding = nextBinding + 1;
+
   const [rows, countRow] = await Promise.all([
     env.DB.prepare(
-      'SELECT id, sender_id, receiver_id, text, created_at, type FROM pending_messages WHERE receiver_id = ?1 ORDER BY created_at ASC LIMIT ?2 OFFSET ?3'
+      `SELECT id, sender_id, receiver_id, text, created_at, type, event_id, message_id, revision, event_type, signature, device_id FROM pending_messages WHERE ${where} ORDER BY id ASC LIMIT ?${limitBinding} OFFSET ?${offsetBinding}`
     )
-      .bind(user.id, limit, offset)
+      .bind(...bindings, limit, offset)
       .all(),
     env.DB.prepare(
-      'SELECT COUNT(*) AS total FROM pending_messages WHERE receiver_id = ?1'
+      `SELECT COUNT(*) AS total FROM pending_messages WHERE ${where}`
     )
-      .bind(user.id)
+      .bind(...bindings)
       .first(),
   ]);
 
@@ -215,7 +321,7 @@ async function handleRecallMessage(request, env, friendId, ctx) {
 // ── exports ───────────────────────────────────────────────────────────────────
 
 export function matchChatDmRoute(pathname) {
-  const match = pathname.match(/^\/api\/chat\/dm\/(\d+)\/(history|ws|send|recall)$/) ??
+  const match = pathname.match(/^\/api\/chat\/dm\/(\d+)\/(history|ws|send|event|recall)$/) ??
     pathname.match(/^\/api\/chat\/dm\/(\d+)\/(sync-upload|sync-download)$/) ??
     pathname.match(/^\/api\/chat\/dm\/(pending|ack)$/);
   if (!match) return null;
@@ -239,6 +345,8 @@ export async function handleDynamicChatRoutes(request, env, url, ctx) {
       return handleDmWebSocket(request, env, route.friendId);
     case 'POST send':
       return handleSendPending(request, env, route.friendId, ctx);
+    case 'POST event':
+      return handleSendEvent(request, env, route.friendId, ctx);
     case 'POST recall':
       return handleRecallMessage(request, env, route.friendId, ctx);
     case 'GET pending':

@@ -10,9 +10,14 @@
     "test": "node --test",
     "assets:generate": "node upload.js",
     "kv:upload": "wrangler kv bulk put assets.json --binding=STATIC_ASSETS --remote",
+    "game-catalog:sign": "node scripts/sign-game-catalog.mjs",
+    "game-resource:sign": "node scripts/sign-game-resource.mjs",
+    "game-release:package": "node scripts/package-game-release.mjs",
+    "game-release:upload": "wrangler kv bulk put game-resource-release.json --binding=STATIC_ASSETS --remote",
     "commit:suggest": "bash tool/suggest_commit_message.sh",
     "commit:suggest:front": "bash tool/suggest_commit_message.sh --repo ../taiwan_brawl_front",
-    "android:build": "bash tool/build_android.sh"
+    "android:build": "bash tool/build_android.sh",
+    "db:migration:rehearse": "node scripts/rehearse-game-data-migrations.mjs"
   },
   "dependencies": {
     "@cloudflare/kv-asset-handler": "^0.4.0"

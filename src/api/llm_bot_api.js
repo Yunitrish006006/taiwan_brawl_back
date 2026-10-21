@@ -7,8 +7,8 @@ import {
   handleLlmBotMcpPayload
 } from '../royale/royale_llm_bot.js';
 
-async function handleGetSpec(request) {
-  return jsonResponse({ ok: true, spec: buildLlmBotSpec() }, 200, request);
+async function handleGetSpec(request, env) {
+  return jsonResponse({ ok: true, spec: buildLlmBotSpec(env) }, 200, request);
 }
 
 async function handleDecide(request, env) {
@@ -46,7 +46,8 @@ async function handleMcp(request, env) {
     try {
       const response = await handleLlmBotMcpPayload(
         body,
-        () => fetchUserLlmBotSettings(env, user.id)
+        () => fetchUserLlmBotSettings(env, user.id),
+        env
       );
       return jsonResponse(response, 200, request);
     } catch (error) {
@@ -70,7 +71,7 @@ async function handleMcp(request, env) {
 export function exactLlmBotApiRouteHandler(request, env, url) {
   switch (`${request.method} ${url.pathname}`) {
     case 'GET /api/llm-bot/spec':
-      return () => handleGetSpec(request);
+      return () => handleGetSpec(request, env);
     case 'POST /api/llm-bot/decide':
       return () => handleDecide(request, env);
     case 'POST /api/llm-bot/mcp':

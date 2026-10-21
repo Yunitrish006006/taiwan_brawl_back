@@ -107,6 +107,15 @@ test('verifyGoogleIdToken verifies signature and required claims', async () => {
   });
 });
 
+test('verifyGoogleIdToken rejects tokens when no audience is configured', async () => {
+  __resetGoogleJwkCacheForTests();
+  const { jwk, token } = await signedGoogleToken();
+
+  const user = await verifyGoogleIdToken(token, {}, { fetcher: jwkFetcher(jwk) });
+
+  assert.equal(user, null);
+});
+
 test('verifyGoogleIdToken rejects tokens for another audience', async () => {
   __resetGoogleJwkCacheForTests();
   const { jwk, token } = await signedGoogleToken({

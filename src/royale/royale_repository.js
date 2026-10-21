@@ -25,7 +25,7 @@ const CARD_SELECT_COLUMNS = `SELECT id, name, elixir_cost, energy_cost, energy_c
         name_zh_hant, name_en, name_ja, name_i18n, image_version,
         char_image_version, char_image_back_version,
         char_image_left_version, char_image_right_version, bg_image_version
- FROM cards`;
+ FROM mini_royale_cards`;
 const CARD_WRITE_COLUMNS = `id, name, elixir_cost, energy_cost, energy_cost_type, type, hp, damage, attack_range, move_speed,
       attack_speed, spawn_count, spell_radius, spell_damage, target_rule,
       effect_kind, effect_value, body_radius, collision_behavior,
@@ -427,7 +427,7 @@ async function listCardCharacterAssetRows(env, cardId = null) {
     const rows = await env.DB.prepare(
       `SELECT card_id, asset_id, animation, direction, frame_index, duration_ms,
               loop, image_version, asset_version, file_name, content_type
-       FROM card_character_assets
+       FROM mini_royale_card_character_assets
        WHERE card_id = ?
        ORDER BY animation ASC, direction ASC, frame_index ASC, asset_id ASC`
     )
@@ -439,7 +439,7 @@ async function listCardCharacterAssetRows(env, cardId = null) {
   const rows = await env.DB.prepare(
     `SELECT card_id, asset_id, animation, direction, frame_index, duration_ms,
             loop, image_version, asset_version, file_name, content_type
-     FROM card_character_assets
+     FROM mini_royale_card_character_assets
      ORDER BY card_id ASC, animation ASC, direction ASC, frame_index ASC,
               asset_id ASC`
   ).all();
@@ -455,7 +455,7 @@ async function characterAssetsByCardId(env, cardIds) {
   const assetRows = await env.DB.prepare(
     `SELECT card_id, asset_id, animation, direction, frame_index, duration_ms,
             loop, image_version, asset_version, file_name, content_type
-     FROM card_character_assets
+     FROM mini_royale_card_character_assets
      WHERE card_id IN (${placeholders})
      ORDER BY card_id ASC, animation ASC, direction ASC, frame_index ASC,
               asset_id ASC`
@@ -593,7 +593,7 @@ async function countRows(env, sql, ...bindings) {
 }
 
 async function cardExists(env, cardId) {
-  const existing = await env.DB.prepare('SELECT id FROM cards WHERE id = ?')
+  const existing = await env.DB.prepare('SELECT id FROM mini_royale_cards WHERE id = ?')
     .bind(cardId)
     .first();
   return Boolean(existing);
@@ -657,7 +657,7 @@ function cardWriteBindings(card) {
 async function insertStarterCards(env) {
   for (const card of starterCards) {
     await env.DB.prepare(
-      `INSERT OR IGNORE INTO cards (${CARD_WRITE_COLUMNS})
+      `INSERT OR IGNORE INTO mini_royale_cards (${CARD_WRITE_COLUMNS})
        VALUES (${CARD_WRITE_PLACEHOLDERS})`
     ).bind(
       ...cardWriteBindings({
@@ -725,7 +725,7 @@ export async function upsertCard(env, payload) {
   const card = normalizeCardPayload(payload);
 
   await env.DB.prepare(
-    `INSERT INTO cards (${CARD_WRITE_COLUMNS})
+    `INSERT INTO mini_royale_cards (${CARD_WRITE_COLUMNS})
     VALUES (${CARD_WRITE_PLACEHOLDERS})
     ON CONFLICT(id) DO UPDATE SET
       name = excluded.name,
@@ -765,7 +765,7 @@ export async function deleteCard(env, cardId) {
   if (
     (await countRows(
       env,
-      'SELECT COUNT(*) AS count FROM user_deck_cards WHERE card_id = ?',
+      'SELECT COUNT(*) AS count FROM mini_royale_user_deck_cards WHERE card_id = ?',
       normalizedCardId
     )) > 0
   ) {
@@ -781,11 +781,11 @@ export async function deleteCard(env, cardId) {
       cardCharacterAssetMetaKey(normalizedCardId, asset.asset_id)
     );
   }
-  await env.DB.prepare('DELETE FROM card_character_assets WHERE card_id = ?')
+  await env.DB.prepare('DELETE FROM mini_royale_card_character_assets WHERE card_id = ?')
     .bind(normalizedCardId)
     .run();
 
-  await env.DB.prepare('DELETE FROM cards WHERE id = ?')
+  await env.DB.prepare('DELETE FROM mini_royale_cards WHERE id = ?')
     .bind(normalizedCardId)
     .run();
 
@@ -862,7 +862,7 @@ export async function uploadCardImage(env, cardId, payload) {
   );
 
   const imageVersion = Date.now();
-  await env.DB.prepare('UPDATE cards SET image_version = ? WHERE id = ?')
+  await env.DB.prepare('UPDATE mini_royale_cards SET image_version = ? WHERE id = ?')
     .bind(imageVersion, normalizedCardId)
     .run();
 
@@ -875,7 +875,7 @@ export async function removeCardImage(env, cardId) {
 
   await env.STATIC_ASSETS?.delete?.(cardImageKey(normalizedCardId));
   await env.STATIC_ASSETS?.delete?.(cardImageMetaKey(normalizedCardId));
-  await env.DB.prepare('UPDATE cards SET image_version = 0 WHERE id = ?')
+  await env.DB.prepare('UPDATE mini_royale_cards SET image_version = 0 WHERE id = ?')
     .bind(normalizedCardId)
     .run();
 
@@ -951,7 +951,7 @@ async function _uploadCardLayerImage(
   );
 
   const imageVersion = Date.now();
-  await env.DB.prepare(`UPDATE cards SET ${versionColumn} = ? WHERE id = ?`)
+  await env.DB.prepare(`UPDATE mini_royale_cards SET ${versionColumn} = ? WHERE id = ?`)
     .bind(imageVersion, normalizedCardId)
     .run();
 
@@ -1025,7 +1025,7 @@ export async function removeCardCharacterImage(env, cardId, direction = 'front')
     cardCharImageMetaKey(normalizedCardId, normalizedDirection)
   );
   await env.DB.prepare(
-    `UPDATE cards SET ${cardCharImageVersionColumn(
+    `UPDATE mini_royale_cards SET ${cardCharImageVersionColumn(
       normalizedDirection
     )} = 0 WHERE id = ?`
   )
@@ -1053,14 +1053,14 @@ export async function uploadCardCharacterAsset(env, cardId, assetId, payload) {
   }
 
   const existingAsset = await env.DB.prepare(
-    'SELECT asset_id FROM card_character_assets WHERE card_id = ? AND asset_id = ?'
+    'SELECT asset_id FROM mini_royale_card_character_assets WHERE card_id = ? AND asset_id = ?'
   )
     .bind(normalizedCardId, normalizedAssetId)
     .first();
   if (!existingAsset) {
     const assetCount = await countRows(
       env,
-      'SELECT COUNT(*) AS count FROM card_character_assets WHERE card_id = ?',
+      'SELECT COUNT(*) AS count FROM mini_royale_card_character_assets WHERE card_id = ?',
       normalizedCardId
     );
     if (assetCount >= MAX_CHARACTER_ASSETS_PER_CARD) {
@@ -1106,7 +1106,7 @@ export async function uploadCardCharacterAsset(env, cardId, assetId, payload) {
   );
 
   await env.DB.prepare(
-    `INSERT INTO card_character_assets (
+    `INSERT INTO mini_royale_card_character_assets (
        card_id, asset_id, animation, direction, frame_index, duration_ms,
        loop, image_version, asset_version, file_name, content_type, updated_at
      )
@@ -1152,7 +1152,7 @@ export async function removeCardCharacterAsset(env, cardId, assetId) {
     cardCharacterAssetMetaKey(normalizedCardId, normalizedAssetId)
   );
   await env.DB.prepare(
-    'DELETE FROM card_character_assets WHERE card_id = ? AND asset_id = ?'
+    'DELETE FROM mini_royale_card_character_assets WHERE card_id = ? AND asset_id = ?'
   )
     .bind(normalizedCardId, normalizedAssetId)
     .run();
@@ -1196,7 +1196,7 @@ export async function removeCardBgImage(env, cardId) {
   const normalizedCardId = normalizeCardId(cardId);
   await env.STATIC_ASSETS?.delete?.(cardBgImageKey(normalizedCardId));
   await env.STATIC_ASSETS?.delete?.(cardBgImageMetaKey(normalizedCardId));
-  await env.DB.prepare('UPDATE cards SET bg_image_version = 0 WHERE id = ?')
+  await env.DB.prepare('UPDATE mini_royale_cards SET bg_image_version = 0 WHERE id = ?')
     .bind(normalizedCardId)
     .run();
   invalidateCardsCache();
@@ -1215,16 +1215,16 @@ export async function getCardMap(env, { cards = null } = {}) {
 async function createStarterDeckForUser(userId, env) {
   await ensureCardsSeeded(env);
   await env.DB.prepare(
-    'INSERT INTO user_decks (user_id, name, slot) VALUES (?, ?, 1)'
+    'INSERT INTO mini_royale_user_decks (user_id, name, slot) VALUES (?, ?, 1)'
   ).bind(userId, 'Starter Deck').run();
 
   const deck = await env.DB.prepare(
-    'SELECT id FROM user_decks WHERE user_id = ? AND slot = 1'
+    'SELECT id FROM mini_royale_user_decks WHERE user_id = ? AND slot = 1'
   ).bind(userId).first();
 
   for (const [index, cardId] of defaultDeckCardIds.entries()) {
     await env.DB.prepare(
-      'INSERT INTO user_deck_cards (deck_id, position, card_id) VALUES (?, ?, ?)'
+      'INSERT INTO mini_royale_user_deck_cards (deck_id, position, card_id) VALUES (?, ?, ?)'
     ).bind(deck.id, index, cardId).run();
   }
 }
@@ -1233,7 +1233,7 @@ export async function ensureUserStarterDeck(userId, env) {
   if (
     !(await countRows(
       env,
-      'SELECT COUNT(*) AS count FROM user_decks WHERE user_id = ?',
+      'SELECT COUNT(*) AS count FROM mini_royale_user_decks WHERE user_id = ?',
       userId
     ))
   ) {
@@ -1244,7 +1244,7 @@ export async function ensureUserStarterDeck(userId, env) {
 async function loadDeckCardIds(deckId, env) {
   const rows = await env.DB.prepare(
     `SELECT position, card_id
-     FROM user_deck_cards
+     FROM mini_royale_user_deck_cards
      WHERE deck_id = ?
      ORDER BY position ASC`
   ).bind(deckId).all();
@@ -1269,7 +1269,7 @@ export async function listDecksForUser(userId, env) {
   );
   const decks = await env.DB.prepare(
     `SELECT id, name, slot, updated_at
-     FROM user_decks
+     FROM mini_royale_user_decks
      WHERE user_id = ?
      ORDER BY slot ASC, id ASC`
   ).bind(userId).all();
@@ -1299,9 +1299,9 @@ export async function listDeckSummariesForUser(userId, env) {
   const decks = await env.DB.prepare(
     `SELECT d.id, d.name, d.slot, d.updated_at,
             (SELECT COUNT(*)
-             FROM user_deck_cards dc
+             FROM mini_royale_user_deck_cards dc
              WHERE dc.deck_id = d.id) AS card_count
-     FROM user_decks d
+     FROM mini_royale_user_decks d
      WHERE d.user_id = ?
      ORDER BY d.slot ASC, d.id ASC`
   ).bind(userId).all();
@@ -1328,7 +1328,7 @@ export async function getDeckForUser(
   await ensureUserStarterDeck(userId, env);
   const deck = await env.DB.prepare(
     `SELECT id, name, slot, updated_at
-     FROM user_decks
+     FROM mini_royale_user_decks
      WHERE user_id = ? AND id = ?`
   ).bind(userId, deckId).first();
 
@@ -1349,9 +1349,9 @@ export async function getDeckSummaryForUser(userId, deckId, env) {
   const deck = await env.DB.prepare(
     `SELECT d.id, d.name, d.slot, d.updated_at,
             (SELECT COUNT(*)
-             FROM user_deck_cards dc
+             FROM mini_royale_user_deck_cards dc
              WHERE dc.deck_id = d.id) AS card_count
-     FROM user_decks d
+     FROM mini_royale_user_decks d
      WHERE d.user_id = ? AND d.id = ?`
   ).bind(userId, deckId).first();
 
@@ -1392,7 +1392,7 @@ export async function saveDeckForUser(userId, payload, env) {
   }
 
   const existing = await env.DB.prepare(
-    'SELECT id FROM user_decks WHERE user_id = ? AND slot = ?'
+    'SELECT id FROM mini_royale_user_decks WHERE user_id = ? AND slot = ?'
   ).bind(userId, slot).first();
 
   let deckId = existing?.id;
@@ -1408,22 +1408,22 @@ export async function saveDeckForUser(userId, payload, env) {
 
   if (!deckId) {
     await env.DB.prepare(
-      'INSERT INTO user_decks (user_id, name, slot) VALUES (?, ?, ?)'
+      'INSERT INTO mini_royale_user_decks (user_id, name, slot) VALUES (?, ?, ?)'
     ).bind(userId, name, slot).run();
     const inserted = await env.DB.prepare(
-      'SELECT id FROM user_decks WHERE user_id = ? AND slot = ?'
+      'SELECT id FROM mini_royale_user_decks WHERE user_id = ? AND slot = ?'
     ).bind(userId, slot).first();
     deckId = inserted.id;
   } else {
     await env.DB.prepare(
-      'UPDATE user_decks SET name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+    'UPDATE mini_royale_user_decks SET name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
     ).bind(name, deckId).run();
-    await env.DB.prepare('DELETE FROM user_deck_cards WHERE deck_id = ?').bind(deckId).run();
+    await env.DB.prepare('DELETE FROM mini_royale_user_deck_cards WHERE deck_id = ?').bind(deckId).run();
   }
 
   for (const [index, cardId] of cardIds.entries()) {
     await env.DB.prepare(
-      'INSERT INTO user_deck_cards (deck_id, position, card_id) VALUES (?, ?, ?)'
+      'INSERT INTO mini_royale_user_deck_cards (deck_id, position, card_id) VALUES (?, ?, ?)'
     ).bind(deckId, index, cardId).run();
   }
 
@@ -1439,7 +1439,7 @@ export async function saveDeckForUser(userId, payload, env) {
 
 export async function recordMatchHistory(env, match) {
   await env.DB.prepare(
-    `INSERT INTO match_history (
+    `INSERT INTO mini_royale_match_history (
       id, room_code, player_one_user_id, player_two_user_id, winner_user_id,
       reason, player_one_tower_hp, player_two_tower_hp, summary_json
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`

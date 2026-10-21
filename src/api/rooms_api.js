@@ -1,308 +1,38 @@
-import { normalizeSimulationMode } from '../royale/royale_battle_rules.js';
-import {
-  listHeroDefinitions,
-  registerUnitHeroDefinitions
-} from '../royale/royale_heroes.js';
-import { normalizeBotController } from '../royale/royale_llm_bot.js';
-import {
-  getDeckSummaryForUser,
-  getDeckForUser,
-  listCards,
-  listDecksForUser,
-  listDeckSummariesForUser,
-  saveDeckForUser
-} from '../royale/royale_repository.js';
-import {
-  listDeckProgressionForUser,
-  listProgressionHeroOptions,
-  selectDeckProgressionHero
-} from '../royale/royale_progression.js';
 import { matchRoomRoute } from '../core/route_patterns.js';
 import { handleSendRoomInvite } from './friends_api.js';
-import { requireUser, withAuthenticatedUser } from '../core/request_helpers.js';
+import { exactMiniRoyaleDataApiRouteHandler } from './mini_royale_data_api.js';
 import {
-  getRoomStub,
-  proxyRoomAction,
-  proxyRoomJson,
-  randomRoomCode
-} from '../royale/royale_room_proxy.js';
-import { jsonResponse } from '../core/utils.js';
+  exactMiniRoyaleRoomApiRouteHandler,
+  handleDynamicMiniRoyaleRoomRoutes
+} from './mini_royale_room_api.js';
+import { mapMiniRoyaleApiPath, resolveGameApiPath } from './game_api_paths.js';
 
-async function handleListCards(request, env) {
-  const cards = await listCards(env);
-  return jsonResponse({ ok: true, cards }, 200, request);
-}
-
-async function handleListHeroes(request, env) {
-  const cards = await listCards(env);
-  registerUnitHeroDefinitions(cards);
-  return jsonResponse({ ok: true, heroes: listHeroDefinitions() }, 200, request);
-}
-
-async function handleListProgression(request, env) {
-  return withAuthenticatedUser(request, env, async (user) => {
-    const cards = await listCards(env);
-    const progression = await listDeckProgressionForUser(env, user.id);
-    return jsonResponse(
-      {
-        ok: true,
-        heroOptions: listProgressionHeroOptions(cards),
-        progression
-      },
-      200,
-      request
-    );
-  });
-}
-
-async function handleListDecks(request, env) {
-  return withAuthenticatedUser(request, env, async (user) => {
-    const url = new URL(request.url);
-    const summary = ['1', 'true', 'yes'].includes(
-      String(url.searchParams.get('summary') || '').toLowerCase()
-    );
-    const decks = summary
-      ? await listDeckSummariesForUser(user.id, env)
-      : await listDecksForUser(user.id, env);
-    return jsonResponse({ ok: true, decks }, 200, request);
-  });
-}
-
-async function handleSaveDeck(request, env) {
-  return withAuthenticatedUser(request, env, async (user) => {
-    const body = await request.json().catch(() => null);
-    if (!body) {
-      return jsonResponse({ error: 'Invalid body' }, 400, request);
-    }
-
-    try {
-      const deck = await saveDeckForUser(user.id, body, env);
-      return jsonResponse({ ok: true, deck }, 200, request);
-    } catch (error) {
-      return jsonResponse({ error: error.message }, 400, request);
-    }
-  });
-}
-
-async function handleSelectDeckHero(request, env) {
-  return withAuthenticatedUser(request, env, async (user) => {
-    const body = await request.json().catch(() => null);
-    if (!body) {
-      return jsonResponse({ error: 'Invalid body' }, 400, request);
-    }
-    const deckId = Number(body.deckId);
-    if (!Number.isInteger(deckId) || deckId <= 0) {
-      return jsonResponse({ error: 'deckId is required' }, 400, request);
-    }
-    const cards = await listCards(env);
-    const cardMap = new Map(cards.map((card) => [card.id, card]));
-    const deck = await getDeckForUser(user.id, deckId, env, { cardMap });
-    if (!deck) {
-      return jsonResponse({ error: 'Deck not found' }, 404, request);
-    }
-    try {
-      const progression = await selectDeckProgressionHero(
-        env,
-        user.id,
-        deckId,
-        body.heroId,
-        listProgressionHeroOptions(cards)
-      );
-      return jsonResponse({ ok: true, progression }, 200, request);
-    } catch (error) {
-      return jsonResponse({ error: error.message }, 409, request);
-    }
-  });
-}
-
-async function resolveOwnedDeck(
-  request,
-  env,
-  user,
-  body
-) {
-  const deckId = Number(body?.deckId);
-  if (!Number.isInteger(deckId) || deckId <= 0) {
-    return { error: jsonResponse({ error: 'deckId is required' }, 400, request) };
-  }
-
-  const deck = await getDeckSummaryForUser(user.id, deckId, env);
-  if (!deck) {
-    return { error: jsonResponse({ error: 'Deck not found' }, 404, request) };
-  }
-
-  return { deck: { ...deck, ownerUserId: user.id } };
-}
-
-function requestedHeroId(value) {
-  const normalized = String(value || '').trim().toLowerCase();
-  return normalized || 'ordinary_person';
-}
-
-async function handleCreateRoom(request, env) {
-  return withAuthenticatedUser(request, env, async (user) => {
-    const body = await request.json().catch(() => null);
-    const { deck, error } = await resolveOwnedDeck(request, env, user, body);
-    if (error) {
-      return error;
-    }
-    const vsBot = Boolean(body?.vsBot);
-    const simulationMode = vsBot ? 'host' : normalizeSimulationMode(body?.simulationMode);
-    const heroId = requestedHeroId(body?.heroId || deck.progression?.heroId);
-    const botController = vsBot ? normalizeBotController(body?.botController) : 'heuristic';
-
-    for (let attempt = 0; attempt < 5; attempt += 1) {
-      const code = randomRoomCode();
-      const stub = getRoomStub(env, code);
-      const upstream = await stub.fetch(
-        new Request('https://royale-room/internal/create', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            code,
-            user: { id: user.id, name: user.name },
-            deck,
-            heroId,
-            vsBot,
-            botDeck: deck,
-            botController,
-            simulationMode
-          })
-        })
-      );
-
-      if (upstream.status === 409) {
-        continue;
-      }
-
-      const data = await upstream.json();
-      return jsonResponse(data, upstream.status, request);
-    }
-
-    return jsonResponse({ error: 'Unable to allocate room code' }, 500, request);
-  });
-}
-
-async function handleJoinRoom(request, env, code) {
-  return withAuthenticatedUser(request, env, async (user) => {
-    const body = await request.json().catch(() => null);
-    const { deck, error } = await resolveOwnedDeck(request, env, user, body);
-    if (error) {
-      return error;
-    }
-
-    return proxyRoomAction(request, env, code, '/internal/join', async () => ({
-      user: { id: user.id, name: user.name },
-      deck,
-      heroId: requestedHeroId(body?.heroId || deck.progression?.heroId)
-    }));
-  });
-}
-
-async function handleReadyRoom(request, env, code) {
-  return proxyRoomAction(request, env, code, '/internal/ready', async (user) => ({
-    userId: user.id
-  }));
-}
-
-async function handleRematchRoom(request, env, code) {
-  return proxyRoomAction(request, env, code, '/internal/rematch', async (user) => ({
-    userId: user.id
-  }));
-}
-
-async function handleHostFinishRoom(request, env, code) {
-  const body = await request.json().catch(() => null);
-  return proxyRoomAction(request, env, code, '/internal/host-finish', async (user) => ({
-    userId: user.id,
-    winnerSide: body?.winnerSide ?? null,
-    reason: body?.reason ?? 'time_up',
-    leftTowerHp: body?.leftTowerHp,
-    rightTowerHp: body?.rightTowerHp
-  }));
-}
-
-async function handleRoomState(request, env, code) {
-  return withAuthenticatedUser(request, env, async (user) => {
-    const stub = getRoomStub(env, code);
-    const upstream = await stub.fetch(
-      new Request('https://royale-room/internal/state', {
-        method: 'GET',
-        headers: { 'x-user-id': String(user.id) }
-      })
-    );
-
-    const data = await upstream.json();
-    return jsonResponse(data, upstream.status, request);
-  });
-}
-
-async function handleRoomWebSocket(request, env, code) {
-  const user = await requireUser(request, env);
-  if (!user) {
-    return jsonResponse({ error: 'Not logged in' }, 401, request);
-  }
-
-  if (request.headers.get('Upgrade') !== 'websocket') {
-    return jsonResponse({ error: 'Expected WebSocket upgrade' }, 426, request);
-  }
-
-  const stub = getRoomStub(env, code);
-  const headers = new Headers(request.headers);
-  headers.set('x-user-id', String(user.id));
-  headers.set('x-user-name', user.name);
-
-  return stub.fetch(
-    new Request('https://royale-room/internal/ws', {
-      method: 'GET',
-      headers
-    })
+/// Compatibility router retained while API router consumers migrate to game-owned handlers.
+export function exactRoomsApiRouteHandler(request, env, url) {
+  return (
+    exactMiniRoyaleDataApiRouteHandler(request, env, url) ??
+    exactMiniRoyaleRoomApiRouteHandler(request, env, url)
   );
 }
 
-export function exactRoomsApiRouteHandler(request, env, url) {
-  switch (`${request.method} ${url.pathname}`) {
-    case 'GET /api/cards':
-      return () => handleListCards(request, env);
-    case 'GET /api/heroes':
-      return () => handleListHeroes(request, env);
-    case 'GET /api/progression':
-      return () => handleListProgression(request, env);
-    case 'GET /api/decks':
-      return () => handleListDecks(request, env);
-    case 'POST /api/decks':
-      return () => handleSaveDeck(request, env);
-    case 'POST /api/decks/hero':
-      return () => handleSelectDeckHero(request, env);
-    case 'POST /api/rooms':
-      return () => handleCreateRoom(request, env);
-    default:
-      return null;
-  }
-}
-
 export async function handleDynamicRoomRoutes(request, env, url) {
-  const roomRoute = matchRoomRoute(url.pathname);
-  if (!roomRoute) {
-    return null;
-  }
+  const gameRoute = await handleDynamicMiniRoyaleRoomRoutes(request, env, url);
+  if (gameRoute) return gameRoute;
 
-  switch (`${request.method} ${roomRoute.action}`) {
-    case 'POST join':
-      return handleJoinRoom(request, env, roomRoute.code);
-    case 'POST ready':
-      return handleReadyRoom(request, env, roomRoute.code);
-    case 'POST rematch':
-      return handleRematchRoom(request, env, roomRoute.code);
-    case 'POST host-finish':
-      return handleHostFinishRoom(request, env, roomRoute.code);
-    case 'GET state':
-      return handleRoomState(request, env, roomRoute.code);
-    case 'GET ws':
-      return handleRoomWebSocket(request, env, roomRoute.code);
-    case 'POST invite':
-      return handleSendRoomInvite(request, env, roomRoute.code);
-    default:
-      return null;
+  const versionedGameRoute = resolveGameApiPath(url.pathname);
+  const path = versionedGameRoute?.pathname ?? url.pathname;
+  const roomRoute = matchRoomRoute(path);
+  if (roomRoute?.action === 'invite' && request.method === 'POST') {
+    const gameId = versionedGameRoute?.gameId ?? (
+      path === url.pathname ? 'game.mini-royale' : null
+    );
+    if (!gameId) return null;
+    return handleSendRoomInvite(
+      request,
+      env,
+      roomRoute.code,
+      gameId,
+    );
   }
+  return null;
 }

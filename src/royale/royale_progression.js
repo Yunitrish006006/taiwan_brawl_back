@@ -204,7 +204,7 @@ async function deckCharacterRow(env, userId, deckId) {
     `SELECT deck_id, user_id, character_id, age, health, rebirth_count,
             talent_history_json, achievements_json, last_health_regen_at,
             last_rebirth_at, created_at, updated_at
-     FROM user_deck_characters
+     FROM mini_royale_user_deck_characters
      WHERE user_id = ? AND deck_id = ?`
   )
     .bind(userId, deckId)
@@ -223,7 +223,7 @@ async function applyPassiveHealthRegen(env, row, now = new Date()) {
   }
   const nextHealth = Math.round(clamp(Number(row.health || 0) + healAmount, 0, MAX_HEALTH));
   await env.DB.prepare(
-    `UPDATE user_deck_characters
+    `UPDATE mini_royale_user_deck_characters
      SET health = ?, last_health_regen_at = ?, updated_at = CURRENT_TIMESTAMP
      WHERE user_id = ? AND deck_id = ?`
   )
@@ -249,7 +249,7 @@ export async function ensureDeckProgressionHero(
   let row = await deckCharacterRow(env, userId, deckId);
   if (!row) {
     await env.DB.prepare(
-      `INSERT INTO user_deck_characters (
+      `INSERT INTO mini_royale_user_deck_characters (
         deck_id, user_id, character_id, age, health, rebirth_count,
         talent_history_json, achievements_json, last_health_regen_at
       ) VALUES (?, ?, ?, 0, ?, 0, '{}', '{}', CURRENT_TIMESTAMP)`
@@ -280,7 +280,7 @@ export async function selectDeckProgressionHero(
   }
   await ensureDeckProgressionHero(env, userId, deckId, normalizedHeroId, heroOptions);
   await env.DB.prepare(
-    `UPDATE user_deck_characters
+    `UPDATE mini_royale_user_deck_characters
      SET character_id = ?, updated_at = CURRENT_TIMESTAMP
      WHERE user_id = ? AND deck_id = ?`
   )
@@ -306,8 +306,8 @@ export async function listDeckProgressionForUser(env, userId) {
             c.last_rebirth_at AS last_rebirth_at,
             COALESCE(c.created_at, d.created_at) AS created_at,
             COALESCE(c.updated_at, d.updated_at) AS updated_at
-     FROM user_decks d
-     LEFT JOIN user_deck_characters c ON c.deck_id = d.id AND c.user_id = d.user_id
+     FROM mini_royale_user_decks d
+     LEFT JOIN mini_royale_user_deck_characters c ON c.deck_id = d.id AND c.user_id = d.user_id
      WHERE d.user_id = ?
      ORDER BY d.slot ASC, d.id ASC`
   )
@@ -444,7 +444,7 @@ export async function applyMatchProgression(env, { room, winnerSide, reason }) {
     );
 
     await env.DB.prepare(
-      `UPDATE user_deck_characters
+      `UPDATE mini_royale_user_deck_characters
        SET age = ?, health = ?, rebirth_count = ?, talent_history_json = ?,
            achievements_json = ?, last_health_regen_at = ?,
            last_rebirth_at = ?, updated_at = CURRENT_TIMESTAMP
@@ -464,7 +464,7 @@ export async function applyMatchProgression(env, { room, winnerSide, reason }) {
       .run();
 
     await env.DB.prepare(
-      `INSERT INTO user_deck_character_events (
+      `INSERT INTO mini_royale_user_deck_character_events (
         id, deck_id, user_id, room_code, result, age_delta, health_delta,
         age_after, health_after, rebirth_triggered, card_uses_json, created_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`

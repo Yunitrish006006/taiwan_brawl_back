@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   buildLlmBotProtocol,
+  buildLlmBotSpec,
   decideLlmBotAction,
   handleLlmBotMcpPayload
 } from '../src/royale/royale_llm_bot.js';
@@ -102,6 +103,16 @@ test('buildLlmBotProtocol returns wait and playable actions', () => {
   assert.equal(protocol.legalActions[0].id, 'wait');
   assert.ok(protocol.legalActions.some((action) => action.kind === 'play'));
   assert.ok(protocol.legalActions.some((action) => action.cardIds.includes('fireball')));
+});
+
+test('buildLlmBotSpec uses Worker-configured provider defaults', () => {
+  const spec = buildLlmBotSpec({
+    LLM_DEFAULT_BASE_URL: 'https://provider.example.test/v1',
+    LLM_DEFAULT_MODEL: 'configured-model'
+  });
+
+  assert.equal(spec.defaults.baseUrl, 'https://provider.example.test/v1');
+  assert.equal(spec.defaults.model, 'configured-model');
 });
 
 test('decideLlmBotAction accepts OpenAI-compatible JSON choice', async () => {

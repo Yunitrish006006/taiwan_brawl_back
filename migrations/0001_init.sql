@@ -2,6 +2,8 @@ CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL,
   email TEXT NOT NULL UNIQUE,
+  -- Legacy migration compatibility; 0008 removes this before the Worker runs.
+  password TEXT NOT NULL,
   google_sub TEXT UNIQUE,
   role TEXT NOT NULL DEFAULT 'player',
   bio TEXT,

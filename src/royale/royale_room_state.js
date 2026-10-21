@@ -16,6 +16,10 @@ import {
 } from './royale_heroes.js';
 import { normalizeBotController } from './royale_llm_bot.js';
 import { normalizeCardDefinition } from './royale_cards.js';
+import {
+  DEFAULT_MINI_ROYALE_GAMEPLAY_RULES,
+  normalizeMiniRoyaleGameplayRules,
+} from './royale_gameplay_rules.js';
 import { initFieldState, getFieldStateSnapshot } from './royale_field_events.js';
 import {
   cardUseLimit,
@@ -54,11 +58,13 @@ function requestedHeroId(value) {
 }
 
 export function createBattleState(playersBySide, options = {}) {
+  const gameplayRules = normalizeMiniRoyaleGameplayRules(options.gameplayRules) ??
+    DEFAULT_MINI_ROYALE_GAMEPLAY_RULES;
   const arena = options?.arena
     ? normalizeArenaConfig(options.arena)
     : randomArenaConfig(options?.random);
   return {
-    timeRemainingMs: MATCH_DURATION_MS,
+    timeRemainingMs: gameplayRules.matchDurationMs ?? MATCH_DURATION_MS,
     startedAt: new Date().toISOString(),
     arena,
     units: [],
@@ -70,10 +76,24 @@ export function createBattleState(playersBySide, options = {}) {
     players: Object.fromEntries(
       Object.entries(playersBySide).map(([side, player]) => {
         const queue = player.deckCardIds.slice();
+        const initialState = buildInitialBattlePlayerState(player.heroId, {
+          isBot: Boolean(player.isBot)
+        });
+        const originalTowerHp = Number(initialState.towerHp || 0);
+        const towerScale = originalTowerHp > 0
+          ? gameplayRules.towerHitPoints / originalTowerHp
+          : 1;
+        const scaledInitialState = syncBattlePlayerTotals({
+          ...initialState,
+          physicalHealth: initialState.physicalHealth * towerScale,
+          maxPhysicalHealth: initialState.maxPhysicalHealth * towerScale,
+          physicalHealthRegen: initialState.physicalHealthRegen * towerScale,
+          spiritHealth: initialState.spiritHealth * towerScale,
+          maxSpiritHealth: initialState.maxSpiritHealth * towerScale,
+          spiritHealthRegen: initialState.spiritHealthRegen * towerScale,
+        });
         const battlePlayerState = {
-          ...buildInitialBattlePlayerState(player.heroId, {
-            isBot: Boolean(player.isBot)
-          }),
+          ...scaledInitialState,
           hand: queue.splice(0, 4),
           queue,
           botThinkMs: player.isBot ? BOT_MIN_THINK_MS : 0,

@@ -11,6 +11,7 @@ import {
 } from './friends_api.js';
 import { exactLlmBotApiRouteHandler } from './llm_bot_api.js';
 import { exactNotificationsApiRouteHandler } from './notifications_api.js';
+import { exactGameResourcesApiRouteHandler } from './game_resources_api.js';
 import {
   exactRoomsApiRouteHandler,
   handleDynamicRoomRoutes
@@ -61,6 +62,7 @@ function exactApiRouteHandler(request, env, url) {
     default:
       return (
         exactLlmBotApiRouteHandler(request, env, url) ??
+        exactGameResourcesApiRouteHandler(request, env, url) ??
         exactNotificationsApiRouteHandler(request, env, url) ??
         exactAdminApiRouteHandler(request, env, url) ??
         exactFriendsApiRouteHandler(request, env, url) ??

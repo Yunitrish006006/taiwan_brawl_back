@@ -31,6 +31,15 @@ For Web, create a Web Push certificate key pair in Firebase Console. The public 
 
 ## 2. Worker secrets / vars
 
+Google OAuth audience allow-list is deployment configuration and must be
+provided explicitly for every Worker environment:
+
+- `GOOGLE_CLIENT_ID` for one client id, or
+- `GOOGLE_CLIENT_IDS` for a comma-separated list of client ids
+
+The backend has no repository fallback client id. This prevents a deployment
+from silently accepting tokens minted for another project.
+
 Public Firebase app config, safe to expose through `/api/notifications/config`:
 
 - `FCM_PROJECT_ID`

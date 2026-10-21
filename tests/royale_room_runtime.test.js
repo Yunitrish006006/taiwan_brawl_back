@@ -263,6 +263,37 @@ test('spawnBattleUnits creates localized units with effects and spacing', () => 
   );
 });
 
+test('spawnBattleUnits executes versioned movement and attack speed tuning', () => {
+  const room = {
+    gameplayRules: {
+      schemaVersion: 1,
+      rulesetId: 'mini-royale-ranked',
+      rulesetVersion: 1,
+      matchDurationMs: 210000,
+      towerHitPoints: 3000,
+      attackSpeedMultiplier: 1.25,
+      moveSpeedMultiplier: 0.7,
+    },
+    players: { left: { heroId: 'low_income_household' } },
+    battle: { units: [], nextUnitId: 1 },
+  };
+  spawnBattleUnits(room, 'left', {
+    id: 'rule-test-unit',
+    name: 'Rule Test',
+    type: 'melee',
+    spawnCount: 1,
+    hp: 100,
+    damage: 10,
+    attackRange: 10,
+    moveSpeed: 100,
+    attackSpeed: 1,
+    targetRule: 'ground',
+  }, { progress: 200, lateralPosition: 500 });
+
+  assert.equal(room.battle.units[0].moveSpeed, 70);
+  assert.equal(room.battle.units[0].attackSpeed, 1.25);
+});
+
 test('tickBattleUnits moves units and resolves attacks', () => {
   const room = {
     battle: {

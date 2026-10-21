@@ -14,8 +14,12 @@ import {
 } from '../core/route_patterns.js';
 import { getUserAvatarImageResponse } from '../features/users.js';
 import { jsonResponse } from '../core/utils.js';
+import { handleGameResourceMediaRequest } from './game_resources_api.js';
 
 export async function handleMediaRequest(request, env, url) {
+  const gameResourceResponse = await handleGameResourceMediaRequest(request, env, url);
+  if (gameResourceResponse) return gameResourceResponse;
+
   const cardImageId = matchCardImagePath(url.pathname);
   if (cardImageId && request.method === 'GET') {
     const response = await getCardImageResponse(env, cardImageId);

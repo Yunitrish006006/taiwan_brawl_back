@@ -19,10 +19,6 @@ export function getRequestId(request) {
   return request.headers.get(REQUEST_ID_HEADER) || generateRequestId();
 }
 
-const DEFAULT_ALLOWED_ORIGINS = new Set([
-  'https://taiwan-brawl-api.yunitrish0419.workers.dev'
-]);
-
 // Strict list of allowed localhost ports for development
 const ALLOWED_LOCALHOST_PORTS = new Set([
   '3000', '3001', '3002',    // Common React/Vite dev servers
@@ -64,7 +60,6 @@ function isAllowedCorsOrigin(origin, request) {
   }
   return (
     origin === requestOrigin(request) ||
-    DEFAULT_ALLOWED_ORIGINS.has(origin) ||
     isAllowedLocalDevOrigin(origin)
   );
 }
