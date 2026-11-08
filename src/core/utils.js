@@ -68,7 +68,7 @@ export function corsHeaders(request) {
   const origin = request?.headers?.get('Origin') ?? null;
   const headers = {
     'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Request-ID'
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Request-ID, X-Expected-Account-ID'
   };
   if (isAllowedCorsOrigin(origin, request)) {
     headers['Access-Control-Allow-Origin'] = origin;
@@ -228,6 +228,10 @@ export async function getCurrentUser(request, env) {
 
   if (!session || new Date(session.expires_at) < new Date()) {
     return null;
+  }
+  if(env.DATABASE_MODE==='split') {
+    const account=await env.DB.prepare('SELECT lifecycle_status FROM users WHERE id=?').bind(session.user_id).first();
+    if(account?.lifecycle_status!=='active') return null;
   }
 
   // Throttle DB writes: only update if 3+ minutes since last update

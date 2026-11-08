@@ -1,3 +1,5 @@
+import { gameDatabase } from '../core/databases.js';
+import { requireActiveAccounts } from '../core/databases.js';
 import {
   cardUnlockAge,
   cardUnlockTier
@@ -200,7 +202,7 @@ function serializeProgressionRow(row) {
 }
 
 async function deckCharacterRow(env, userId, deckId) {
-  return env.DB.prepare(
+  return gameDatabase(env).prepare(
     `SELECT deck_id, user_id, character_id, age, health, rebirth_count,
             talent_history_json, achievements_json, last_health_regen_at,
             last_rebirth_at, created_at, updated_at
@@ -222,7 +224,7 @@ async function applyPassiveHealthRegen(env, row, now = new Date()) {
     return row;
   }
   const nextHealth = Math.round(clamp(Number(row.health || 0) + healAmount, 0, MAX_HEALTH));
-  await env.DB.prepare(
+  await gameDatabase(env).prepare(
     `UPDATE mini_royale_user_deck_characters
      SET health = ?, last_health_regen_at = ?, updated_at = CURRENT_TIMESTAMP
      WHERE user_id = ? AND deck_id = ?`
@@ -248,7 +250,7 @@ export async function ensureDeckProgressionHero(
   );
   let row = await deckCharacterRow(env, userId, deckId);
   if (!row) {
-    await env.DB.prepare(
+    await gameDatabase(env).prepare(
       `INSERT INTO mini_royale_user_deck_characters (
         deck_id, user_id, character_id, age, health, rebirth_count,
         talent_history_json, achievements_json, last_health_regen_at
@@ -279,7 +281,7 @@ export async function selectDeckProgressionHero(
     throw new Error('Unknown deck hero');
   }
   await ensureDeckProgressionHero(env, userId, deckId, normalizedHeroId, heroOptions);
-  await env.DB.prepare(
+  await gameDatabase(env).prepare(
     `UPDATE mini_royale_user_deck_characters
      SET character_id = ?, updated_at = CURRENT_TIMESTAMP
      WHERE user_id = ? AND deck_id = ?`
@@ -294,7 +296,7 @@ export async function getDeckProgressionHero(env, userId, deckId) {
 }
 
 export async function listDeckProgressionForUser(env, userId) {
-  const rows = await env.DB.prepare(
+  const rows = await gameDatabase(env).prepare(
     `SELECT d.id AS deck_id, d.user_id AS user_id,
             COALESCE(c.character_id, ?) AS character_id,
             COALESCE(c.age, 0) AS age,
@@ -383,6 +385,7 @@ function updateTalentHistory(talentHistory, player, battlePlayer, result) {
 }
 
 export async function applyMatchProgression(env, { room, winnerSide, reason }) {
+  await requireActiveAccounts(env,Object.values(room?.players??{}).filter(p=>p&&!p.isBot).map(p=>Number(p.userId)));
   if (!env?.DB || !room?.battle) {
     return [];
   }
@@ -443,7 +446,7 @@ export async function applyMatchProgression(env, { room, winnerSide, reason }) {
       rebirthCount
     );
 
-    await env.DB.prepare(
+    await gameDatabase(env).prepare(
       `UPDATE mini_royale_user_deck_characters
        SET age = ?, health = ?, rebirth_count = ?, talent_history_json = ?,
            achievements_json = ?, last_health_regen_at = ?,
@@ -463,7 +466,7 @@ export async function applyMatchProgression(env, { room, winnerSide, reason }) {
       )
       .run();
 
-    await env.DB.prepare(
+    await gameDatabase(env).prepare(
       `INSERT INTO mini_royale_user_deck_character_events (
         id, deck_id, user_id, room_code, result, age_delta, health_delta,
         age_after, health_after, rebirth_triggered, card_uses_json, created_at

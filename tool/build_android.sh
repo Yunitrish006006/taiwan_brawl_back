@@ -56,7 +56,6 @@ resolve_flutter_bin_dir() {
   resolved_flutter="$(command -v flutter 2>/dev/null || true)"
 
   local candidates=(
-    "/Volumes/DataExtended/flutter/bin"
     "${HOME}/flutter/bin"
     "${HOME}/development/flutter/bin"
   )

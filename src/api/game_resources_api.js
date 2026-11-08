@@ -85,10 +85,12 @@ function validateResource(moduleId, resource, modulePlatforms) {
   requireValue(resource.required == null || typeof resource.required === 'boolean', 'Invalid required flag');
   validateDependencies(resource.dependencies, moduleId);
   requireValue(!resource.dependencies.some((dependency) => dependency.id === resource.resourceId), 'Resource cannot depend on itself');
+  requireValue(Array.isArray(resource.platforms), 'Resource must declare supported platforms');
   const platforms = validatePlatforms(resource.platforms, modulePlatforms, 'resource');
   requireValue(platforms.every((platform) => modulePlatforms.includes(platform)), 'Resource targets an unsupported module platform');
 
   if (resource.downloadUrl != null) {
+    requireValue(Number.isSafeInteger(resource.payloadSchemaVersion) && resource.payloadSchemaVersion > 0, 'Downloadable resource must declare a payload schema version');
     let downloadUrl;
     try {
       downloadUrl = new URL(resource.downloadUrl);
@@ -135,6 +137,7 @@ export function validatePublishedGameResourceCatalog(catalog) {
     requireValue(compareVersionParts(hostApiMinimum, hostApiMaximum) < 0, 'Empty host API range');
     requireValue(Number.isSafeInteger(module.dataSchemaVersion) && module.dataSchemaVersion >= 1, 'Invalid data schema version');
     validateDependencies(module.dependencies, module.moduleId);
+    requireValue(Array.isArray(module.platforms), 'Module must declare supported platforms');
     const modulePlatforms = validatePlatforms(module.platforms, ALL_GAME_PLATFORMS, 'module');
     if (module.multiplayer != null) validateMultiplayerContract(module.multiplayer);
     requireValue(Array.isArray(module.resources), 'Invalid resource list');

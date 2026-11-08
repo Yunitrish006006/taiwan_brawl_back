@@ -1,4 +1,5 @@
 import { searchUsersForAdmin, updateUserRole } from '../features/admin.js';
+import { terminateAccount } from '../features/account_lifecycle.js';
 import { canManageCards, isAdmin } from '../core/permissions.js';
 import {
   deleteCard,
@@ -165,6 +166,19 @@ export function exactAdminApiRouteHandler(request, env, url) {
 }
 
 export async function handleDynamicAdminRoutes(request, env, url) {
+  const lifecycle=url.pathname.match(/^\/api\/admin\/users\/(\d+)\/lifecycle$/);
+  if(lifecycle && request.method==='POST') {
+    if(env.DATABASE_MODE!=='split') return jsonResponse({error:'Lifecycle unavailable'},503,request);
+    return withAdminBadRequest(request,env,async user=>{
+      const origin=request.headers.get('Origin');
+      if((origin && origin!==url.origin)||(!origin&&!request.headers.get('Authorization')?.startsWith('Bearer '))) return jsonResponse({error:'Origin denied'},403,request);
+      if(!/^application\/json(?:;|$)/i.test(request.headers.get('Content-Type')??'')) return jsonResponse({error:'JSON required'},400,request);
+      const body=await readJsonBody(request),target=Number(lifecycle[1]);
+      if(target===Number(user.id)) return jsonResponse({error:'Cannot terminate your own administrator account'},400,request);
+      const event=await terminateAccount(env,target,body?.status,body?.operationId);
+      return jsonResponse({ok:true,eventId:event?.event_id,status:event?.event_type},200,request);
+    });
+  }
   const adminUserRoleTarget = matchAdminUserRoleRoute(url.pathname);
   if (adminUserRoleTarget && request.method === 'PUT') {
     return handleAdminUpdateUserRole(request, env, adminUserRoleTarget);

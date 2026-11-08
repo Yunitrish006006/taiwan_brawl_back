@@ -1,3 +1,5 @@
+import { gameDatabase } from '../core/databases.js';
+import { requireActiveAccounts } from '../core/databases.js';
 import {
   defaultDeckCardIds,
   normalizeCardDefinition,
@@ -424,7 +426,7 @@ function serializeCharacterAsset(row) {
 
 async function listCardCharacterAssetRows(env, cardId = null) {
   if (cardId) {
-    const rows = await env.DB.prepare(
+    const rows = await gameDatabase(env).prepare(
       `SELECT card_id, asset_id, animation, direction, frame_index, duration_ms,
               loop, image_version, asset_version, file_name, content_type
        FROM mini_royale_card_character_assets
@@ -436,7 +438,7 @@ async function listCardCharacterAssetRows(env, cardId = null) {
     return rows.results || [];
   }
 
-  const rows = await env.DB.prepare(
+  const rows = await gameDatabase(env).prepare(
     `SELECT card_id, asset_id, animation, direction, frame_index, duration_ms,
             loop, image_version, asset_version, file_name, content_type
      FROM mini_royale_card_character_assets
@@ -452,7 +454,7 @@ async function characterAssetsByCardId(env, cardIds) {
   }
 
   const placeholders = cardIds.map(() => '?').join(', ');
-  const assetRows = await env.DB.prepare(
+  const assetRows = await gameDatabase(env).prepare(
     `SELECT card_id, asset_id, animation, direction, frame_index, duration_ms,
             loop, image_version, asset_version, file_name, content_type
      FROM mini_royale_card_character_assets
@@ -477,7 +479,7 @@ async function characterAssetsByCardId(env, cardIds) {
 }
 
 async function fetchCardRow(env, cardId) {
-  return env.DB.prepare(
+  return gameDatabase(env).prepare(
     `${CARD_SELECT_COLUMNS}
      WHERE id = ?`
   )
@@ -586,14 +588,14 @@ function normalizeCardId(cardId) {
 }
 
 async function countRows(env, sql, ...bindings) {
-  const row = await env.DB.prepare(sql)
+  const row = await gameDatabase(env).prepare(sql)
     .bind(...bindings)
     .first();
   return Number(row?.count || 0);
 }
 
 async function cardExists(env, cardId) {
-  const existing = await env.DB.prepare('SELECT id FROM mini_royale_cards WHERE id = ?')
+  const existing = await gameDatabase(env).prepare('SELECT id FROM mini_royale_cards WHERE id = ?')
     .bind(cardId)
     .first();
   return Boolean(existing);
@@ -656,7 +658,7 @@ function cardWriteBindings(card) {
 
 async function insertStarterCards(env) {
   for (const card of starterCards) {
-    await env.DB.prepare(
+    await gameDatabase(env).prepare(
       `INSERT OR IGNORE INTO mini_royale_cards (${CARD_WRITE_COLUMNS})
        VALUES (${CARD_WRITE_PLACEHOLDERS})`
     ).bind(
@@ -674,7 +676,7 @@ export async function ensureCardsSeeded(env) {
 
 async function loadCardsFromDatabase(env) {
   await ensureCardsSeeded(env);
-  const rows = await env.DB.prepare(
+  const rows = await gameDatabase(env).prepare(
     `${CARD_SELECT_COLUMNS}
      ORDER BY energy_cost ASC, name ASC`
   ).all();
@@ -724,7 +726,7 @@ export async function upsertCard(env, payload) {
   await ensureCardsSeeded(env);
   const card = normalizeCardPayload(payload);
 
-  await env.DB.prepare(
+  await gameDatabase(env).prepare(
     `INSERT INTO mini_royale_cards (${CARD_WRITE_COLUMNS})
     VALUES (${CARD_WRITE_PLACEHOLDERS})
     ON CONFLICT(id) DO UPDATE SET
@@ -781,11 +783,11 @@ export async function deleteCard(env, cardId) {
       cardCharacterAssetMetaKey(normalizedCardId, asset.asset_id)
     );
   }
-  await env.DB.prepare('DELETE FROM mini_royale_card_character_assets WHERE card_id = ?')
+  await gameDatabase(env).prepare('DELETE FROM mini_royale_card_character_assets WHERE card_id = ?')
     .bind(normalizedCardId)
     .run();
 
-  await env.DB.prepare('DELETE FROM mini_royale_cards WHERE id = ?')
+  await gameDatabase(env).prepare('DELETE FROM mini_royale_cards WHERE id = ?')
     .bind(normalizedCardId)
     .run();
 
@@ -862,7 +864,7 @@ export async function uploadCardImage(env, cardId, payload) {
   );
 
   const imageVersion = Date.now();
-  await env.DB.prepare('UPDATE mini_royale_cards SET image_version = ? WHERE id = ?')
+  await gameDatabase(env).prepare('UPDATE mini_royale_cards SET image_version = ? WHERE id = ?')
     .bind(imageVersion, normalizedCardId)
     .run();
 
@@ -875,7 +877,7 @@ export async function removeCardImage(env, cardId) {
 
   await env.STATIC_ASSETS?.delete?.(cardImageKey(normalizedCardId));
   await env.STATIC_ASSETS?.delete?.(cardImageMetaKey(normalizedCardId));
-  await env.DB.prepare('UPDATE mini_royale_cards SET image_version = 0 WHERE id = ?')
+  await gameDatabase(env).prepare('UPDATE mini_royale_cards SET image_version = 0 WHERE id = ?')
     .bind(normalizedCardId)
     .run();
 
@@ -951,7 +953,7 @@ async function _uploadCardLayerImage(
   );
 
   const imageVersion = Date.now();
-  await env.DB.prepare(`UPDATE mini_royale_cards SET ${versionColumn} = ? WHERE id = ?`)
+  await gameDatabase(env).prepare(`UPDATE mini_royale_cards SET ${versionColumn} = ? WHERE id = ?`)
     .bind(imageVersion, normalizedCardId)
     .run();
 
@@ -1024,7 +1026,7 @@ export async function removeCardCharacterImage(env, cardId, direction = 'front')
   await env.STATIC_ASSETS?.delete?.(
     cardCharImageMetaKey(normalizedCardId, normalizedDirection)
   );
-  await env.DB.prepare(
+  await gameDatabase(env).prepare(
     `UPDATE mini_royale_cards SET ${cardCharImageVersionColumn(
       normalizedDirection
     )} = 0 WHERE id = ?`
@@ -1052,7 +1054,7 @@ export async function uploadCardCharacterAsset(env, cardId, assetId, payload) {
     throw new Error('Card not found');
   }
 
-  const existingAsset = await env.DB.prepare(
+  const existingAsset = await gameDatabase(env).prepare(
     'SELECT asset_id FROM mini_royale_card_character_assets WHERE card_id = ? AND asset_id = ?'
   )
     .bind(normalizedCardId, normalizedAssetId)
@@ -1105,7 +1107,7 @@ export async function uploadCardCharacterAsset(env, cardId, assetId, payload) {
     })
   );
 
-  await env.DB.prepare(
+  await gameDatabase(env).prepare(
     `INSERT INTO mini_royale_card_character_assets (
        card_id, asset_id, animation, direction, frame_index, duration_ms,
        loop, image_version, asset_version, file_name, content_type, updated_at
@@ -1151,7 +1153,7 @@ export async function removeCardCharacterAsset(env, cardId, assetId) {
   await env.STATIC_ASSETS?.delete?.(
     cardCharacterAssetMetaKey(normalizedCardId, normalizedAssetId)
   );
-  await env.DB.prepare(
+  await gameDatabase(env).prepare(
     'DELETE FROM mini_royale_card_character_assets WHERE card_id = ? AND asset_id = ?'
   )
     .bind(normalizedCardId, normalizedAssetId)
@@ -1196,7 +1198,7 @@ export async function removeCardBgImage(env, cardId) {
   const normalizedCardId = normalizeCardId(cardId);
   await env.STATIC_ASSETS?.delete?.(cardBgImageKey(normalizedCardId));
   await env.STATIC_ASSETS?.delete?.(cardBgImageMetaKey(normalizedCardId));
-  await env.DB.prepare('UPDATE mini_royale_cards SET bg_image_version = 0 WHERE id = ?')
+  await gameDatabase(env).prepare('UPDATE mini_royale_cards SET bg_image_version = 0 WHERE id = ?')
     .bind(normalizedCardId)
     .run();
   invalidateCardsCache();
@@ -1214,16 +1216,16 @@ export async function getCardMap(env, { cards = null } = {}) {
 
 async function createStarterDeckForUser(userId, env) {
   await ensureCardsSeeded(env);
-  await env.DB.prepare(
+  await gameDatabase(env).prepare(
     'INSERT INTO mini_royale_user_decks (user_id, name, slot) VALUES (?, ?, 1)'
   ).bind(userId, 'Starter Deck').run();
 
-  const deck = await env.DB.prepare(
+  const deck = await gameDatabase(env).prepare(
     'SELECT id FROM mini_royale_user_decks WHERE user_id = ? AND slot = 1'
   ).bind(userId).first();
 
   for (const [index, cardId] of defaultDeckCardIds.entries()) {
-    await env.DB.prepare(
+    await gameDatabase(env).prepare(
       'INSERT INTO mini_royale_user_deck_cards (deck_id, position, card_id) VALUES (?, ?, ?)'
     ).bind(deck.id, index, cardId).run();
   }
@@ -1242,7 +1244,7 @@ export async function ensureUserStarterDeck(userId, env) {
 }
 
 async function loadDeckCardIds(deckId, env) {
-  const rows = await env.DB.prepare(
+  const rows = await gameDatabase(env).prepare(
     `SELECT position, card_id
      FROM mini_royale_user_deck_cards
      WHERE deck_id = ?
@@ -1267,7 +1269,7 @@ export async function listDecksForUser(userId, env) {
       progression
     ])
   );
-  const decks = await env.DB.prepare(
+  const decks = await gameDatabase(env).prepare(
     `SELECT id, name, slot, updated_at
      FROM mini_royale_user_decks
      WHERE user_id = ?
@@ -1296,7 +1298,7 @@ export async function listDeckSummariesForUser(userId, env) {
       progression
     ])
   );
-  const decks = await env.DB.prepare(
+  const decks = await gameDatabase(env).prepare(
     `SELECT d.id, d.name, d.slot, d.updated_at,
             (SELECT COUNT(*)
              FROM mini_royale_user_deck_cards dc
@@ -1326,7 +1328,7 @@ export async function getDeckForUser(
   { cardMap = null } = {}
 ) {
   await ensureUserStarterDeck(userId, env);
-  const deck = await env.DB.prepare(
+  const deck = await gameDatabase(env).prepare(
     `SELECT id, name, slot, updated_at
      FROM mini_royale_user_decks
      WHERE user_id = ? AND id = ?`
@@ -1346,7 +1348,7 @@ export async function getDeckForUser(
 
 export async function getDeckSummaryForUser(userId, deckId, env) {
   await ensureUserStarterDeck(userId, env);
-  const deck = await env.DB.prepare(
+  const deck = await gameDatabase(env).prepare(
     `SELECT d.id, d.name, d.slot, d.updated_at,
             (SELECT COUNT(*)
              FROM mini_royale_user_deck_cards dc
@@ -1391,7 +1393,7 @@ export async function saveDeckForUser(userId, payload, env) {
     }
   }
 
-  const existing = await env.DB.prepare(
+  const existing = await gameDatabase(env).prepare(
     'SELECT id FROM mini_royale_user_decks WHERE user_id = ? AND slot = ?'
   ).bind(userId, slot).first();
 
@@ -1407,22 +1409,22 @@ export async function saveDeckForUser(userId, payload, env) {
   );
 
   if (!deckId) {
-    await env.DB.prepare(
+    await gameDatabase(env).prepare(
       'INSERT INTO mini_royale_user_decks (user_id, name, slot) VALUES (?, ?, ?)'
     ).bind(userId, name, slot).run();
-    const inserted = await env.DB.prepare(
+    const inserted = await gameDatabase(env).prepare(
       'SELECT id FROM mini_royale_user_decks WHERE user_id = ? AND slot = ?'
     ).bind(userId, slot).first();
     deckId = inserted.id;
   } else {
-    await env.DB.prepare(
+    await gameDatabase(env).prepare(
     'UPDATE mini_royale_user_decks SET name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
     ).bind(name, deckId).run();
-    await env.DB.prepare('DELETE FROM mini_royale_user_deck_cards WHERE deck_id = ?').bind(deckId).run();
+    await gameDatabase(env).prepare('DELETE FROM mini_royale_user_deck_cards WHERE deck_id = ?').bind(deckId).run();
   }
 
   for (const [index, cardId] of cardIds.entries()) {
-    await env.DB.prepare(
+    await gameDatabase(env).prepare(
       'INSERT INTO mini_royale_user_deck_cards (deck_id, position, card_id) VALUES (?, ?, ?)'
     ).bind(deckId, index, cardId).run();
   }
@@ -1438,7 +1440,8 @@ export async function saveDeckForUser(userId, payload, env) {
 }
 
 export async function recordMatchHistory(env, match) {
-  await env.DB.prepare(
+  await requireActiveAccounts(env,[match.playerOneUserId,match.playerTwoUserId].filter(id=>id!=null));
+  await gameDatabase(env).prepare(
     `INSERT INTO mini_royale_match_history (
       id, room_code, player_one_user_id, player_two_user_id, winner_user_id,
       reason, player_one_tower_hp, player_two_tower_hp, summary_json

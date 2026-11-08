@@ -93,9 +93,16 @@ async function attachGoogleSub(env, userId, googleSub) {
     .run();
 }
 
-async function createSession(userId, env) {
+export async function createSession(userId, env) {
   const sessionId = generateSessionId();
   const expiresAt = new Date(Date.now() + SESSION_DURATION_MS).toISOString();
+  if(env.DATABASE_MODE==='split') {
+    const results=await env.DB.batch([
+      env.DB.prepare('DELETE FROM sessions WHERE user_id=?').bind(userId),
+      env.DB.prepare("INSERT INTO sessions(id,user_id,expires_at) SELECT ?,id,? FROM users WHERE id=? AND lifecycle_status='active'").bind(sessionId,expiresAt,userId)
+    ]);
+    return results[1].meta.changes===1 ? sessionId : null;
+  }
   await env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(userId).run();
   await env.DB.prepare('INSERT INTO sessions (id, user_id, expires_at) VALUES (?, ?, ?)')
     .bind(sessionId, userId, expiresAt)
@@ -295,6 +302,10 @@ export async function handleGoogleLogin(request, env) {
   }
 
   const effectiveAvatarUrl = resolveGoogleLoginAvatarUrl(user, googleUser.picture);
+  if(env.DATABASE_MODE==='split') {
+    const active=await env.DB.prepare('SELECT lifecycle_status FROM users WHERE id=?').bind(user.id).first();
+    if(active?.lifecycle_status!=='active') return jsonResponse({error:'Account unavailable'},403,request);
+  }
 
   await env.DB.prepare(
     `UPDATE users
@@ -308,6 +319,7 @@ export async function handleGoogleLogin(request, env) {
   user = await fetchMappedUserById(env, user.id);
 
   const sessionId = await createSession(user.id, env);
+  if(!sessionId) return jsonResponse({error:'Account unavailable'},403,request);
   return authJsonResponse(
     request,
     {

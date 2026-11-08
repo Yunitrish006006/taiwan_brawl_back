@@ -1,0 +1,14 @@
+{
+  // Isolated rehearsal only. No actual Cloudflare database IDs are configured.
+  "name": "taiwan-brawl-split-rehearsal",
+  "main": "src/index.js",
+  "compatibility_date": "2026-03-11",
+  "compatibility_flags": ["nodejs_compat"],
+  "vars": {"DATABASE_MODE":"split", "ENABLE_COUPLES_API":"false"},
+  "triggers": {"crons":["* * * * *"]},
+  "d1_databases": [
+    {"binding":"DB","database_name":"cd01-main-local","database_id":"00000000-0000-4000-8000-000000000001","migrations_dir":"migrations","remote":false},
+    {"binding":"SOCIAL_DB","database_name":"cd01-social-local","database_id":"00000000-0000-4000-8000-000000000002","migrations_dir":"migrations/social","remote":false},
+    {"binding":"GAME_DB","database_name":"cd01-games-local","database_id":"00000000-0000-4000-8000-000000000003","migrations_dir":"migrations/games","remote":false}
+  ]
+}

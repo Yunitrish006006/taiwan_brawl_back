@@ -3,8 +3,11 @@
 const RATE_LIMIT_KV_PREFIX = 'rl:';
 const DEFAULT_WINDOW_MS = 60_000; // 1 minute window
 
-// Rate limit rules: [endpoint pattern, window ms, max requests]
+// Rate limit rules: [endpoint pattern, window ms, max requests, optional method]
 const RATE_RULES = [
+  // MessageSyncEngine polls every two seconds; give active DM conversations
+  // headroom without weakening the general API budget.
+  [/^\/api\/chat\/dm\/pending$/, 60_000, 600, 'GET'],
   // Strict limits for sensitive endpoints
   [/^\/api\/login$/, 60_000, 5],      // 5 requests/min for login
   [/^\/api\/chat\/dm\/\d+\/send$/, 60_000, 20], // 20 messages/min
@@ -32,17 +35,21 @@ function normalizeIp(request) {
   return 'unknown';
 }
 
-function findMatchingRule(pathname) {
-  for (const [pattern, windowMs, maxRequests] of RATE_RULES) {
-    if (pattern.test(pathname)) {
-      return { windowMs, maxRequests };
+function findMatchingRule(pathname, method) {
+  for (const [pattern, windowMs, maxRequests, ruleMethod] of RATE_RULES) {
+    if (pattern.test(pathname) && (!ruleMethod || ruleMethod === method)) {
+      return {
+        windowMs,
+        maxRequests,
+        scope: `${ruleMethod ?? '*'}:${pattern.source}`,
+      };
     }
   }
   return null;
 }
 
-function rateKey(ip, windowStart) {
-  return `${RATE_LIMIT_KV_PREFIX}${ip}:${windowStart}`;
+function rateKey(ip, windowStart, scope) {
+  return `${RATE_LIMIT_KV_PREFIX}${scope}:${ip}:${windowStart}`;
 }
 
 function getCurrentWindowStart(windowMs) {
@@ -50,7 +57,7 @@ function getCurrentWindowStart(windowMs) {
 }
 
 export async function checkRateLimit(request, env, url) {
-  const rule = findMatchingRule(url.pathname);
+  const rule = findMatchingRule(url.pathname, request.method);
   if (!rule) {
     return { allowed: true }; // No rate limit for this endpoint
   }
@@ -58,7 +65,7 @@ export async function checkRateLimit(request, env, url) {
   const { windowMs, maxRequests } = rule;
   const ip = normalizeIp(request);
   const currentWindow = getCurrentWindowStart(windowMs);
-  const key = rateKey(ip, currentWindow);
+  const key = rateKey(ip, currentWindow, rule.scope);
 
   try {
     const current = await env.CHAT_SYNC?.get(key);

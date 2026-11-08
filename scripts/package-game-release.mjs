@@ -1,5 +1,6 @@
 import { createHash, createPublicKey, verify } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
+import { dirname, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { validatePublishedGameResourceCatalog } from '../src/api/game_resources_api.js';
@@ -72,6 +73,8 @@ export function buildGameReleaseAssets({
   const expectedDownloadUrl = `${new URL(resource.downloadUrl).origin}/game-resources/${moduleKey}/${resource.resourceId}/${resource.version}`;
   if (
     resource.contentKey !== expectedContentKey ||
+    !Number.isSafeInteger(resource.payloadSchemaVersion) ||
+    resource.payloadSchemaVersion < 1 ||
     resource.metadataKey !== expectedMetadataKey ||
     resource.downloadUrl !== expectedDownloadUrl ||
     resource.storageMetadata?.byteLength !== resource.byteLength ||
@@ -111,6 +114,45 @@ export function buildGameReleaseAssets({
   ];
 }
 
+/**
+ * Builds one atomic Wrangler bulk-put file for multiple immutable resources
+ * and the single signed catalog that advertises their exact versions.
+ */
+export function buildGameReleaseAssetsBatch({
+  resources,
+  catalogEnvelope,
+  resourcePublicKeyPem,
+  catalogPublicKeyPem,
+}) {
+  if (!Array.isArray(resources) || resources.length === 0) {
+    throw new TypeError('At least one signed resource is required.');
+  }
+  const entries = [];
+  const keys = new Set();
+  for (const item of resources) {
+    if (!item || !Buffer.isBuffer(item.payload) || !item.resource) {
+      throw new TypeError('Each release resource needs payload bytes and metadata.');
+    }
+    const resourceEntries = buildGameReleaseAssets({
+      payload: item.payload,
+      resource: item.resource,
+      catalogEnvelope,
+      resourcePublicKeyPem,
+      catalogPublicKeyPem,
+    });
+    for (const entry of resourceEntries) {
+      if (entry.key === CATALOG_KEY) continue;
+      if (keys.has(entry.key)) {
+        throw new Error(`Duplicate release KV key: ${entry.key}`);
+      }
+      keys.add(entry.key);
+      entries.push(entry);
+    }
+  }
+  entries.push({ key: CATALOG_KEY, value: JSON.stringify(catalogEnvelope) });
+  return entries;
+}
+
 function parseArgs(args) {
   const values = new Map();
   for (let index = 0; index < args.length; index += 1) {
@@ -122,6 +164,7 @@ function parseArgs(args) {
       '--resource-public-key',
       '--catalog-public-key',
       '--output',
+      '--resources-manifest',
     ].includes(name)) {
       throw new Error(`Unknown option: ${name}`);
     }
@@ -132,8 +175,6 @@ function parseArgs(args) {
     values.set(name, value);
   }
   for (const name of [
-    '--file',
-    '--resource-metadata',
     '--catalog-envelope',
     '--resource-public-key',
     '--catalog-public-key',
@@ -141,25 +182,63 @@ function parseArgs(args) {
   ]) {
     if (!values.has(name)) throw new Error(`Required option: ${name}`);
   }
+  const hasSingleResource = values.has('--file') || values.has('--resource-metadata');
+  if (hasSingleResource && (!values.has('--file') || !values.has('--resource-metadata'))) {
+    throw new Error('--file and --resource-metadata must be used together.');
+  }
+  if (hasSingleResource === values.has('--resources-manifest')) {
+    throw new Error('Provide either one resource or --resources-manifest, but not both.');
+  }
   return values;
 }
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
-  const [payload, resourceRaw, catalogRaw, resourceKey, catalogKey] = await Promise.all([
-    readFile(args.get('--file')),
-    readFile(args.get('--resource-metadata'), 'utf8'),
+  const [catalogRaw, resourceKey, catalogKey] = await Promise.all([
     readFile(args.get('--catalog-envelope'), 'utf8'),
     readFile(args.get('--resource-public-key'), 'utf8'),
     readFile(args.get('--catalog-public-key'), 'utf8'),
   ]);
-  const entries = buildGameReleaseAssets({
-    payload,
-    resource: JSON.parse(resourceRaw),
-    catalogEnvelope: JSON.parse(catalogRaw),
-    resourcePublicKeyPem: resourceKey,
-    catalogPublicKeyPem: catalogKey,
-  });
+  const catalogEnvelope = JSON.parse(catalogRaw);
+  let entries;
+  if (args.has('--resources-manifest')) {
+    const manifestPath = args.get('--resources-manifest');
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+    if (!Array.isArray(manifest) || manifest.length === 0) {
+      throw new TypeError('Resources manifest must be a non-empty JSON array.');
+    }
+    const baseDirectory = dirname(resolve(manifestPath));
+    const resources = await Promise.all(manifest.map(async (item) => {
+      if (!item || typeof item.file !== 'string' || typeof item.metadata !== 'string') {
+        throw new TypeError('Each manifest entry needs file and metadata paths.');
+      }
+      const filePath = resolve(baseDirectory, item.file);
+      const metadataPath = resolve(baseDirectory, item.metadata);
+      const [payload, metadata] = await Promise.all([
+        readFile(filePath),
+        readFile(metadataPath, 'utf8'),
+      ]);
+      return { payload, resource: JSON.parse(metadata) };
+    }));
+    entries = buildGameReleaseAssetsBatch({
+      resources,
+      catalogEnvelope,
+      resourcePublicKeyPem: resourceKey,
+      catalogPublicKeyPem: catalogKey,
+    });
+  } else {
+    const [payload, resourceRaw] = await Promise.all([
+      readFile(args.get('--file')),
+      readFile(args.get('--resource-metadata'), 'utf8'),
+    ]);
+    entries = buildGameReleaseAssets({
+      payload,
+      resource: JSON.parse(resourceRaw),
+      catalogEnvelope,
+      resourcePublicKeyPem: resourceKey,
+      catalogPublicKeyPem: catalogKey,
+    });
+  }
   await writeFile(args.get('--output'), `${JSON.stringify(entries, null, 2)}\n`, {
     flag: 'wx',
     mode: 0o600,

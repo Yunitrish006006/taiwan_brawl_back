@@ -1,0 +1,69 @@
+name: Game data and API boundaries
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/game-data-boundaries.yml'
+      - 'migrations/**'
+      - 'src/api/**'
+      - 'src/rooms/**'
+      - 'src/royale/**'
+      - 'tests/game_api_paths.test.js'
+      - 'tests/game_data_namespace.test.js'
+      - 'tests/game_resources_api.test.js'
+      - 'worker-tests/**'
+      - 'vitest.config.js'
+      - 'scripts/rehearse-game-data-migrations.mjs'
+      - 'package.json'
+      - 'package-lock.json'
+  push:
+    paths:
+      - '.github/workflows/game-data-boundaries.yml'
+      - 'migrations/**'
+      - 'src/api/**'
+      - 'src/rooms/**'
+      - 'src/royale/**'
+      - 'tests/game_api_paths.test.js'
+      - 'tests/game_data_namespace.test.js'
+      - 'tests/game_resources_api.test.js'
+      - 'worker-tests/**'
+      - 'vitest.config.js'
+      - 'scripts/rehearse-game-data-migrations.mjs'
+      - 'package.json'
+      - 'package-lock.json'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: game-data-boundaries-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify-game-data-boundaries:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout backend
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install SQLite CLI
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes sqlite3
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Test API ownership and data table namespaces
+        run: npm test
+
+      - name: Rehearse D1 migrations with seeded game and account data
+        run: npm run db:migration:rehearse

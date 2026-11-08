@@ -22,6 +22,10 @@ const progression = await readFile(
   new URL('../src/royale/royale_progression.js', import.meta.url),
   'utf8',
 );
+const migrationRehearsal = await readFile(
+  new URL('../scripts/rehearse-game-data-migrations.mjs', import.meta.url),
+  'utf8',
+);
 
 const gameTables = [
   'cards',
@@ -48,6 +52,18 @@ test('D1 migration namespaces Mini Royale tables without changing row identity',
   assert.doesNotMatch(migration, /ALTER TABLE (users|sessions)\b/);
   assert.match(migration, /DROP INDEX IF EXISTS idx_user_deck_characters_user/);
   assert.match(migration, /CREATE INDEX idx_mini_royale_user_deck_characters_user/);
+});
+
+test('migration rehearsal includes all migrations after the namespace change', () => {
+  assert.match(
+    migrationRehearsal,
+    /const migrationsAfterNamespace = migrationFiles\.slice\(namespaceIndex \+ 1\)/,
+  );
+  assert.match(migrationRehearsal, /migrationsAfterNamespace\.map/);
+  assert.match(
+    migrationRehearsal,
+    /input:\s*`\$\{setup\}\\n\$\{seed\}\\n\$\{namespaceChange\}\\n\$\{laterMigrations\}\\n\$\{verify\}`/,
+  );
 });
 
 test('Mini Royale repositories query only game-namespaced data tables', () => {

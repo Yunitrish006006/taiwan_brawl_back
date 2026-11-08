@@ -377,7 +377,6 @@ resolve_flutter_bin_dir() {
   local resolved_flutter candidate
   resolved_flutter="$(command -v flutter 2>/dev/null || true)"
   local candidates=(
-    "/Volumes/DataExtended/flutter/bin"
     "${HOME}/flutter/bin"
     "${HOME}/development/flutter/bin"
   )
@@ -397,7 +396,7 @@ resolve_flutter_bin_dir() {
   done
 
   echo "Unable to locate Flutter SDK bin directory." >&2
-  echo "Set FLUTTER_BIN_DIR or install Flutter under /Volumes/DataExtended/flutter/bin" >&2
+  echo "Set FLUTTER_BIN_DIR or add flutter to PATH" >&2
   exit 1
 }
 
@@ -587,6 +586,9 @@ echo "[2/5] Building Flutter Frontend..."
 CMD="flutter build web --release --build-name=${VERSION}"
 echo "Running: ${CMD}"
 flutter build web --release --build-name="${VERSION}"
+CMD="node tool/prepare_offline_shell.mjs build/web"
+echo "Running: ${CMD}"
+node tool/prepare_offline_shell.mjs build/web
 echo "Step 2 completed"
 echo
 

@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "status": "design-only",
+  "cases": [
+    {
+      "id": "create-request",
+      "actorUserId": 101,
+      "request": {"method":"POST","path":"/api/couples/requests","body":{"targetUserId":102,"startedOn":"2026-11-01","timeZone":"Asia/Taipei","operationId":"10000000-0000-4000-8000-000000000001"}},
+      "expectedStatus": 201,
+      "expectedBody": {"ok":true,"serverNow":"2026-11-04T04:00:00Z","data":{"request":{"id":"20000000-0000-4000-8000-000000000001","requesterUserId":101,"recipientUserId":102,"startedOn":"2026-11-01","status":"pending","createdAt":"2026-11-04T04:00:00Z","expiresAt":"2026-11-11T04:00:00Z","relationshipId":null}}}
+    },
+    {
+      "id": "accept-request",
+      "actorUserId": 102,
+      "request": {"method":"POST","path":"/api/couples/requests/20000000-0000-4000-8000-000000000001/accept","body":{"timeZone":"Asia/Taipei","operationId":"10000000-0000-4000-8000-000000000002"}},
+      "expectedStatus": 200,
+      "expectedBody": {"ok":true,"serverNow":"2026-11-04T04:01:00Z","data":{"relationship":{"id":"30000000-0000-4000-8000-000000000001","partnerUserId":101,"startedOn":"2026-11-01","status":"active","version":1,"updatedAt":"2026-11-04T04:01:00Z","endedAt":null}}}
+    },
+    {
+      "id": "empty-overview",
+      "request": {"method":"GET","path":"/api/couples/overview"},
+      "expectedStatus": 200,
+      "expectedBody": {"ok":true,"serverNow":"2026-11-04T04:02:00Z","data":{"relationship":null,"incomingRequests":[],"outgoingRequests":[],"dateProposal":null}}
+    },
+    {"id":"third-party","precondition":"actor 103 is not a relationship member","expectedStatus":404,"expectedBody":{"ok":false,"error":{"code":"NOT_FOUND","message":"Resource not found"},"requestId":"fixture-404"}},
+    {"id":"stale-date-proposal","precondition":"proposal.baseVersion=1, relationship.version=2","expectedStatus":409,"expectedBody":{"ok":false,"error":{"code":"VERSION_CONFLICT","message":"Refresh relationship"},"requestId":"fixture-409"}},
+    {"id":"future-date","precondition":"startedOn=2026-11-05, localToday=2026-11-04","expectedStatus":422,"expectedBody":{"ok":false,"error":{"code":"INVALID_DATE","message":"Choose today or an earlier date"},"requestId":"fixture-422"}},
+    {"id":"no-rejection-cooldown","precondition":"previous request declined at serverNow; new operationId and request ID","expectedStatus":201},
+    {"id":"expiry-boundary","now":"2026-11-11T04:00:00Z","expiresAt":"2026-11-11T04:00:00Z","expectedStatus":409,"expectedCode":"REQUEST_NOT_PENDING"}
+  ],
+  "dateCases": [
+    {"startedOn":"2026-11-01","localToday":"2026-11-01","dayCount":1},
+    {"startedOn":"2026-11-01","localToday":"2026-11-04","dayCount":4},
+    {"startedOn":"2024-02-28","localToday":"2024-03-01","dayCount":3},
+    {"startedOn":"2026-11-01","localToday":"2026-10-31","dayCount":1,"reason":"already-active travel clamp"}
+  ],
+  "timeZoneCases": [
+    {"instant":"2026-11-04T00:30:00Z","timeZone":"Asia/Taipei","localToday":"2026-11-04"},
+    {"instant":"2026-11-04T00:30:00Z","timeZone":"America/Los_Angeles","localToday":"2026-11-03"}
+  ],
+  "widgetSnapshot": {"schemaVersion":1,"accountScope":"local-account-scope","sessionGeneration":2,"relationshipId":"30000000-0000-4000-8000-000000000001","relationshipVersion":1,"startedOn":"2026-11-01","status":"active","lastSyncedAt":"2026-11-04T04:01:00Z"}
+}

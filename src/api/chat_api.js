@@ -1,7 +1,13 @@
+import { socialDatabase, splitMode, socialPairAllowed } from '../core/databases.js';
 import { requireUser } from '../core/request_helpers.js';
 import { sendDirectMessagePush } from '../features/push_notifications.js';
 import { jsonResponse } from '../core/utils.js';
-import { handleSyncUpload, handleSyncDownload } from './chat_sync_api.js';
+import {
+  handleSyncUpload,
+  handleSyncDownload,
+  handleSyncDownloadV2,
+  handleSyncAcknowledge,
+} from './chat_sync_api.js';
 import {
   eventFromPendingRow,
   normalizeChatEvent,
@@ -23,10 +29,11 @@ function getChatRoomStub(env, userIdA, userIdB) {
 }
 
 async function areFriends(userId, friendId, env) {
+  if(splitMode(env)) return socialPairAllowed(env,Number(userId),Number(friendId));
   const a = Number(userId);
   const b = Number(friendId);
   const [userOneId, userTwoId] = a < b ? [a, b] : [b, a];
-  const row = await env.DB.prepare(
+  const row = await socialDatabase(env).prepare(
     'SELECT 1 FROM friendships WHERE user_one_id = ?1 AND user_two_id = ?2 LIMIT 1'
   )
     .bind(userOneId, userTwoId)
@@ -49,6 +56,7 @@ async function handleDmHistory(request, env, friendId) {
 
   const url = new URL(request.url);
   const before = url.searchParams.get('before') ?? '';
+  const beforeId = url.searchParams.get('beforeId') ?? '';
   const stub = getChatRoomStub(env, user.id, friendId);
 
   const innerUrl = new URL('https://chat-room/internal/history');
@@ -56,6 +64,7 @@ async function handleDmHistory(request, env, friendId) {
   innerUrl.searchParams.set('userB', String(friendId));
   if (before) {
     innerUrl.searchParams.set('before', before);
+    if (beforeId) innerUrl.searchParams.set('beforeId', beforeId);
   }
 
   return stub.fetch(new Request(innerUrl.toString()));
@@ -111,7 +120,7 @@ async function handleSendPending(request, env, friendId, ctx) {
   if (!text) return jsonResponse({ error: 'Empty message' }, 400, request);
 
   const createdAt = new Date().toISOString();
-  await env.DB.prepare(
+  await socialDatabase(env).prepare(
     'INSERT INTO pending_messages (sender_id, receiver_id, text, created_at) VALUES (?1, ?2, ?3, ?4)'
   )
     .bind(user.id, friendId, text, createdAt)
@@ -148,7 +157,7 @@ async function handleSendEvent(request, env, friendId, ctx) {
   const event = normalized.event;
   const pendingType = pendingTypeForEvent(event.type);
 
-  const existing = await env.DB.prepare(
+  const existing = await socialDatabase(env).prepare(
     'SELECT id, event_id, message_id, sender_id, receiver_id, text, created_at, revision, event_type, signature, device_id FROM pending_messages WHERE event_id = ?1 LIMIT 1'
   )
     .bind(event.eventId)
@@ -165,7 +174,7 @@ async function handleSendEvent(request, env, friendId, ctx) {
     return jsonResponse({ ok: true, event }, 200, request);
   }
 
-  await env.DB.prepare(
+  await socialDatabase(env).prepare(
     `INSERT INTO pending_messages
       (sender_id, receiver_id, text, created_at, type, event_id, message_id, revision, event_type, signature, device_id)
      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)`
@@ -181,7 +190,7 @@ async function handleSendEvent(request, env, friendId, ctx) {
       event.revision,
       event.type,
       event.signature,
-      event.deviceId
+      event.deviceId ?? null
     )
     .run();
 
@@ -207,6 +216,10 @@ async function handleGetPending(request, env) {
   if (!user) return jsonResponse({ error: 'Not logged in' }, 401, request);
 
   const url = new URL(request.url);
+  const deviceId = normalizeDeviceId(url.searchParams.get('deviceId'));
+  if (!deviceId) return jsonResponse({ error: 'Valid deviceId is required' }, 400, request);
+  const device = await getActiveChatDevice(env, user.id, deviceId);
+  if (!device) return jsonResponse({ error: 'Device is not active' }, 403, request);
   const friendIdParam = url.searchParams.get('friendId');
   const friendId = friendIdParam == null ? null : Number(friendIdParam);
   if (friendIdParam != null && (!Number.isInteger(friendId) || friendId <= 0)) {
@@ -238,17 +251,22 @@ async function handleGetPending(request, env) {
     bindings.push(afterId);
     nextBinding += 1;
   }
+  conditions.push(
+    `NOT EXISTS (SELECT 1 FROM chat_pending_message_acks a WHERE a.pending_id = pending_messages.id AND a.device_id = ?${nextBinding})`
+  );
+  bindings.push(deviceId);
+  nextBinding += 1;
   const where = conditions.join(' AND ');
   const limitBinding = nextBinding;
   const offsetBinding = nextBinding + 1;
 
   const [rows, countRow] = await Promise.all([
-    env.DB.prepare(
+    socialDatabase(env).prepare(
       `SELECT id, sender_id, receiver_id, text, created_at, type, event_id, message_id, revision, event_type, signature, device_id FROM pending_messages WHERE ${where} ORDER BY id ASC LIMIT ?${limitBinding} OFFSET ?${offsetBinding}`
     )
       .bind(...bindings, limit, offset)
       .all(),
-    env.DB.prepare(
+    socialDatabase(env).prepare(
       `SELECT COUNT(*) AS total FROM pending_messages WHERE ${where}`
     )
       .bind(...bindings)
@@ -270,17 +288,103 @@ async function handleAckPending(request, env) {
   if (!user) return jsonResponse({ error: 'Not logged in' }, 401, request);
 
   const body = await request.json().catch(() => null);
+  const deviceId = normalizeDeviceId(body?.deviceId);
+  if (!deviceId) return jsonResponse({ error: 'Valid deviceId is required' }, 400, request);
+  const device = await getActiveChatDevice(env, user.id, deviceId);
+  if (!device) return jsonResponse({ error: 'Device is not active' }, 403, request);
   const ids = Array.isArray(body?.ids) ? body.ids.map(Number).filter(Boolean) : [];
   if (ids.length === 0) return jsonResponse({ ok: true, deleted: 0 }, 200, request);
-
-  const placeholders = ids.map((_, i) => `?${i + 2}`).join(',');
-  const result = await env.DB.prepare(
-    `DELETE FROM pending_messages WHERE receiver_id = ?1 AND id IN (${placeholders})`
-  )
-    .bind(user.id, ...ids)
-    .run();
+  const uniqueIds = [...new Set(ids)];
+  const acknowledgedAt = new Date().toISOString();
+  for (const pendingId of uniqueIds) {
+    await socialDatabase(env).prepare(
+      'INSERT OR IGNORE INTO chat_pending_message_acks (pending_id, receiver_id, device_id, acknowledged_at) SELECT id, receiver_id, ?3, ?4 FROM pending_messages WHERE id = ?1 AND receiver_id = ?2'
+    ).bind(pendingId, user.id, deviceId, acknowledgedAt).run();
+  }
+  const placeholders = uniqueIds.map((_, index) => `?${index + 2}`).join(',');
+  const result = await socialDatabase(env).prepare(
+    `DELETE FROM pending_messages
+     WHERE receiver_id = ?1 AND id IN (${placeholders})
+       AND EXISTS (SELECT 1 FROM chat_devices active WHERE active.user_id = pending_messages.receiver_id AND active.is_active = 1)
+       AND NOT EXISTS (
+         SELECT 1 FROM chat_devices d
+         WHERE d.user_id = pending_messages.receiver_id AND d.is_active = 1
+           AND NOT EXISTS (
+             SELECT 1 FROM chat_pending_message_acks a
+             WHERE a.pending_id = pending_messages.id
+               AND a.receiver_id = pending_messages.receiver_id
+               AND a.device_id = d.device_id
+           )
+       )`
+  ).bind(user.id, ...uniqueIds).run();
 
   return jsonResponse({ ok: true, deleted: result.meta?.changes ?? 0 }, 200, request);
+}
+
+function normalizeDeviceId(value) {
+  const deviceId = typeof value === 'string' ? value.trim() : '';
+  return deviceId.length > 0 && deviceId.length <= 128 ? deviceId : null;
+}
+
+async function getActiveChatDevice(env, userId, deviceId) {
+  return socialDatabase(env).prepare(
+    'SELECT device_id FROM chat_devices WHERE user_id = ?1 AND device_id = ?2 AND is_active = 1 LIMIT 1'
+  ).bind(userId, deviceId).first();
+}
+
+async function handleRegisterChatDevice(request, env) {
+  const user = await requireUser(request, env);
+  if (!user) return jsonResponse({ error: 'Not logged in' }, 401, request);
+  const body = await request.json().catch(() => null);
+  const deviceId = normalizeDeviceId(body?.deviceId);
+  if (!deviceId) return jsonResponse({ error: 'Valid deviceId is required' }, 400, request);
+  const now = new Date().toISOString();
+  await socialDatabase(env).prepare(
+    `INSERT INTO chat_devices (user_id, device_id, is_active, created_at, last_seen_at)
+     VALUES (?1, ?2, 1, ?3, ?3)
+     ON CONFLICT(user_id, device_id) DO UPDATE SET last_seen_at = excluded.last_seen_at
+     WHERE chat_devices.is_active = 1`
+  ).bind(user.id, deviceId, now).run();
+  const device = await socialDatabase(env).prepare(
+    'SELECT device_id, is_active FROM chat_devices WHERE user_id = ?1 AND device_id = ?2 LIMIT 1'
+  ).bind(user.id, deviceId).first();
+  if (!device?.is_active) return jsonResponse({ error: 'Device was revoked' }, 403, request);
+  return jsonResponse({ ok: true, deviceId }, 200, request);
+}
+
+async function handleListChatDevices(request, env) {
+  const user = await requireUser(request, env);
+  if (!user) return jsonResponse({ error: 'Not logged in' }, 401, request);
+  const devices = await socialDatabase(env).prepare(
+    'SELECT device_id, created_at, last_seen_at FROM chat_devices WHERE user_id = ?1 AND is_active = 1 ORDER BY last_seen_at DESC, device_id ASC'
+  ).bind(user.id).all();
+  return jsonResponse({ devices: devices.results || [] }, 200, request);
+}
+
+async function handleRevokeChatDevice(request, env) {
+  const user = await requireUser(request, env);
+  if (!user) return jsonResponse({ error: 'Not logged in' }, 401, request);
+  const body = await request.json().catch(() => null);
+  const deviceId = normalizeDeviceId(body?.deviceId);
+  if (!deviceId) return jsonResponse({ error: 'Valid deviceId is required' }, 400, request);
+  await socialDatabase(env).prepare(
+    'UPDATE chat_devices SET is_active = 0, revoked_at = ?3 WHERE user_id = ?1 AND device_id = ?2 AND is_active = 1'
+  ).bind(user.id, deviceId, new Date().toISOString()).run();
+  await socialDatabase(env).prepare(
+    `DELETE FROM pending_messages
+     WHERE receiver_id = ?1
+       AND EXISTS (SELECT 1 FROM chat_devices active WHERE active.user_id = pending_messages.receiver_id AND active.is_active = 1)
+       AND NOT EXISTS (
+       SELECT 1 FROM chat_devices d
+       WHERE d.user_id = pending_messages.receiver_id AND d.is_active = 1
+         AND NOT EXISTS (
+           SELECT 1 FROM chat_pending_message_acks a
+           WHERE a.pending_id = pending_messages.id
+             AND a.receiver_id = pending_messages.receiver_id AND a.device_id = d.device_id
+         )
+     )`
+  ).bind(user.id).run();
+  return jsonResponse({ ok: true }, 200, request);
 }
 
 async function handleRecallMessage(request, env, friendId, ctx) {
@@ -297,7 +401,7 @@ async function handleRecallMessage(request, env, friendId, ctx) {
   const createdAt = new Date().toISOString();
 
   // Insert a recall notification into pending_messages for the receiver to pick up
-  await env.DB.prepare(
+  await socialDatabase(env).prepare(
     'INSERT INTO pending_messages (sender_id, receiver_id, text, created_at, type) VALUES (?1, ?2, ?3, ?4, \'recall\')'
   )
     .bind(user.id, friendId, messageKey, createdAt)
@@ -322,12 +426,12 @@ async function handleRecallMessage(request, env, friendId, ctx) {
 
 export function matchChatDmRoute(pathname) {
   const match = pathname.match(/^\/api\/chat\/dm\/(\d+)\/(history|ws|send|event|recall)$/) ??
-    pathname.match(/^\/api\/chat\/dm\/(\d+)\/(sync-upload|sync-download)$/) ??
-    pathname.match(/^\/api\/chat\/dm\/(pending|ack)$/);
+    pathname.match(/^\/api\/chat\/dm\/(\d+)\/(sync-upload|sync-download|sync-download-v2|sync-ack)$/) ??
+    pathname.match(/^\/api\/chat\/dm\/(pending|ack|devices|device-register|device-revoke)$/);
   if (!match) return null;
 
   // Shared pending/ack routes (no friendId)
-  if (match[1] === 'pending' || match[1] === 'ack') {
+  if (['pending', 'ack', 'devices', 'device-register', 'device-revoke'].includes(match[1])) {
     return { action: match[1], friendId: null };
   }
 
@@ -337,6 +441,11 @@ export function matchChatDmRoute(pathname) {
 export async function handleDynamicChatRoutes(request, env, url, ctx) {
   const route = matchChatDmRoute(url.pathname);
   if (!route) return null;
+  if(splitMode(env) && route.action.startsWith('sync-')) {
+    const user=await requireUser(request,env);
+    if(!user) return jsonResponse({error:'Not logged in'},401,request);
+    if(!(await areFriends(user.id,route.friendId,env))) return jsonResponse({error:'Not friends'},403,request);
+  }
 
   switch (`${request.method} ${route.action}`) {
     case 'GET history':
@@ -353,10 +462,20 @@ export async function handleDynamicChatRoutes(request, env, url, ctx) {
       return handleGetPending(request, env);
     case 'POST ack':
       return handleAckPending(request, env);
+    case 'POST device-register':
+      return handleRegisterChatDevice(request, env);
+    case 'GET devices':
+      return handleListChatDevices(request, env);
+    case 'POST device-revoke':
+      return handleRevokeChatDevice(request, env);
     case 'POST sync-upload':
       return handleSyncUpload(request, env, route.friendId);
     case 'GET sync-download':
       return handleSyncDownload(request, env, route.friendId);
+    case 'GET sync-download-v2':
+      return handleSyncDownloadV2(request, env, route.friendId);
+    case 'POST sync-ack':
+      return handleSyncAcknowledge(request, env, route.friendId);
     default:
       return null;
   }

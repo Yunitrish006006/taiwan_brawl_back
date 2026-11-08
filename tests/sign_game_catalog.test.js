@@ -99,6 +99,12 @@ test('signer rejects invalid expiry, non-Ed25519 keys and invalid catalog data',
   });
   assert.throws(() => sign({ expiresInHours: 0 }), /expiry/);
   assert.throws(() => sign({ payload: { catalogVersion: 2, modules: [] } }), /Unsupported catalog shape/);
+  const undeclaredPlatforms = structuredClone(payload);
+  delete undeclaredPlatforms.modules[0].platforms;
+  assert.throws(
+    () => sign({ payload: undeclaredPlatforms }),
+    /Module must declare supported platforms/,
+  );
   const rsa = generateKeyPairSync('rsa', { modulusLength: 2048 });
   assert.throws(
     () => sign({ privateKeyPem: rsa.privateKey.export({ type: 'pkcs8', format: 'pem' }) }),

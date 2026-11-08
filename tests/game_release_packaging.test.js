@@ -9,7 +9,10 @@ import { fileURLToPath } from 'node:url';
 
 import { signGameCatalog } from '../scripts/sign-game-catalog.mjs';
 import { signGameResource } from '../scripts/sign-game-resource.mjs';
-import { buildGameReleaseAssets } from '../scripts/package-game-release.mjs';
+import {
+  buildGameReleaseAssets,
+  buildGameReleaseAssetsBatch,
+} from '../scripts/package-game-release.mjs';
 import {
   exactGameResourcesApiRouteHandler,
   handleGameResourceMediaRequest,
@@ -87,6 +90,7 @@ async function releaseFixture({
   return {
     payloadBytes,
     resourceMetadata,
+    resourcePrivateKeyPem: resourceKeys.privateKey.export({ type: 'pkcs8', format: 'pem' }),
     catalogEnvelope,
     resourcePublicKeyPem: resourceKeys.publicKey.export({ type: 'spki', format: 'pem' }),
     catalogPublicKeyPem: catalogKeys.publicKey.export({ type: 'spki', format: 'pem' }),
@@ -274,6 +278,16 @@ test('release packager fails closed on byte or signed catalog drift', async () =
     }),
     /Catalog signature does not verify/,
   );
+  assert.throws(
+    () => buildGameReleaseAssets({
+      payload: fixture.payloadBytes,
+      resource: { ...fixture.resourceMetadata, payloadSchemaVersion: undefined },
+      catalogEnvelope: fixture.catalogEnvelope,
+      resourcePublicKeyPem: fixture.resourcePublicKeyPem,
+      catalogPublicKeyPem: fixture.catalogPublicKeyPem,
+    }),
+    /inconsistent API\/KV locations/,
+  );
 });
 
 test('release packaging CLI creates a new local artifact without overwriting existing output', async () => {
@@ -310,6 +324,96 @@ test('release packaging CLI creates a new local artifact without overwriting exi
     const secondRun = spawnSync(process.execPath, args, { encoding: 'utf8' });
     assert.notEqual(secondRun.status, 0);
     assert.deepEqual(JSON.parse(await readFile(outputPath, 'utf8')), entries);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('batch release packaging binds multiple resources to one signed catalog', async () => {
+  const fixture = await releaseFixture();
+  const artBytes = Buffer.from('optional street scrap art bytes');
+  const artMetadata = signGameResource({
+    moduleId: 'game.archery',
+    resourceId: 'game.archery.art-sample',
+    version: '1.0.0',
+    payload: artBytes,
+    privateKeyPem: fixture.resourcePrivateKeyPem,
+    signingKeyId: 'archery-resource-1',
+    contentType: 'image/png',
+    baseUrl: 'https://assets.example.test',
+    payloadSchemaVersion: 1,
+  });
+  const catalogPayload = structuredClone(fixture.catalogEnvelope.payload);
+  const first = catalogPayload.modules[0].resources[0];
+  catalogPayload.modules[0].resources.push({
+    ...first,
+    resourceId: artMetadata.resourceId,
+    version: artMetadata.version,
+    kind: 'presentation',
+    sha256: artMetadata.sha256,
+    affectsGameplay: false,
+    payloadSchemaVersion: artMetadata.payloadSchemaVersion,
+    downloadUrl: artMetadata.downloadUrl,
+    byteLength: artMetadata.byteLength,
+    signature: artMetadata.signature,
+    signingKeyId: artMetadata.signingKeyId,
+  });
+  const catalogEnvelope = signGameCatalog({
+    payload: catalogPayload,
+    publisher: fixture.catalogEnvelope.publisher,
+    signingKeyId: fixture.catalogEnvelope.signingKeyId,
+    privateKeyPem: fixture.catalogPrivateKeyPem,
+  });
+  const resources = [
+    { payload: fixture.payloadBytes, resource: fixture.resourceMetadata },
+    { payload: artBytes, resource: artMetadata },
+  ];
+  const entries = buildGameReleaseAssetsBatch({
+    resources,
+    catalogEnvelope,
+    resourcePublicKeyPem: fixture.resourcePublicKeyPem,
+    catalogPublicKeyPem: fixture.catalogPublicKeyPem,
+  });
+  assert.equal(entries.length, 5);
+  assert.equal(new Set(entries.map((entry) => entry.key)).size, 5);
+  assert.equal(entries.filter((entry) => entry.key === 'game-resource-catalog:v1').length, 1);
+  assert.deepEqual(
+    entries.filter((entry) => entry.base64).map((entry) => Buffer.from(entry.value, 'base64')),
+    [fixture.payloadBytes, artBytes],
+  );
+
+  const directory = await mkdtemp(join(tmpdir(), 'game-release-batch-'));
+  try {
+    const catalogPath = join(directory, 'catalog.json');
+    const resourcePublicKeyPath = join(directory, 'resource-public.pem');
+    const catalogPublicKeyPath = join(directory, 'catalog-public.pem');
+    const manifestPath = join(directory, 'resources.json');
+    const outputPath = join(directory, 'release.json');
+    await Promise.all([
+      writeFile(join(directory, 'rules.bin'), fixture.payloadBytes),
+      writeFile(join(directory, 'rules.json'), JSON.stringify(fixture.resourceMetadata)),
+      writeFile(join(directory, 'art.png'), artBytes),
+      writeFile(join(directory, 'art.json'), JSON.stringify(artMetadata)),
+      writeFile(manifestPath, JSON.stringify([
+        { file: 'rules.bin', metadata: 'rules.json' },
+        { file: 'art.png', metadata: 'art.json' },
+      ])),
+      writeFile(catalogPath, JSON.stringify(catalogEnvelope)),
+      writeFile(resourcePublicKeyPath, fixture.resourcePublicKeyPem),
+      writeFile(catalogPublicKeyPath, fixture.catalogPublicKeyPem),
+    ]);
+    const scriptPath = fileURLToPath(new URL('../scripts/package-game-release.mjs', import.meta.url));
+    const result = spawnSync(process.execPath, [
+      scriptPath,
+      '--resources-manifest', manifestPath,
+      '--catalog-envelope', catalogPath,
+      '--resource-public-key', resourcePublicKeyPath,
+      '--catalog-public-key', catalogPublicKeyPath,
+      '--output', outputPath,
+    ], { encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    const cliEntries = JSON.parse(await readFile(outputPath, 'utf8'));
+    assert.deepEqual(cliEntries, entries);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

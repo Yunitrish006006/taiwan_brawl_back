@@ -1,3 +1,7 @@
+import { socialDatabase } from '../core/databases.js';
+import { splitMode, requireActiveAccounts } from '../core/databases.js';
+import { splitFriendsOverview } from './split_friends_overview.js';
+import { removeCoupleFriendStatements } from './couple_transactions.js';
 function serializeUser(row) {
   return {
     userId: Number(row.user_id ?? row.id),
@@ -35,7 +39,7 @@ function friendPair(userIdA, userIdB) {
 
 function normalizeUserId(rawUserId, fieldName = 'userId') {
   const userId = Number(rawUserId);
-  if (!Number.isInteger(userId) || userId <= 0) {
+  if (!Number.isSafeInteger(userId) || userId <= 0) {
     throw new Error(`${fieldName} is required`);
   }
   return userId;
@@ -55,12 +59,13 @@ async function requireTargetUser(currentUserId, rawTargetUserId, env, selfAction
   if (!targetUser) {
     throw new Error('Player not found');
   }
+  await requireActiveAccounts(env,[currentUserId,targetUserId]);
 
   return targetUserId;
 }
 
 async function pendingRequestBetween(userIdA, userIdB, env) {
-  return env.DB.prepare(
+  return socialDatabase(env).prepare(
     `SELECT id, sender_user_id, receiver_user_id
      FROM friend_requests
      WHERE status = 'pending'
@@ -77,7 +82,7 @@ async function pendingRequestBetween(userIdA, userIdB, env) {
 }
 
 async function isBlocked(blockerUserId, blockedUserId, env) {
-  const row = await env.DB.prepare(
+  const row = await socialDatabase(env).prepare(
     `SELECT 1
      FROM user_blocks
      WHERE blocker_user_id = ? AND blocked_user_id = ?
@@ -90,7 +95,7 @@ async function isBlocked(blockerUserId, blockedUserId, env) {
 
 async function friendshipExists(userIdA, userIdB, env) {
   const [userOneId, userTwoId] = friendPair(userIdA, userIdB);
-  const row = await env.DB.prepare(
+  const row = await socialDatabase(env).prepare(
     `SELECT 1
      FROM friendships
      WHERE user_one_id = ? AND user_two_id = ?
@@ -127,7 +132,7 @@ async function resolveRelationshipStatus(currentUserId, targetUserId, env) {
 
 async function createFriendship(userIdA, userIdB, env) {
   const [userOneId, userTwoId] = friendPair(userIdA, userIdB);
-  await env.DB.prepare(
+  await socialDatabase(env).prepare(
     `INSERT OR IGNORE INTO friendships (user_one_id, user_two_id)
      VALUES (?, ?)`
   )
@@ -139,7 +144,7 @@ async function deleteFriendshipBetween(userIdA, userIdB, env) {
   const [userOneId, userTwoId] = friendPair(userIdA, userIdB);
 
   // Check if friendship exists before deleting
-  const existing = await env.DB.prepare(
+  const existing = await socialDatabase(env).prepare(
     `SELECT 1 FROM friendships WHERE user_one_id = ? AND user_two_id = ? LIMIT 1`
   )
     .bind(userOneId, userTwoId)
@@ -149,7 +154,7 @@ async function deleteFriendshipBetween(userIdA, userIdB, env) {
     return; // Already deleted, no-op
   }
 
-  await env.DB.prepare(
+  await socialDatabase(env).prepare(
     `DELETE FROM friendships
      WHERE user_one_id = ? AND user_two_id = ?`
   )
@@ -172,7 +177,7 @@ function userSelectFields(alias = 'u') {
 }
 
 async function loadPendingFriendRequest(requestId, env) {
-  return env.DB.prepare(
+  return socialDatabase(env).prepare(
     `SELECT id, sender_user_id, receiver_user_id, status
      FROM friend_requests
      WHERE id = ?`
@@ -182,8 +187,8 @@ async function loadPendingFriendRequest(requestId, env) {
 }
 
 async function loadPendingRoomInvite(inviteId, env) {
-  return env.DB.prepare(
-    `SELECT id, game_id, room_code, invitee_user_id, status
+  return socialDatabase(env).prepare(
+    `SELECT id, game_id, room_code, inviter_user_id, invitee_user_id, status
      FROM room_invites
      WHERE id = ?`
   )
@@ -192,7 +197,7 @@ async function loadPendingRoomInvite(inviteId, env) {
 }
 
 async function updateFriendRequestStatus(requestId, status, env) {
-  await env.DB.prepare(
+  await socialDatabase(env).prepare(
     `UPDATE friend_requests
      SET status = ?, responded_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
      WHERE id = ?`
@@ -202,7 +207,7 @@ async function updateFriendRequestStatus(requestId, status, env) {
 }
 
 async function updateRoomInviteStatus(inviteId, status, env) {
-  await env.DB.prepare(
+  await socialDatabase(env).prepare(
     `UPDATE room_invites
      SET status = ?, responded_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
      WHERE id = ?`
@@ -212,7 +217,7 @@ async function updateRoomInviteStatus(inviteId, status, env) {
 }
 
 async function cancelPendingFriendRequestsBetween(userIdA, userIdB, env) {
-  await env.DB.prepare(
+  await socialDatabase(env).prepare(
     `UPDATE friend_requests
      SET status = 'cancelled', responded_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
      WHERE status = 'pending'
@@ -227,7 +232,7 @@ async function cancelPendingFriendRequestsBetween(userIdA, userIdB, env) {
 }
 
 async function cancelPendingRoomInvitesBetween(userIdA, userIdB, env) {
-  await env.DB.prepare(
+  await socialDatabase(env).prepare(
     `UPDATE room_invites
      SET status = 'cancelled', responded_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
      WHERE status = 'pending'
@@ -247,8 +252,16 @@ function requirePendingRecord(record, missingMessage) {
   }
 }
 
+function socialPairGuard(db,a,b,id,extra='1') {
+  return db.prepare(`INSERT INTO couple_write_guards VALUES(?,CASE WHEN (${extra})
+    AND NOT EXISTS(SELECT 1 FROM user_blocks WHERE (blocker_user_id=? AND blocked_user_id=?) OR (blocker_user_id=? AND blocked_user_id=?))
+    AND NOT EXISTS(SELECT 1 FROM account_tombstones WHERE user_id IN (?,?)) THEN 1 ELSE 0 END)`)
+    .bind(id,a,b,b,a,a,b);
+}
+
 export async function getFriendsOverview(userId, env) {
-  const friendsRows = await env.DB.prepare(
+  if(splitMode(env)) return splitFriendsOverview(userId,env);
+  const friendsRows = await socialDatabase(env).prepare(
     `SELECT ${userSelectFields('u')}
      FROM friendships f
      JOIN users u
@@ -262,7 +275,7 @@ export async function getFriendsOverview(userId, env) {
     .bind(userId, userId, userId)
     .all();
 
-  const incomingRows = await env.DB.prepare(
+  const incomingRows = await socialDatabase(env).prepare(
     `SELECT fr.id AS request_id, fr.created_at, ${userSelectFields('u')}
      FROM friend_requests fr
      JOIN users u ON u.id = fr.sender_user_id
@@ -272,7 +285,7 @@ export async function getFriendsOverview(userId, env) {
     .bind(userId)
     .all();
 
-  const outgoingRows = await env.DB.prepare(
+  const outgoingRows = await socialDatabase(env).prepare(
     `SELECT fr.id AS request_id, fr.created_at, ${userSelectFields('u')}
      FROM friend_requests fr
      JOIN users u ON u.id = fr.receiver_user_id
@@ -282,7 +295,7 @@ export async function getFriendsOverview(userId, env) {
     .bind(userId)
     .all();
 
-  const blockedRows = await env.DB.prepare(
+  const blockedRows = await socialDatabase(env).prepare(
     `SELECT ${userSelectFields('u')}
      FROM user_blocks ub
      JOIN users u ON u.id = ub.blocked_user_id
@@ -292,7 +305,7 @@ export async function getFriendsOverview(userId, env) {
     .bind(userId)
     .all();
 
-  const roomInviteRows = await env.DB.prepare(
+  const roomInviteRows = await socialDatabase(env).prepare(
     `SELECT ri.id AS invite_id, ri.game_id, ri.room_code, ri.created_at, ${userSelectFields('u')}
      FROM room_invites ri
      JOIN users u ON u.id = ri.inviter_user_id
@@ -321,6 +334,7 @@ export async function searchUsersByName(currentUserId, rawQuery, env) {
     `SELECT ${userSelectFields('u')}
      FROM users u
      WHERE u.name IS NOT NULL
+       ${splitMode(env) ? "AND u.lifecycle_status='active'" : ''}
        AND u.name != ''
        AND lower(u.name) LIKE lower(?)
      ORDER BY
@@ -377,7 +391,19 @@ export async function sendFriendRequest(currentUserId, rawTargetUserId, env) {
     return { relationshipStatus: 'friend' };
   }
 
-  await env.DB.prepare(
+  if(splitMode(env)) {
+    const db=socialDatabase(env),guard=crypto.randomUUID(),[a,b]=friendPair(currentUserId,targetUserId);
+    await db.batch([
+      socialPairGuard(db,a,b,guard,`NOT EXISTS(SELECT 1 FROM friendships WHERE user_one_id=${a} AND user_two_id=${b})
+        AND NOT EXISTS(SELECT 1 FROM friend_requests WHERE status='pending' AND
+        ((sender_user_id=${a} AND receiver_user_id=${b}) OR (sender_user_id=${b} AND receiver_user_id=${a})))`),
+      db.prepare("INSERT INTO friend_requests(sender_user_id,receiver_user_id,status) VALUES(?,?,'pending')").bind(currentUserId,targetUserId),
+      db.prepare('DELETE FROM couple_write_guards WHERE operation_id=?').bind(guard)
+    ]);
+    return {relationshipStatus:'outgoing_pending'};
+  }
+
+  await socialDatabase(env).prepare(
     `INSERT INTO friend_requests (
       sender_user_id,
       receiver_user_id,
@@ -401,6 +427,19 @@ export async function respondToFriendRequest(
   requirePendingRecord(request, 'Friend request not found');
   if (Number(request.receiver_user_id) !== Number(currentUserId)) {
     throw new Error('You cannot update this friend request');
+  }
+  if(splitMode(env) && action==='accept') {
+    await requireActiveAccounts(env,[request.sender_user_id,request.receiver_user_id]);
+    const db=socialDatabase(env), [a,b]=friendPair(request.sender_user_id,request.receiver_user_id), guard=crypto.randomUUID();
+    await db.batch([
+      db.prepare(`INSERT INTO couple_write_guards VALUES(?,CASE WHEN EXISTS(SELECT 1 FROM friend_requests WHERE id=? AND status='pending')
+        AND NOT EXISTS(SELECT 1 FROM user_blocks WHERE (blocker_user_id=? AND blocked_user_id=?) OR (blocker_user_id=? AND blocked_user_id=?))
+        AND NOT EXISTS(SELECT 1 FROM account_tombstones WHERE user_id IN (?,?)) THEN 1 ELSE 0 END)`).bind(guard,requestId,a,b,b,a,a,b),
+      db.prepare("UPDATE friend_requests SET status='accepted',responded_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(requestId),
+      db.prepare('INSERT OR IGNORE INTO friendships(user_one_id,user_two_id) VALUES(?,?)').bind(a,b),
+      db.prepare('DELETE FROM couple_write_guards WHERE operation_id=?').bind(guard)
+    ]);
+    return {ok:true,status:'accepted'};
   }
 
   const status = action === 'accept' ? 'accepted' : 'rejected';
@@ -427,6 +466,10 @@ export async function cancelFriendRequest(currentUserId, requestId, env) {
 
 export async function removeFriend(currentUserId, rawTargetUserId, env) {
   const targetUserId = normalizeUserId(rawTargetUserId, 'targetUserId');
+  if(splitMode(env)) {
+    await socialDatabase(env).batch(removeCoupleFriendStatements(socialDatabase(env),{userId:currentUserId,targetId:targetUserId,now:new Date().toISOString()}));
+    return {ok:true};
+  }
   await deleteFriendshipBetween(currentUserId, targetUserId, env);
   return { ok: true };
 }
@@ -439,7 +482,19 @@ export async function blockUser(currentUserId, rawTargetUserId, env) {
     'block yourself'
   );
 
-  await env.DB.prepare(
+  if(splitMode(env)) {
+    const db=socialDatabase(env),now=new Date().toISOString();
+    await db.batch([
+      ...removeCoupleFriendStatements(db,{userId:currentUserId,targetId:targetUserId,now,block:true}),
+      db.prepare(`UPDATE friend_requests SET status='cancelled',responded_at=?,updated_at=? WHERE status='pending'
+        AND ((sender_user_id=? AND receiver_user_id=?) OR (sender_user_id=? AND receiver_user_id=?))`).bind(now,now,currentUserId,targetUserId,targetUserId,currentUserId),
+      db.prepare(`UPDATE room_invites SET status='cancelled',responded_at=?,updated_at=? WHERE status='pending'
+        AND ((inviter_user_id=? AND invitee_user_id=?) OR (inviter_user_id=? AND invitee_user_id=?))`).bind(now,now,currentUserId,targetUserId,targetUserId,currentUserId)
+    ]);
+    return {ok:true};
+  }
+
+  await socialDatabase(env).prepare(
     `INSERT OR IGNORE INTO user_blocks (blocker_user_id, blocked_user_id)
      VALUES (?, ?)`
   )
@@ -457,7 +512,7 @@ export async function unblockUser(currentUserId, rawTargetUserId, env) {
   const targetUserId = normalizeUserId(rawTargetUserId, 'targetUserId');
 
   // Check if block exists before deleting
-  const existing = await env.DB.prepare(
+  const existing = await socialDatabase(env).prepare(
     `SELECT 1 FROM user_blocks WHERE blocker_user_id = ? AND blocked_user_id = ? LIMIT 1`
   )
     .bind(currentUserId, targetUserId)
@@ -467,7 +522,7 @@ export async function unblockUser(currentUserId, rawTargetUserId, env) {
     return { ok: true }; // Already unblocked, no-op
   }
 
-  await env.DB.prepare(
+  await socialDatabase(env).prepare(
     `DELETE FROM user_blocks
      WHERE blocker_user_id = ? AND blocked_user_id = ?`
   )
@@ -502,7 +557,18 @@ export async function sendRoomInvite(
     throw new Error('This player is unavailable');
   }
 
-  await env.DB.prepare(
+  if(splitMode(env)) {
+    const db=socialDatabase(env),guard=crypto.randomUUID(),[a,b]=friendPair(currentUserId,inviteeUserId);
+    await db.batch([
+      socialPairGuard(db,a,b,guard,`EXISTS(SELECT 1 FROM friendships WHERE user_one_id=${a} AND user_two_id=${b})`),
+      db.prepare("UPDATE room_invites SET status='cancelled',responded_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE inviter_user_id=? AND invitee_user_id=? AND status='pending'").bind(currentUserId,inviteeUserId),
+      db.prepare("INSERT INTO room_invites(game_id,room_code,inviter_user_id,invitee_user_id,status) VALUES(?,?,?,?,'pending')").bind(gameId,roomCode,currentUserId,inviteeUserId),
+      db.prepare('DELETE FROM couple_write_guards WHERE operation_id=?').bind(guard)
+    ]);
+    return {ok:true};
+  }
+
+  await socialDatabase(env).prepare(
     `UPDATE room_invites
      SET status = 'cancelled', responded_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
      WHERE inviter_user_id = ? AND invitee_user_id = ? AND status = 'pending'`
@@ -510,7 +576,7 @@ export async function sendRoomInvite(
     .bind(currentUserId, inviteeUserId)
     .run();
 
-  await env.DB.prepare(
+  await socialDatabase(env).prepare(
     `INSERT INTO room_invites (
       game_id,
       room_code,
@@ -534,7 +600,16 @@ export async function respondToRoomInvite(currentUserId, inviteId, action, env) 
   }
 
   const status = action === 'accept' ? 'accepted' : 'rejected';
-  await updateRoomInviteStatus(inviteId, status, env);
+  if(splitMode(env)) {
+    await requireActiveAccounts(env,[currentUserId,invite.inviter_user_id]);
+    const db=socialDatabase(env),guard=crypto.randomUUID(),[a,b]=friendPair(currentUserId,invite.inviter_user_id);
+    await db.batch([
+      socialPairGuard(db,a,b,guard,`EXISTS(SELECT 1 FROM friendships WHERE user_one_id=${a} AND user_two_id=${b})
+        AND EXISTS(SELECT 1 FROM room_invites WHERE id=${Number(inviteId)} AND status='pending')`),
+      db.prepare('UPDATE room_invites SET status=?,responded_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=?').bind(status,inviteId),
+      db.prepare('DELETE FROM couple_write_guards WHERE operation_id=?').bind(guard)
+    ]);
+  } else await updateRoomInviteStatus(inviteId, status, env);
 
   return {
     ok: true,

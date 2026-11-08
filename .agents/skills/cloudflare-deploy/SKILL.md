@@ -228,9 +228,8 @@ Flutter bin directory detection order:
 
 1. `FLUTTER_BIN_DIR`
 2. `dirname $(command -v flutter)`
-3. `/Volumes/DataExtended/flutter/bin`
-4. `~/flutter/bin`
-5. `~/development/flutter/bin`
+3. `~/flutter/bin`
+4. `~/development/flutter/bin`
 
 `D1_DATABASE_NAME`, `KV_NAMESPACE_ID`, and default deploy base URL should be read at runtime from `wrangler.jsonc` via inline `node -e` parsing logic.
 

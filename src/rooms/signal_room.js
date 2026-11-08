@@ -1,8 +1,13 @@
+import { splitMode, socialPairAllowed } from '../core/databases.js';
 // SignalRoom Durable Object — forwards WebRTC signaling messages between peers.
 // No D1 persistence needed; signal state is transient.
 // DO naming: signal:<low_id>:<high_id>
 
 const LOG_CONTEXT = '[SignalRoom]';
+const MAX_SIGNAL_BYTES = 128 * 1024;
+const MAX_SDP_BYTES = 64 * 1024;
+const MAX_CANDIDATE_BYTES = 8 * 1024;
+const encoder = new TextEncoder();
 
 function log(level, message, data = {}) {
   const timestamp = new Date().toISOString();
@@ -27,8 +32,6 @@ export class SignalRoom {
   constructor(ctx, env) {
     this.ctx = ctx;
     this.env = env;
-    /** @type {Map<number, WebSocket>} userId → socket */
-    this.sockets = new Map();
     /** @type {number} Counter for forwarded messages */
     this._messageCount = 0;
     /** @type {number} Counter for failed forwards */
@@ -36,7 +39,16 @@ export class SignalRoom {
   }
 
   get connectionCount() {
-    return this.sockets.size;
+    return this.ctx.getWebSockets().filter((socket) => socket.readyState === 1).length;
+  }
+
+  _userIdFor(socket) {
+    try {
+      const userId = Number(socket.deserializeAttachment()?.userId);
+      return Number.isInteger(userId) && userId > 0 ? userId : null;
+    } catch {
+      return null;
+    }
   }
 
   async fetch(request) {
@@ -58,12 +70,14 @@ export class SignalRoom {
 
     const { 0: client, 1: server } = new WebSocketPair();
     this.ctx.acceptWebSocket(server);
+    server.serializeAttachment({ userId });
 
-    // Close existing socket for this user if any
-    const existing = this.sockets.get(userId);
-    if (existing) {
+    // Socket attachments and getWebSockets survive Durable Object hibernation.
+    // Rebuild the user's active connection set from the runtime on every request.
+    for (const existing of this.ctx.getWebSockets()) {
+      if (existing === server || this._userIdFor(existing) !== userId) continue;
       try {
-        existing.close(1000, 'replaced');
+        if (existing.readyState < 2) existing.close(1000, 'replaced');
         log('info', 'Closed existing socket for user', { userId });
       } catch (err) {
         log('warn', 'Failed to close existing socket', {
@@ -73,42 +87,66 @@ export class SignalRoom {
       }
     }
 
-    this.sockets.set(userId, server);
     log('info', 'Socket connected', {
       userId,
       connectionCount: this.connectionCount
     });
 
-    server.addEventListener('message', (event) => {
-      this._onMessage(userId, event.data);
-    });
-
-    server.addEventListener('close', (event) => {
-      if (this.sockets.get(userId) === server) {
-        this.sockets.delete(userId);
-        log('info', 'Socket disconnected', {
-          userId,
-          code: event.code,
-          reason: event.reason,
-          connectionCount: this.connectionCount
-        });
-      }
-    });
-
-    server.addEventListener('error', (event) => {
-      log('error', 'WebSocket error on server side', {
-        userId,
-        error: String(event?.message || 'unknown')
-      });
-    });
-
     return new Response(null, { status: 101, webSocket: client });
   }
 
+  // Cloudflare's hibernation WebSocket API dispatches messages through these
+  // Durable Object handlers; standard addEventListener callbacks do not run.
+  webSocketMessage(socket, message) {
+    const userId = this._userIdFor(socket);
+    if (userId === null) {
+      log('warn', 'Rejected signal from socket with invalid attachment');
+      try { socket.close(1008, 'invalid connection state'); } catch {}
+      return;
+    }
+    if(splitMode(this.env)) return this._authorizedMessage(userId,message,socket);
+    this._onMessage(userId, message);
+  }
+
+  async _authorizedMessage(userId,message,socket) {
+    try {
+      const payload=JSON.parse(String(message));
+      const signal=normalizeSignalPayload(payload,userId);
+      if(!signal || !(await socialPairAllowed(this.env,userId,signal.targetUserId))) throw new Error('Unavailable');
+      this._onMessage(userId,message);
+    } catch { try {socket.close(1008,'Conversation unavailable');} catch {} }
+  }
+
+  webSocketClose(socket, code, reason, wasClean) {
+    log('info', 'Socket disconnected', {
+      userId: this._userIdFor(socket),
+      code,
+      reason,
+      wasClean,
+      connectionCount: this.connectionCount
+    });
+    // The Worker compatibility date predates automatic close-frame replies.
+    try { socket.close(code, reason); } catch {}
+  }
+
+  webSocketError(socket, error) {
+    log('error', 'WebSocket error on server side', {
+      userId: this._userIdFor(socket),
+      error: String(error?.message || 'unknown')
+    });
+  }
+
   _onMessage(fromUserId, raw) {
+    const rawText = String(raw);
+    if (rawText.length > MAX_SIGNAL_BYTES ||
+        encoder.encode(rawText).byteLength > MAX_SIGNAL_BYTES) {
+      this._rejectSignal(fromUserId, 'Signal payload exceeds size limit');
+      return;
+    }
+
     let payload;
     try {
-      payload = JSON.parse(String(raw));
+      payload = JSON.parse(rawText);
     } catch (err) {
       this._failedCount += 1;
       log('warn', 'Failed to parse incoming message', {
@@ -120,64 +158,88 @@ export class SignalRoom {
       return;
     }
 
-    if (!payload || typeof payload !== 'object') {
-      log('warn', 'Invalid payload type', {
-        fromUserId,
-        type: typeof payload
-      });
+    const signal = normalizeSignalPayload(payload, fromUserId);
+    if (!signal) {
+      this._rejectSignal(fromUserId, 'Invalid negotiation signal payload');
       return;
     }
 
-    const { type, targetUserId } = payload;
-    if (!targetUserId) {
-      log('warn', 'Message missing targetUserId', {
-        fromUserId,
-        type,
-        hasType: Boolean(type)
-      });
-      return;
-    }
-
-    const targetUserIdNum = Number(targetUserId);
-    if (!Number.isInteger(targetUserIdNum) || targetUserIdNum <= 0) {
-      log('warn', 'Invalid targetUserId format', {
-        fromUserId,
-        targetUserId,
-        targetUserIdType: typeof targetUserId
-      });
-      return;
-    }
-
-    const target = this.sockets.get(targetUserIdNum);
+    const target = this.ctx.getWebSockets().find((socket) =>
+      socket.readyState === 1 && this._userIdFor(socket) === signal.targetUserId
+    );
     if (!target) {
       log('info', 'Target peer not connected, skipping relay', {
         fromUserId,
-        targetUserId: targetUserIdNum,
-        connectedUsers: Array.from(this.sockets.keys())
+        targetUserId: signal.targetUserId,
+        connectedUsers: this.ctx.getWebSockets()
+          .filter((socket) => socket.readyState === 1)
+          .map((socket) => this._userIdFor(socket))
+          .filter((id) => id !== null)
       });
       return; // peer not connected yet; client must retry
     }
 
-    // Relay: tag the original sender and forward as-is
-    const relay = { ...payload, fromUserId };
+    // Relay only normalized SDP/ICE fields; never carry application messages.
+    const relay = { ...signal, fromUserId };
     try {
       const relayString = JSON.stringify(relay);
       target.send(relayString);
       this._messageCount += 1;
       log('info', 'Message forwarded', {
         fromUserId,
-        targetUserId: targetUserIdNum,
-        type: type || 'unknown',
+        targetUserId: signal.targetUserId,
+        type: signal.type,
         totalForwarded: this._messageCount
       });
     } catch (err) {
       this._failedCount += 1;
       log('error', 'Failed to send relay message', {
         fromUserId,
-        targetUserId: targetUserIdNum,
+        targetUserId: signal.targetUserId,
         error: err?.message,
         totalFailedCount: this._failedCount
       });
     }
   }
+
+  _rejectSignal(fromUserId, reason) {
+    this._failedCount += 1;
+    log('warn', reason, { fromUserId, totalFailedCount: this._failedCount });
+  }
+}
+
+function normalizeSignalPayload(payload, fromUserId) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return null;
+  const targetUserId = Number(payload.targetUserId);
+  if (!Number.isSafeInteger(targetUserId) || targetUserId <= 0 || targetUserId === fromUserId) return null;
+
+  if (payload.type === 'offer' || payload.type === 'answer') {
+    if (!hasOnlyKeys(payload, ['type', 'targetUserId', 'sdp'])) return null;
+    if (typeof payload.sdp !== 'string' || payload.sdp.trim().length === 0 ||
+        encoder.encode(payload.sdp).byteLength > MAX_SDP_BYTES) return null;
+    return { type: payload.type, targetUserId, sdp: payload.sdp };
+  }
+
+  if (payload.type === 'ice_candidate') {
+    if (!hasOnlyKeys(payload, ['type', 'targetUserId', 'candidate'])) return null;
+    const candidate = payload.candidate;
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate) ||
+        !hasOnlyKeys(candidate, ['candidate', 'sdpMid', 'sdpMLineIndex', 'usernameFragment'])) return null;
+    if (typeof candidate.candidate !== 'string' ||
+        encoder.encode(candidate.candidate).byteLength > MAX_CANDIDATE_BYTES) return null;
+    if (candidate.sdpMid !== undefined && candidate.sdpMid !== null &&
+        (typeof candidate.sdpMid !== 'string' || candidate.sdpMid.length > 256)) return null;
+    if (candidate.sdpMLineIndex !== undefined && candidate.sdpMLineIndex !== null &&
+        (!Number.isSafeInteger(candidate.sdpMLineIndex) || candidate.sdpMLineIndex < 0 ||
+            candidate.sdpMLineIndex > 1024)) return null;
+    if (candidate.usernameFragment !== undefined && candidate.usernameFragment !== null &&
+        (typeof candidate.usernameFragment !== 'string' || candidate.usernameFragment.length > 256)) return null;
+    return { type: payload.type, targetUserId, candidate };
+  }
+
+  return null;
+}
+
+function hasOnlyKeys(value, allowedKeys) {
+  return Object.keys(value).every((key) => allowedKeys.includes(key));
 }

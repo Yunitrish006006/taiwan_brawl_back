@@ -36,6 +36,7 @@ async function signedFixture({ payload = Buffer.from(JSON.stringify(rules)), tru
     signingKeyId: 'test-key',
     contentType: 'application/json',
     baseUrl: 'https://assets.example.test',
+    payloadSchemaVersion: 1,
   });
   const resourceManifest = {
     ...resource,

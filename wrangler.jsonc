@@ -6,6 +6,9 @@
 	"compatibility_flags": [
 		"nodejs_compat"
 	],
+	"vars": {
+		"GAME_CATALOG_TRUST_KEYS": "{\"catalog-prod-2026-10\":{\"publisher\":\"taiwan-brawl\",\"publicKey\":\"4WyFxNR343aaKu1ccZNpBGg4OQ2D3qH7ekYMAJzFQ1c\"}}"
+	},
 	"observability": {
 		"enabled": true
 	},

@@ -122,9 +122,8 @@ CC_SCOPE_RULES=(
 #### Flutter SDK auto-detection order
 1. `$FLUTTER_BIN_DIR`
 2. Directory of `command -v flutter`
-3. `/Volumes/DataExtended/flutter/bin`
-4. `~/flutter/bin`
-5. `~/development/flutter/bin`
+3. `~/flutter/bin`
+4. `~/development/flutter/bin`
 
 #### `VERSION_BUMP=auto` logic
 1. Find the epoch of the last `git commit` that touched `pubspec.yaml` as **anchor**.

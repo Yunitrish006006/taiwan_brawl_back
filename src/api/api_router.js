@@ -28,6 +28,7 @@ import {
 } from '../features/users.js';
 import { corsHeaders, jsonResponse } from '../core/utils.js';
 import { checkRateLimit, rateLimitHeaders } from '../core/rate_limit.js';
+import { handleCouplesApi } from './couples_api.js';
 
 async function handleHealth(request) {
   return jsonResponse({ ok: true, message: 'taiwan brawl api alive' }, 200, request);
@@ -72,7 +73,7 @@ function exactApiRouteHandler(request, env, url) {
 }
 
 async function applyRateLimitResponse(rateResult, response, request) {
-  if (!response || rateResult.allowed) {
+  if (rateResult.allowed) {
     return response;
   }
 
@@ -92,6 +93,9 @@ async function applyRateLimitResponse(rateResult, response, request) {
 }
 
 export async function handleApiRequest(request, env, url, ctx) {
+  if (url.pathname === '/api/couples' || url.pathname.startsWith('/api/couples/')) {
+    return handleCouplesApi(request, env, url);
+  }
   // Check rate limit before processing
   const rateResult = await checkRateLimit(request, env, url);
   if (!rateResult.allowed) {

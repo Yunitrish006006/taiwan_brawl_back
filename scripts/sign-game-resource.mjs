@@ -26,8 +26,7 @@ export function signGameResource({
     throw new TypeError('Resource ID must be owned by a valid game module.');
   }
   if (!SEMVER.test(version)) throw new TypeError('Resource version must be semantic versioning.');
-  if (payloadSchemaVersion != null &&
-      (!Number.isSafeInteger(payloadSchemaVersion) || payloadSchemaVersion < 1)) {
+  if (!Number.isSafeInteger(payloadSchemaVersion) || payloadSchemaVersion < 1) {
     throw new TypeError('Payload schema version must be a positive integer.');
   }
   if (typeof signingKeyId !== 'string' || !signingKeyId.trim()) {
@@ -64,7 +63,7 @@ export function signGameResource({
     moduleId,
     resourceId,
     version,
-    ...(payloadSchemaVersion == null ? {} : { payloadSchemaVersion }),
+    payloadSchemaVersion,
     sha256,
     byteLength: payload.byteLength,
     signature,
@@ -93,7 +92,7 @@ function parseArgs(args) {
     }
     values.set(name, value);
   }
-  for (const name of names.filter((item) => item !== '--payload-schema-version')) {
+  for (const name of names) {
     if (!values.has(name)) throw new Error(`Required option: ${name}`);
   }
   return values;
@@ -112,9 +111,7 @@ async function main() {
     signingKeyId: args.get('--key-id'),
     contentType: args.get('--content-type'),
     baseUrl: args.get('--base-url'),
-    payloadSchemaVersion: args.has('--payload-schema-version')
-      ? Number(args.get('--payload-schema-version'))
-      : undefined,
+    payloadSchemaVersion: Number(args.get('--payload-schema-version')),
   });
   process.stdout.write(`${JSON.stringify(resource, null, 2)}\n`);
 }

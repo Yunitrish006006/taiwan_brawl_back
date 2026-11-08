@@ -9,14 +9,16 @@ const migrationFiles = (await readdir(migrationsDirectory))
   .filter((name) => /^\d+.*\.sql$/.test(name))
   .sort((left, right) => left.localeCompare(right));
 const namespaceMigration = '0029_mini_royale_table_namespace.sql';
-if (!migrationFiles.includes(namespaceMigration)) {
+const namespaceIndex = migrationFiles.indexOf(namespaceMigration);
+if (namespaceIndex < 0) {
   throw new Error(`Missing migration ${namespaceMigration}.`);
 }
 
+const migrationsBeforeNamespace = migrationFiles.slice(0, namespaceIndex);
+const migrationsAfterNamespace = migrationFiles.slice(namespaceIndex + 1);
 const setup = (
   await Promise.all(
-    migrationFiles
-      .filter((name) => name.localeCompare(namespaceMigration) < 0)
+    migrationsBeforeNamespace
       .map((name) => readFile(join(migrationsDirectory, name), 'utf8')),
   )
 ).join('\n');
@@ -24,6 +26,13 @@ const namespaceChange = await readFile(
   join(migrationsDirectory, namespaceMigration),
   'utf8',
 );
+const laterMigrations = (
+  await Promise.all(
+    migrationsAfterNamespace.map((name) =>
+      readFile(join(migrationsDirectory, name), 'utf8'),
+    ),
+  )
+).join('\n');
 const seed = `
 PRAGMA foreign_keys = ON;
 INSERT INTO users (id, name, email) VALUES
@@ -61,7 +70,7 @@ SELECT count(*) FROM pragma_foreign_key_check;
 `;
 
 const result = spawnSync('sqlite3', ['-batch', '-bail', ':memory:'], {
-  input: `${setup}\n${seed}\n${namespaceChange}\n${verify}`,
+  input: `${setup}\n${seed}\n${namespaceChange}\n${laterMigrations}\n${verify}`,
   encoding: 'utf8',
 });
 if (result.error) {

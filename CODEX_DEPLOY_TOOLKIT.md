@@ -67,9 +67,8 @@ fix(friends): 改善好友 API 流程
 - 需自動找 Flutter SDK bin 目錄（依序）：
   1. `$FLUTTER_BIN_DIR`
   2. `command -v flutter` 的所在資料夾
-  3. `/Volumes/DataExtended/flutter/bin`
-  4. `~/flutter/bin`
-  5. `~/development/flutter/bin`
+  3. `~/flutter/bin`
+  4. `~/development/flutter/bin`
 - 如果前端有 `tool/generate_locale_catalog.dart`，在 build 前先執行：
   - `dart run tool/generate_locale_catalog.dart`
 - 版本規則要是純 semver，不要有 `+build`。
@@ -246,10 +245,10 @@ pubspec.yaml                  | app      | chore    | 更新前端依賴
 
 如果另一個 Codex 需要參考這份專案的實作風格，可以看：
 
-- [deploy.sh](/Volumes/DataExtended/taiwan_brawl/taiwan_brawl_back/deploy.sh)
-- [conventional_commit_rules.sh](/Volumes/DataExtended/taiwan_brawl/taiwan_brawl_back/conventional_commit_rules.sh)
-- [tool/suggest_commit_message.sh](/Volumes/DataExtended/taiwan_brawl/taiwan_brawl_back/tool/suggest_commit_message.sh)
-- [package.json](/Volumes/DataExtended/taiwan_brawl/taiwan_brawl_back/package.json)
+- [deploy.sh](deploy.sh)
+- [conventional_commit_rules.sh](conventional_commit_rules.sh)
+- [tool/suggest_commit_message.sh](tool/suggest_commit_message.sh)
+- [package.json](package.json)
 
 ---
 

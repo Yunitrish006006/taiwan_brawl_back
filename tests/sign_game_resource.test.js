@@ -116,6 +116,7 @@ test('resource signer rejects cross-module IDs, invalid versions and wrong key t
     signingKeyId: 'test-key',
     contentType: 'application/octet-stream',
     baseUrl: 'https://assets.example.test',
+    payloadSchemaVersion: 1,
   };
   assert.throws(() => signGameResource({ ...input, resourceId: 'game.royale.rules' }), /owned/);
   assert.throws(() => signGameResource({ ...input, version: 'latest' }), /semantic versioning/);
@@ -139,10 +140,25 @@ test('resource signer emits installer, catalog and KV publication metadata', () 
     signingKeyId: 'resource-release-2026-01',
     contentType: 'application/json',
     baseUrl: 'https://assets.example.test',
+    payloadSchemaVersion: 1,
   });
   assert.equal(result.storageMetadata.contentType, 'application/json');
   assert.equal(result.downloadUrl.startsWith('https://'), true);
+  assert.equal(result.payloadSchemaVersion, 1);
   assert.equal(result.signature.length, 86);
+  assert.throws(
+    () => signGameResource({
+      moduleId: 'game.archery',
+      resourceId: 'game.archery.rules',
+      version: '1.0.0',
+      payload: Buffer.from('rules'),
+      privateKeyPem: privateKey.export({ type: 'pkcs8', format: 'pem' }),
+      signingKeyId: 'resource-release-2026-01',
+      contentType: 'application/json',
+      baseUrl: 'https://assets.example.test',
+    }),
+    /positive integer/,
+  );
 });
 
 test('resource CLI signs the exact file bytes and emits consumable metadata', async () => {

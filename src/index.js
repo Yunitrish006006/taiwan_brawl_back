@@ -5,6 +5,7 @@ import { handleMediaRequest } from './api/media_api.js';
 import { handlePrivacyPolicy } from './core/privacy_policy.js';
 import { RoyaleRoom } from './royale/royale_room.js';
 import { corsHeaders, jsonResponse } from './core/utils.js';
+import { drainLifecycleOutbox } from './features/account_lifecycle.js';
 
 function buildAssetRequest(request, pathname) {
   if (pathname !== '/') {
@@ -42,6 +43,9 @@ export { ChatRoom } from './rooms/chat_room.js';
 export { SignalRoom } from './rooms/signal_room.js';
 
 export default {
+  async scheduled(controller, env, ctx) {
+    ctx.waitUntil(drainLifecycleOutbox(env));
+  },
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
 

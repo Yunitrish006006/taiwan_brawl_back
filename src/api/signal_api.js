@@ -1,3 +1,4 @@
+import { socialDatabase, splitMode, socialPairAllowed } from '../core/databases.js';
 import { requireUser } from '../core/request_helpers.js';
 import { jsonResponse } from '../core/utils.js';
 
@@ -15,10 +16,11 @@ function getSignalRoomStub(env, userIdA, userIdB) {
 }
 
 async function areFriends(userId, friendId, env) {
+  if(splitMode(env)) return socialPairAllowed(env,Number(userId),Number(friendId));
   const a = Number(userId);
   const b = Number(friendId);
   const [userOneId, userTwoId] = a < b ? [a, b] : [b, a];
-  const row = await env.DB.prepare(
+  const row = await socialDatabase(env).prepare(
     'SELECT 1 FROM friendships WHERE user_one_id = ?1 AND user_two_id = ?2 LIMIT 1'
   )
     .bind(userOneId, userTwoId)
