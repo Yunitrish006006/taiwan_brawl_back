@@ -244,9 +244,13 @@ function validateGooglePayload(payload, allowedClientIds, nowSeconds) {
 }
 
 export async function verifyGoogleIdToken(idToken, env, options = {}) {
+  const rejected = (reason, details = {}) => {
+    try { options.onFailure?.({ reason, ...details }); } catch {}
+    return null;
+  };
   const parsedToken = parseGoogleIdToken(idToken);
   if (!parsedToken) {
-    return null;
+    return rejected('MALFORMED_TOKEN');
   }
 
   const nowMs = options.nowMs ?? Date.now();
@@ -257,18 +261,29 @@ export async function verifyGoogleIdToken(idToken, env, options = {}) {
     Math.floor(nowMs / 1000)
   );
   if (!googleUser) {
-    return null;
+    const p = parsedToken.payload;
+    if (!p?.sub || !p?.email || p.email_verified !== true) return rejected('INVALID_CLAIMS');
+    if (!allowedClientIds.has(String(p.aud || ''))) {
+      const audience = /^\d+-[a-z0-9]+\.apps\.googleusercontent\.com$/.test(String(p.aud)) ? String(p.aud) : 'unrecognized';
+      return rejected('AUDIENCE_MISMATCH', { audience, configuredAudienceCount: allowedClientIds.size });
+    }
+    if (!['accounts.google.com', 'https://accounts.google.com'].includes(p.iss)) return rejected('ISSUER_MISMATCH');
+    return rejected('EXPIRED_TOKEN');
   }
 
+  let keys;
   try {
-    const keys = await fetchGoogleJwks(options.fetcher ?? fetch, nowMs);
+    keys = await fetchGoogleJwks(options.fetcher ?? fetch, nowMs);
+  } catch (_) {
+    return rejected('KEY_FETCH_FAILED');
+  }
+  try {
     const key = keys.find((entry) => entry.kid === parsedToken.header.kid);
-    if (!key || !(await verifyTokenSignature(parsedToken, key))) {
-      return null;
-    }
+    if (!key) return rejected('KEY_ID_NOT_FOUND');
+    if (!(await verifyTokenSignature(parsedToken, key))) return rejected('INVALID_SIGNATURE');
     return googleUser;
   } catch (_) {
-    return null;
+    return rejected('CRYPTO_ERROR');
   }
 }
 
@@ -285,7 +300,9 @@ export async function handleGoogleLogin(request, env) {
     return jsonResponse({ error: 'Missing id_token' }, 400, request);
   }
 
-  const googleUser = await verifyGoogleIdToken(body.id_token, env);
+  const googleUser = await verifyGoogleIdToken(body.id_token, env, {
+    onFailure: (diagnostic) => console.warn('google_id_token_rejected', diagnostic)
+  });
   if (!googleUser) {
     return jsonResponse({ error: 'Invalid Google token' }, 401, request);
   }

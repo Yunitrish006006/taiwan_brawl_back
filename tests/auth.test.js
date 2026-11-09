@@ -118,6 +118,23 @@ test('verifyGoogleIdToken verifies signature and required claims', async () => {
   });
 });
 
+test('Google rejection diagnostics identify the stage without credentials or personal claims', async () => {
+  __resetGoogleJwkCacheForTests();
+  const { jwk, token } = await signedGoogleToken();
+  const failures = [];
+  assert.equal(await verifyGoogleIdToken(token, {}, { onFailure: d => failures.push(d) }), null);
+  assert.equal(failures[0].reason, 'AUDIENCE_MISMATCH');
+  assert.equal(await verifyGoogleIdToken(token, { GOOGLE_CLIENT_ID: CLIENT_ID }, {
+    fetcher: async () => { throw Error('private transport details'); }, onFailure: d => failures.push(d)
+  }), null);
+  assert.equal(failures[1].reason, 'KEY_FETCH_FAILED');
+  const serialized = JSON.stringify(failures);
+  for (const privateValue of [token, 'user@example.com', 'google-sub-1', 'private transport details']) {
+    assert.equal(serialized.includes(privateValue), false);
+  }
+  assert.ok(jwk);
+});
+
 test('verifyGoogleIdToken rejects tokens when no audience is configured', async () => {
   __resetGoogleJwkCacheForTests();
   const { jwk, token } = await signedGoogleToken();
