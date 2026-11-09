@@ -122,3 +122,11 @@ used by the frontend and iOS `serverClientId`. Signature, issuer, expiry and
 verified-email checks remain unchanged. A regression signs a test token for the
 configured deployment audience and proves that an unrelated audience is still
 rejected. Real iPhone sign-in must be retried after deploying this correction.
+
+Credential-free rejection diagnostics then identified `AUDIENCE_MISMATCH`: the
+real iPhone token uses the iOS OAuth client already present in the App's
+GoogleSignIn.xcconfig and signed Info.plist. The explicit production allowlist
+now includes exactly the existing Web/server and iOS client IDs; an unrelated
+audience remains rejected. No token, subject or email was logged for diagnosis.
+The configuration regression verifies a signed token for each authorized
+audience, and a token for an unrelated app is still denied.

@@ -90,9 +90,14 @@ function jwkFetcher(jwk) {
 test('production deployment config supplies an explicit Google audience to the real verifier', async () => {
   const { vars } = JSON.parse(await readFile(new URL('../wrangler.jsonc', import.meta.url), 'utf8'));
   assert.match(vars.GOOGLE_CLIENT_ID, /^\d+-[a-z0-9]+\.apps\.googleusercontent\.com$/);
-  __resetGoogleJwkCacheForTests();
-  const { jwk, token } = await signedGoogleToken({ aud: vars.GOOGLE_CLIENT_ID });
-  assert.equal((await verifyGoogleIdToken(token, vars, { fetcher: jwkFetcher(jwk) }))?.sub, 'google-sub-1');
+  const clientIds = [...new Set([vars.GOOGLE_CLIENT_ID, ...vars.GOOGLE_CLIENT_IDS.split(',')])];
+  assert.equal(clientIds.length, 2, 'only this App Web/server and iOS audiences are authorized');
+  for (const audience of clientIds) {
+    assert.match(audience, /^\d+-[a-z0-9]+\.apps\.googleusercontent\.com$/);
+    __resetGoogleJwkCacheForTests();
+    const { jwk, token } = await signedGoogleToken({ aud: audience });
+    assert.equal((await verifyGoogleIdToken(token, vars, { fetcher: jwkFetcher(jwk) }))?.sub, 'google-sub-1');
+  }
   const unrelated = await signedGoogleToken({ aud: 'unrelated-client.apps.googleusercontent.com' });
   assert.equal(await verifyGoogleIdToken(unrelated.token, vars, { fetcher: jwkFetcher(unrelated.jwk) }), null);
 });
