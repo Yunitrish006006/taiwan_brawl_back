@@ -1,5 +1,7 @@
 # Production couples rollout — 2026-11-09
 
+Status: production API active; live invite/bind/date/end/block verification passed.
+
 The user authorized making online invitations and binding usable on the existing
 production website. Initial production returned 404 for couple overview.
 
@@ -81,3 +83,31 @@ confirmed by the user and the device is paired. Development signing, Developer
 Mode and physical App Group/widget acceptance are still pending. These are
 separate from the successful unsigned/simulator CI builds and local Foundation
 checks. Do not report physical iPhone acceptance from those results.
+
+## Observed production result
+
+- Maintenance version: `977581ce-1f51-4eff-a26e-a50c36082b40`.
+- Active split/couples version: `f606a5f1-d274-4588-bcd8-260365f8c4c7`,
+  application source `cba96ed`.
+- All nine pending main migrations applied. Actual migrated main data matched
+  the locally predicted snapshot across 25 business tables, preserving 10 users
+  and 10 sessions.
+- Actual remote exports of all eight social and seven game tables matched source
+  row hashes and counts. AUTOINCREMENT high water was preserved and both targets
+  had zero foreign-key violations. Old source domain tables remain write-guarded;
+  retained account/session writes were released before activation.
+- A D1 compound-SELECT limit interrupted the initial empty-target check before
+  any import. The check was changed to scalar count subqueries; the resumed
+  operation again required all target tables to be empty before inserting.
+- After activation, unauthenticated couple overview returned typed HTTP 401
+  `UNAUTHENTICATED`, not the previous 404 or dependency-unavailable response.
+  Public health returned `ok: true`.
+- Seventeen real production HTTP checks passed with two isolated temporary
+  verification accounts: main cookie authentication, friend request/accept,
+  cookie-origin and native-Bearer couple invite/accept, foreign-origin rejection,
+  overview, date proposal/accept/idempotent replay, end, rebind and atomic
+  block/unbind. Both temporary accounts, their sessions and their scoped social
+  test rows were removed afterward. Existing users were not impersonated.
+
+No production export, session token, Apple account identity, phone identifier or
+private screenshot is included in this report or repository.
