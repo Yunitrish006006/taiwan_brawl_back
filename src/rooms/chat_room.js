@@ -1,5 +1,6 @@
 import { socialDatabase } from '../core/databases.js';
 import { splitMode, socialPairAllowed } from '../core/databases.js';
+import { maintenanceEnabled, maintenanceResponse, closeForMaintenance } from '../core/maintenance.js';
 const HISTORY_LIMIT = 50;
 
 function json(data, status = 200) {
@@ -25,6 +26,7 @@ export class ChatRoom {
   }
 
   async fetch(request) {
+    if (maintenanceEnabled(this.env)) return maintenanceResponse();
     const url = new URL(request.url);
 
     if (request.headers.get('Upgrade') === 'websocket') {
@@ -82,6 +84,7 @@ export class ChatRoom {
   }
 
   async handleSocketMessage(userId, payload, socket) {
+    if (closeForMaintenance(this.env, socket)) return;
     switch (payload?.type) {
       case 'ping':
         socket.send(JSON.stringify({ type: 'pong' }));

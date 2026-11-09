@@ -6,6 +6,7 @@ import { handlePrivacyPolicy } from './core/privacy_policy.js';
 import { RoyaleRoom } from './royale/royale_room.js';
 import { corsHeaders, jsonResponse } from './core/utils.js';
 import { drainLifecycleOutbox } from './features/account_lifecycle.js';
+import { maintenanceEnabled, maintenanceResponse } from './core/maintenance.js';
 
 function buildAssetRequest(request, pathname) {
   if (pathname !== '/') {
@@ -44,6 +45,7 @@ export { SignalRoom } from './rooms/signal_room.js';
 
 export default {
   async scheduled(controller, env, ctx) {
+    if (maintenanceEnabled(env)) return;
     ctx.waitUntil(drainLifecycleOutbox(env));
   },
   async fetch(request, env, ctx) {
@@ -51,6 +53,10 @@ export default {
 
     if (request.method === 'OPTIONS') {
       return new Response(null, { status: 204, headers: corsHeaders(request) });
+    }
+
+    if (maintenanceEnabled(env) && url.pathname.startsWith('/api/') && url.pathname !== '/api/health') {
+      return maintenanceResponse();
     }
 
     if (url.pathname === '/privacy') {

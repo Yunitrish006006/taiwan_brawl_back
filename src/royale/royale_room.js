@@ -78,6 +78,7 @@ import {
 import { normalizeBotController } from './royale_llm_bot.js';
 import { normalizeCardDefinition } from './royale_cards.js';
 import { applyMatchProgression } from './royale_progression.js';
+import { maintenanceEnabled, maintenanceResponse, closeForMaintenance } from '../core/maintenance.js';
 
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
@@ -120,11 +121,13 @@ export class RoyaleRoom {
   }
 
   async enqueueMutation(operation) {
+    if (maintenanceEnabled(this.env)) { this.stopTicking(); return false; }
     if (this.mutationDepth > 0) {
       return operation();
     }
 
     const run = async () => {
+      if (maintenanceEnabled(this.env)) { this.stopTicking(); return false; }
       this.mutationDepth += 1;
       try {
         return await operation();
@@ -204,6 +207,7 @@ export class RoyaleRoom {
   }
 
   async fetch(request) {
+    if (maintenanceEnabled(this.env)) return maintenanceResponse();
     await this.initialized;
     const url = new URL(request.url);
 
@@ -835,6 +839,7 @@ export class RoyaleRoom {
   }
 
   async handleSocketMessage(userId, payload) {
+    if (closeForMaintenance(this.env, this.socketForUser(userId))) return;
     switch (payload?.type) {
       case 'ping':
         this.sendToUser(userId, { type: 'pong' });
@@ -1054,6 +1059,7 @@ export class RoyaleRoom {
   }
 
   ensureTicking() {
+    if (maintenanceEnabled(this.env)) return;
     if (this.tickHandle) {
       return;
     }

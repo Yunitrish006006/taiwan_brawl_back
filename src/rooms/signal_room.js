@@ -1,4 +1,5 @@
 import { splitMode, socialPairAllowed } from '../core/databases.js';
+import { maintenanceEnabled, maintenanceResponse, closeForMaintenance } from '../core/maintenance.js';
 // SignalRoom Durable Object — forwards WebRTC signaling messages between peers.
 // No D1 persistence needed; signal state is transient.
 // DO naming: signal:<low_id>:<high_id>
@@ -52,6 +53,7 @@ export class SignalRoom {
   }
 
   async fetch(request) {
+    if (maintenanceEnabled(this.env)) return maintenanceResponse();
     const url = new URL(request.url);
     if (url.pathname === '/internal/signal') {
       return this.handleWebSocket(request);
@@ -98,6 +100,7 @@ export class SignalRoom {
   // Cloudflare's hibernation WebSocket API dispatches messages through these
   // Durable Object handlers; standard addEventListener callbacks do not run.
   webSocketMessage(socket, message) {
+    if (closeForMaintenance(this.env, socket)) return;
     const userId = this._userIdFor(socket);
     if (userId === null) {
       log('warn', 'Rejected signal from socket with invalid attachment');

@@ -7,11 +7,15 @@
 		"nodejs_compat"
 	],
 	"vars": {
+		"DATABASE_MODE": "split",
+		"ENABLE_COUPLES_API": "true",
+		"MAINTENANCE_MODE": "false",
 		"GAME_CATALOG_TRUST_KEYS": "{\"catalog-prod-2026-10\":{\"publisher\":\"taiwan-brawl\",\"publicKey\":\"4WyFxNR343aaKu1ccZNpBGg4OQ2D3qH7ekYMAJzFQ1c\"}}"
 	},
 	"observability": {
 		"enabled": true
 	},
+	"triggers": { "crons": ["* * * * *"] },
 	"durable_objects": {
 		"bindings": [
 			{
@@ -53,6 +57,21 @@
 			"binding": "DB",
 			"database_name": "taiwan_brawl_db",
 			"database_id": "9a7e86fe-44a9-40aa-8a09-a436db818c87",
+			"migrations_dir": "migrations",
+			"remote": true
+		},
+		{
+			"binding": "SOCIAL_DB",
+			"database_name": "taiwan_brawl_social_db",
+			"database_id": "d25f54ae-fc80-47cf-b2cc-8b0cb30272ca",
+			"migrations_dir": "migrations/social",
+			"remote": true
+		},
+		{
+			"binding": "GAME_DB",
+			"database_name": "taiwan_brawl_game_db",
+			"database_id": "4e6249ee-3ca9-48f6-9a56-aec432f03c5b",
+			"migrations_dir": "migrations/games",
 			"remote": true
 		}
 	],
