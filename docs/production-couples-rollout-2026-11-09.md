@@ -111,3 +111,14 @@ checks. Do not report physical iPhone acceptance from those results.
 
 No production export, session token, Apple account identity, phone identifier or
 private screenshot is included in this report or repository.
+
+## Google sign-in configuration correction
+
+The first real iPhone login exposed a missing production `GOOGLE_CLIENT_ID`.
+The new verifier intentionally refuses tokens without an explicitly configured
+audience; synthetic session probes cannot establish real Google sign-in.
+The production configuration now declares the existing Web/server OAuth client
+used by the frontend and iOS `serverClientId`. Signature, issuer, expiry and
+verified-email checks remain unchanged. A regression signs a test token for the
+configured deployment audience and proves that an unrelated audience is still
+rejected. Real iPhone sign-in must be retried after deploying this correction.

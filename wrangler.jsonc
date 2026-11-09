@@ -7,6 +7,7 @@
 		"nodejs_compat"
 	],
 	"vars": {
+		"GOOGLE_CLIENT_ID": "310421071956-1ctfspu1f772ehkatigsgd2vq1ui4bks.apps.googleusercontent.com",
 		"DATABASE_MODE": "split",
 		"ENABLE_COUPLES_API": "true",
 		"MAINTENANCE_MODE": "false",

@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 
 import {
   __resetGoogleJwkCacheForTests,
@@ -85,6 +86,16 @@ function jwkFetcher(jwk) {
 }
 
 // ── verifyGoogleIdToken tests ──────────────────────────────────────────────────
+
+test('production deployment config supplies an explicit Google audience to the real verifier', async () => {
+  const { vars } = JSON.parse(await readFile(new URL('../wrangler.jsonc', import.meta.url), 'utf8'));
+  assert.match(vars.GOOGLE_CLIENT_ID, /^\d+-[a-z0-9]+\.apps\.googleusercontent\.com$/);
+  __resetGoogleJwkCacheForTests();
+  const { jwk, token } = await signedGoogleToken({ aud: vars.GOOGLE_CLIENT_ID });
+  assert.equal((await verifyGoogleIdToken(token, vars, { fetcher: jwkFetcher(jwk) }))?.sub, 'google-sub-1');
+  const unrelated = await signedGoogleToken({ aud: 'unrelated-client.apps.googleusercontent.com' });
+  assert.equal(await verifyGoogleIdToken(unrelated.token, vars, { fetcher: jwkFetcher(unrelated.jwk) }), null);
+});
 
 test('verifyGoogleIdToken verifies signature and required claims', async () => {
   __resetGoogleJwkCacheForTests();
