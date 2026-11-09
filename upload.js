@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { staticAssetEntries } from './tool/static_asset_entries.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -53,6 +54,6 @@ if (!fs.existsSync(buildDir)) {
   process.exit(1);
 }
 
-const files = getFiles(buildDir);
+const files = staticAssetEntries(getFiles(buildDir));
 fs.writeFileSync(outputPath, JSON.stringify(files, null, 2));
 console.log(`Generated assets.json with ${files.length} files from ${frontendDir}`);
