@@ -130,3 +130,20 @@ now includes exactly the existing Web/server and iOS client IDs; an unrelated
 audience remains rejected. No token, subject or email was logged for diagnosis.
 The configuration regression verifies a signed token for each authorized
 audience, and a token for an unrelated app is still denied.
+
+## Final iPhone acceptance
+
+The deployed authentication correction is Worker version
+`dd1a266f-7b6f-40fc-912f-33daf0560130`, application source `a1de55f`.
+The user subsequently confirmed successful Google sign-in, real production
+couple invitation acceptance and the correct partner name/day count in the
+iPhone App. The home widget also displayed the correct name/count; changing its
+color and tapping it to return to the App both passed user-confirmed testing.
+
+Local backend validation after the final authentication change passed 215 Node
+tests, one SignalRoom Vitest test and 56 D1 tests. Raw diagnostic request metadata
+was removed and the temporary diagnostic tail was stopped. No credentials or
+private account/device identifiers are included in the acceptance record.
+Physical midnight rollover, extended offline behavior and account/revocation
+cold-start races remain unevaluated; this is a development-signed iPhone build,
+not an App Store or TestFlight release.
