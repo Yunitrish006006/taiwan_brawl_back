@@ -88,6 +88,11 @@ function configuredPlatforms(env) {
   ];
 }
 
+function platformAppId(env, platform) {
+  const specific = trimString(env[`FCM_${platform.toUpperCase()}_APP_ID`]);
+  return specific || trimString(env.FCM_APP_ID);
+}
+
 export function hasFcmClientConfig(env) {
   return Boolean(
     trimString(env.FCM_PROJECT_ID) &&
@@ -121,6 +126,14 @@ export function buildPublicPushConfig(env) {
       projectId: clientEnabled ? trimString(env.FCM_PROJECT_ID) : null,
       apiKey: clientEnabled ? trimString(env.FCM_API_KEY) : null,
       appId: clientEnabled ? trimString(env.FCM_APP_ID) : null,
+      apps: clientEnabled
+        ? {
+            android: { appId: platformAppId(env, 'android') },
+            ios: { appId: platformAppId(env, 'ios') },
+            macos: { appId: platformAppId(env, 'macos') },
+            web: { appId: platformAppId(env, 'web') },
+          }
+        : null,
       messagingSenderId: clientEnabled ? trimString(env.FCM_MESSAGING_SENDER_ID) : null,
       authDomain: normalizeOptionalText(env.FCM_AUTH_DOMAIN),
       storageBucket: normalizeOptionalText(env.FCM_STORAGE_BUCKET),
@@ -264,12 +277,12 @@ export function localizedChatText({ locale, senderName, text, kind }) {
   }
 
   if (effectiveLocale === 'ja') {
-    return { title: safeSenderName, body: trimString(text) || '新しいメッセージ' };
+    return { title: safeSenderName, body: '新しいメッセージ' };
   }
   if (effectiveLocale === 'en') {
-    return { title: safeSenderName, body: trimString(text) || 'New message' };
+    return { title: safeSenderName, body: 'New message' };
   }
-  return { title: safeSenderName, body: trimString(text) || '新訊息' };
+  return { title: safeSenderName, body: '新訊息' };
 }
 
 export function buildPushNotificationId(

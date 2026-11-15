@@ -12,7 +12,8 @@ import {
   eventFromPendingRow,
   normalizeChatEvent,
   pendingRowMatchesEvent,
-  pendingTypeForEvent
+  pendingTypeForEvent,
+  storedTextForEvent
 } from './chat_event_contract.js';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -182,7 +183,7 @@ async function handleSendEvent(request, env, friendId, ctx) {
     .bind(
       user.id,
       friendId,
-      event.body ?? '',
+      storedTextForEvent(event),
       event.createdAt,
       pendingType,
       event.eventId,
@@ -201,7 +202,9 @@ async function handleSendEvent(request, env, friendId, ctx) {
         senderId: user.id,
         senderName: user.name,
         receiverId: friendId,
-        text: event.type === 'recalled' ? '' : event.body ?? '',
+        text: event.encryptedBody == null && event.type !== 'recalled'
+          ? event.body ?? ''
+          : '',
         kind: event.type === 'recalled' ? 'recall' : 'message',
         appOrigin: new URL(request.url).origin,
       })

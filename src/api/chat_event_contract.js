@@ -18,6 +18,7 @@ function normalizeChatEvent(raw, { actorId, friendId }) {
   const revision = Number(raw.revision);
   const createdAt = String(raw.createdAt ?? '').trim();
   const body = raw.body == null ? null : String(raw.body);
+  const encryptedBody = normalizeEncryptedBody(raw.encryptedBody);
   const deviceId = raw.deviceId == null ? null : String(raw.deviceId).trim() || null;
 
   if (!eventId || !messageId || !conversationId || !createdAt) {
@@ -30,7 +31,11 @@ function normalizeChatEvent(raw, { actorId, friendId }) {
   if (conversationId !== conversationIdFor(actorId, friendId)) {
     return { error: 'conversationId does not match the participants' };
   }
-  if ((type === 'created' || type === 'edited') && !body?.trim()) {
+  if (
+    (type === 'created' || type === 'edited') &&
+    !body?.trim() &&
+    encryptedBody == null
+  ) {
     return { error: 'created and edited events require a body' };
   }
   if (type === 'created' && revision !== 0) {
@@ -48,9 +53,30 @@ function normalizeChatEvent(raw, { actorId, friendId }) {
       revision,
       createdAt,
       body,
+      ...(encryptedBody == null ? {} : { encryptedBody }),
       signature: raw.signature == null ? null : String(raw.signature)
     }
   };
+}
+
+function normalizeEncryptedBody(raw) {
+  if (raw == null) return null;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const version = Number(raw.version);
+  const algorithm = String(raw.algorithm ?? '').trim();
+  const keyId = String(raw.keyId ?? '').trim();
+  const nonce = String(raw.nonce ?? '').trim();
+  const ciphertext = String(raw.ciphertext ?? '').trim();
+  if (!Number.isInteger(version) || version <= 0 || !algorithm || !keyId || !nonce || !ciphertext) {
+    return null;
+  }
+  return { version, algorithm, keyId, nonce, ciphertext };
+}
+
+function storedTextForEvent(event) {
+  return event.encryptedBody == null
+    ? String(event.body ?? '')
+    : JSON.stringify({ encryptedBody: event.encryptedBody });
 }
 
 function pendingTypeForEvent(eventType) {
@@ -71,11 +97,21 @@ function eventFromPendingRow(row) {
     type: String(row.event_type),
     revision: Number(row.revision ?? 0),
     createdAt: String(row.created_at),
-    body: row.body == null && row.text == null
-      ? null
-      : String(row.body ?? row.text),
+    ...encryptedBodyFromStoredText(row.body ?? row.text),
     signature: row.signature == null ? null : String(row.signature)
   };
+}
+
+function encryptedBodyFromStoredText(text) {
+  if (text == null) return { body: null };
+  try {
+    const parsed = JSON.parse(String(text));
+    if (parsed && typeof parsed === 'object' && parsed.encryptedBody) {
+      const encryptedBody = normalizeEncryptedBody(parsed.encryptedBody);
+      if (encryptedBody) return { body: null, encryptedBody };
+    }
+  } catch {}
+  return { body: String(text) };
 }
 
 function pendingRowMatchesEvent(row, event, { actorId, friendId }) {
@@ -87,7 +123,7 @@ function pendingRowMatchesEvent(row, event, { actorId, friendId }) {
       Number(row.receiver_id) === Number(friendId) &&
       Number(row.revision ?? 0) === event.revision &&
       String(row.event_type) === event.type &&
-      String(row.text ?? '') === String(event.body ?? '') &&
+      String(row.text ?? '') === storedTextForEvent(event) &&
       String(row.created_at) === event.createdAt &&
       (row.signature == null ? null : String(row.signature)) === event.signature
       && (row.device_id == null ? null : String(row.device_id)) === (event.deviceId ?? null)
@@ -99,5 +135,6 @@ export {
   eventFromPendingRow,
   normalizeChatEvent,
   pendingRowMatchesEvent,
-  pendingTypeForEvent
+  pendingTypeForEvent,
+  storedTextForEvent
 };

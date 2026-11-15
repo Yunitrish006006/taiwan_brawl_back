@@ -20,8 +20,27 @@ test('buildPublicPushConfig exposes FCM platforms when client and delivery confi
   assert.equal(config.provider, 'fcm');
   assert.deepEqual(config.enabledPlatforms, ['android', 'ios', 'macos', 'web']);
   assert.equal(config.fcm.projectId, 'taiwan-brawl');
+  assert.equal(config.fcm.apps.android.appId, '1:123:web:abc');
+  assert.equal(config.fcm.apps.ios.appId, '1:123:web:abc');
   assert.equal(config.fcm.webVapidKey, 'PUBLIC_VAPID_KEY');
   assert.equal(config.fcm.serviceWorkerPath, '/firebase-messaging-sw.js');
+});
+
+test('buildPublicPushConfig prefers platform-specific Firebase app ids', () => {
+  const config = __testables.buildPublicPushConfig({
+    FCM_PROJECT_ID: 'taiwan-brawl',
+    FCM_API_KEY: 'public-api-key',
+    FCM_APP_ID: 'legacy-app-id',
+    FCM_ANDROID_APP_ID: 'android-app-id',
+    FCM_IOS_APP_ID: 'ios-app-id',
+    FCM_MESSAGING_SENDER_ID: '123',
+    FCM_CLIENT_EMAIL: 'firebase-adminsdk@example.iam.gserviceaccount.com',
+    FCM_PRIVATE_KEY: '-----BEGIN PRIVATE KEY-----\\nabc\\n-----END PRIVATE KEY-----',
+  });
+
+  assert.equal(config.fcm.apps.android.appId, 'android-app-id');
+  assert.equal(config.fcm.apps.ios.appId, 'ios-app-id');
+  assert.equal(config.fcm.apps.macos.appId, 'legacy-app-id');
 });
 
 test('buildPublicPushConfig disables delivery without service account credentials', () => {
@@ -111,6 +130,18 @@ test('localizedChatText returns localized recall copy', () => {
     }),
     { title: 'Alex', body: 'メッセージを取り消しました' }
   );
+});
+
+test('localizedChatText never places message plaintext in a push', () => {
+  const message = __testables.localizedChatText({
+    locale: 'zh-Hant',
+    senderName: '阿昀',
+    text: '這段內容不應出現在推播正文',
+    kind: 'message',
+  });
+
+  assert.deepEqual(message, { title: '阿昀', body: '新訊息' });
+  assert.equal(message.body.includes('這段內容'), false);
 });
 
 test('buildPushNotificationId normalizes UUIDs into topic-safe unique ids', () => {
