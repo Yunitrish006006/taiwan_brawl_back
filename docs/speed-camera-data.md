@@ -22,12 +22,38 @@ npm test
 - `GET /api/speed-cameras/snapshot`: full normalized point dataset, suitable for offline download.
 - Both return HTTP 503 if the **separate** `SPEED_CAMERA_DATA` KV binding is absent, empty, or malformed. They do not expose false empty results.
 
-## Production configuration (not completed)
-1. Provision a **new isolated Cloudflare KV namespace** for `SPEED_CAMERA_DATA` in a nonproduction environment.
-2. Add its real KV namespace ID to the Worker `wrangler.jsonc` under `kv_namespaces`. Do not reuse `CHAT_SYNC`, `PUSH_RETRY` or `STATIC_ASSETS`.
-3. Review and publish the validated JSON under key `npa7320:snapshot` (for example using Wrangler's KV key put command in an authorized environment).
-4. Verify the manifest and snapshot endpoints using the staging Worker; inspect attribution and count, then verify the app's offline refresh/fallback.
-5. Add a *separate* least-privilege release workflow to publish validated data on a schedule. Do not enable unattended production writes until validation and rollback are proven.
+## KV publication and recovery
+
+The Cron publisher validates UTF-8, bounds download size, rejects schema changes
+and high rejection/duplicate rates, and blocks a drop of more than 20% from the
+last verified snapshot. A refresh with the same verified content skips the write.
+One KV value (`npa7320:catalog:v1`) carries the current and previous content
+versions. Readers validate schema and content hash and fall back to the previous
+snapshot when current content fails validation. The original
+`npa7320:snapshot` key remains a migration fallback. Download and validation
+failures occur before the KV write.
+
+A client can request `/api/speed-cameras/snapshot?version=<manifest-version>`.
+A node that has yet to observe that publication can return 404. Keep the local
+verified snapshot and retry on the next refresh. KV replication is eventually
+consistent. Configure a single writer and avoid overlapping manual and scheduled
+writes. See [Workers KV consistency](https://developers.cloudflare.com/kv/concepts/how-kv-works/).
+
+## Nonproduction rollout
+
+1. Bind a dedicated staging KV namespace as `SPEED_CAMERA_DATA` on a staging
+   Worker. Use only staging IDs and a single scheduled trigger.
+2. Trigger the staging Cron and compare the manifest count and SHA-256 with the
+   official staging artifact. Fetch the version-qualified snapshot and repeat
+   through the client.
+3. Inject a failed refresh and verify the manifest still advertises the last good
+   version. Verify that a version-qualified download works during a normal
+   change. For an operator-directed rollback, stop the writer before restoring
+   the last verified catalog, then verify across locations before resuming it.
+4. Record the staging Worker run and review before configuring production.
+
+Production Worker configuration has no speed-camera binding or trigger on this
+branch.
 
 ## Driving safety
 Government rows may include average-speed zone references and various enforcement types. The current source does **not** consistently identify fixed versus mobile equipment or validate a road segment. Raw `direct` values are retained, never treated as numerical driving bearings. GPS proximity and heading matching only produce *candidates*.
