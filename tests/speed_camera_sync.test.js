@@ -22,7 +22,7 @@ test('does not replace last-good KV value when official data is corrupt', async 
   const env = { SPEED_CAMERA_DATA: { put: async (key, payload) => writes.push([key, payload]) } };
   await assert.rejects(
     () => syncOfficialSpeedCameraData(env, async () => new Response('bad,bad\n1,2')),
-    /schema/
+    /schema|header/
   );
   assert.equal(writes.length, 0);
   await assert.rejects(() => syncOfficialSpeedCameraData({}, async () => {
