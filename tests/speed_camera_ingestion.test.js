@@ -37,11 +37,16 @@ test('rejects incomplete snapshot while retaining previous file', async () => {
 
 test('only fetches explicitly pinned government URL and requires success', async () => {
   let requestedUrl = null;
-  const mock = async url => {
+  const mock = async (url, options) => {
     requestedUrl = url;
+    assert.equal(options.redirect, 'manual');
     return new Response('test', { status: 200, headers: { 'content-length': '4' } });
   };
   assert.equal(await fetchOfficialCsv(mock), 'test');
   assert.equal(requestedUrl, OFFICIAL_CSV_URL);
   await assert.rejects(() => fetchOfficialCsv(async () => new Response('', { status: 503 })), /HTTP 503/);
+  await assert.rejects(
+    () => fetchOfficialCsv(async () => Response.redirect('https://example.test', 302)),
+    /HTTP 302/
+  );
 });

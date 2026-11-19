@@ -33,7 +33,8 @@ export async function createValidatedSnapshotFromCsv(csv, generatedAt = new Date
 export async function fetchOfficialCsv(fetcher = fetch) {
   const response = await fetcher(OFFICIAL_CSV_URL, {
     method: 'GET',
-    redirect: 'error',
+    // Workers exposes redirect responses in manual mode and rejects redirect:error.
+    redirect: 'manual',
     signal: AbortSignal.timeout(30000),
     headers: { Accept: 'text/csv,application/octet-stream,*/*' },
   });
