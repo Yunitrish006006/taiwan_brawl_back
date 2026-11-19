@@ -1,0 +1,35 @@
+name: Stage official speed camera dataset
+
+on:
+  schedule:
+    # Scheduled workflows run from the default branch after merge.
+    - cron: '17 2 * * *'
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/modular-speed-camera-20261119
+    paths:
+      - 'scripts/fetch_speed_camera_dataset.mjs'
+      - '.github/workflows/stage-speed-camera-data.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  stage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Download and validate official CSV (do not deploy)
+        run: node scripts/fetch_speed_camera_dataset.mjs dist/speed-camera/npa7320.json
+      - name: Upload verified snapshot for review
+        uses: actions/upload-artifact@v4
+        with:
+          name: npa7320-validated-snapshot
+          path: dist/speed-camera/npa7320.json
+          if-no-files-found: error
+          retention-days: 14
