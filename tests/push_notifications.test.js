@@ -13,6 +13,7 @@ test('buildPublicPushConfig exposes FCM platforms when client and delivery confi
     FCM_PRIVATE_KEY: '-----BEGIN PRIVATE KEY-----\\nabc\\n-----END PRIVATE KEY-----',
     FCM_WEB_VAPID_KEY: 'PUBLIC_VAPID_KEY',
     FCM_AUTH_DOMAIN: 'taiwan-brawl.firebaseapp.com',
+    FCM_IOS_APP_ID: '1:123:ios:abc123',
   });
 
   assert.equal(config.enabled, true);
@@ -20,6 +21,8 @@ test('buildPublicPushConfig exposes FCM platforms when client and delivery confi
   assert.equal(config.provider, 'fcm');
   assert.deepEqual(config.enabledPlatforms, ['android', 'ios', 'macos', 'web']);
   assert.equal(config.fcm.projectId, 'taiwan-brawl');
+  assert.equal(config.fcm.iosAppId, '1:123:ios:abc123');
+  assert.equal(config.fcm.appId, '1:123:web:abc');
   assert.equal(config.fcm.webVapidKey, 'PUBLIC_VAPID_KEY');
   assert.equal(config.fcm.serviceWorkerPath, '/firebase-messaging-sw.js');
 });
