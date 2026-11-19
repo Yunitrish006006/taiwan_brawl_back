@@ -1,0 +1,29 @@
+name: Speed camera verification
+
+on:
+  push:
+    branches:
+      - feature/modular-speed-camera-20261119
+  pull_request:
+    paths:
+      - 'src/speed_camera/**'
+      - 'tests/speed_camera_*.test.js'
+      - 'scripts/build_speed_camera_dataset.mjs'
+      - '.github/workflows/speed-camera-tests.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Test new speed-camera modules
+        run: node --test tests/speed_camera_core.test.js tests/speed_camera_csv.test.js
+      - name: Run backend regression suite
+        run: npm test

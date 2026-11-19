@@ -1,0 +1,12 @@
+{
+  "name": "taiwan-brawl-speed-camera-staging",
+  "main": "src/speed_camera/staging_worker.js",
+  "compatibility_date": "2026-03-11",
+  "workers_dev": true,
+  "preview_urls": false,
+  "observability": { "enabled": true },
+  "kv_namespaces": [
+    { "binding": "SPEED_CAMERA_DATA", "id": "REPLACE_WITH_STAGING_KV_ID" }
+  ],
+  "triggers": { "crons": ["17 2 * * *"] }
+}
