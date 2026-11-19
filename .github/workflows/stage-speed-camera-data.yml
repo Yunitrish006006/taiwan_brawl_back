@@ -10,6 +10,7 @@ on:
       - feature/modular-speed-camera-20261119
     paths:
       - 'scripts/fetch_speed_camera_dataset.mjs'
+      - 'src/speed_camera/**'
       - '.github/workflows/stage-speed-camera-data.yml'
 
 permissions:

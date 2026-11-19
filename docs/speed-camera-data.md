@@ -41,8 +41,10 @@ writes. See [Workers KV consistency](https://developers.cloudflare.com/kv/concep
 
 ## Nonproduction rollout
 
-1. Bind a dedicated staging KV namespace as `SPEED_CAMERA_DATA` on a staging
-   Worker. Use only staging IDs and a single scheduled trigger.
+1. Copy `wrangler.speed-camera-staging.example.jsonc` alongside the example,
+   insert the dedicated staging KV ID and deploy only with the staging config.
+   The isolated Worker serves the same read-only API and runs the same Cron
+   publisher. It has no bindings for the Taiwan Brawl application.
 2. Trigger the staging Cron and compare the manifest count and SHA-256 with the
    official staging artifact. Fetch the version-qualified snapshot and repeat
    through the client.
