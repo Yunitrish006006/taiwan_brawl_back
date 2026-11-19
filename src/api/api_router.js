@@ -25,6 +25,7 @@ import {
   handleUpdateUiPreferences,
   handleUploadAvatarImage
 } from '../features/users.js';
+import { handleSpeedCameraRequest } from './speed_camera_api.js';
 import { corsHeaders, jsonResponse } from '../core/utils.js';
 import { checkRateLimit, rateLimitHeaders } from '../core/rate_limit.js';
 
@@ -34,6 +35,9 @@ async function handleHealth(request) {
 
 function exactApiRouteHandler(request, env, url) {
   switch (`${request.method} ${url.pathname}`) {
+    case 'GET /api/speed-cameras/manifest':
+    case 'GET /api/speed-cameras/snapshot':
+      return () => handleSpeedCameraRequest(request, env, url);
     case 'GET /api/health':
       return () => handleHealth(request);
     case 'GET /api/me':
