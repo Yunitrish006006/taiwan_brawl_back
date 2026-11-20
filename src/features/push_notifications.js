@@ -139,6 +139,7 @@ export function buildPublicPushConfig(env) {
       storageBucket: normalizeOptionalText(env.FCM_STORAGE_BUCKET),
       measurementId: normalizeOptionalText(env.FCM_MEASUREMENT_ID),
       iosBundleId: normalizeOptionalText(env.FCM_IOS_BUNDLE_ID),
+      iosAppId: normalizeOptionalText(env.FCM_IOS_APP_ID),
       webVapidKey: normalizeOptionalText(env.FCM_WEB_VAPID_KEY, 512),
       serviceWorkerPath: '/firebase-messaging-sw.js',
     },

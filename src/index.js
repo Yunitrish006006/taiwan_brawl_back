@@ -4,6 +4,7 @@ import { handleApiRequest } from './api/api_router.js';
 import { handleMediaRequest } from './api/media_api.js';
 import { handlePrivacyPolicy } from './core/privacy_policy.js';
 import { RoyaleRoom } from './royale/royale_room.js';
+import { syncOfficialSpeedCameraData } from './speed_camera/sync.js';
 import { corsHeaders, jsonResponse } from './core/utils.js';
 import { drainLifecycleOutbox } from './features/account_lifecycle.js';
 import { maintenanceEnabled, maintenanceResponse } from './core/maintenance.js';
@@ -46,6 +47,11 @@ export { SignalRoom } from './rooms/signal_room.js';
 export default {
   async scheduled(controller, env, ctx) {
     if (maintenanceEnabled(env)) return;
+    if (env.SPEED_CAMERA_DATA && env.SPEED_CAMERA_SYNC_CRON &&
+        controller.cron === env.SPEED_CAMERA_SYNC_CRON) {
+      ctx.waitUntil(syncOfficialSpeedCameraData(env));
+      return;
+    }
     ctx.waitUntil(drainLifecycleOutbox(env));
   },
   async fetch(request, env, ctx) {
