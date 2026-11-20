@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import worker from '../src/index.js';
 import {
   createValidatedSnapshotFromCsv, syncOfficialSpeedCameraData, OFFICIAL_CSV_URL
 } from '../src/speed_camera/sync.js';
@@ -8,6 +9,31 @@ const header = 'CityName,RegionName,Address,DeptNm,BranchNm,Longitude,Latitude,d
 const csv = header + Array.from({ length: 510 }, (_, i) =>
   `臺北市,大安區,某路${i},警察局,分局,121.${String(i).padStart(6, '0')},25.025,往東,60`
 ).join('\n');
+
+test('the integrated Worker refreshes only on the configured camera schedule', async t => {
+  const writes = [];
+  const fetch = t.mock.method(globalThis, 'fetch', async () => new Response(csv));
+  const env = {
+    SPEED_CAMERA_SYNC_CRON: '17 2 * * *',
+    SPEED_CAMERA_DATA: {
+      get: async () => null,
+      put: async (key, payload) => writes.push([key, JSON.parse(payload)])
+    }
+  };
+  const scheduled = async (cron, bindings = env) => {
+    const tasks = [];
+    await worker.scheduled({ cron }, bindings, { waitUntil: task => tasks.push(task) });
+    await Promise.all(tasks);
+  };
+
+  await scheduled('* * * * *');
+  await scheduled(env.SPEED_CAMERA_SYNC_CRON, { ...env, MAINTENANCE_MODE: 'true' });
+  assert.equal(fetch.mock.callCount(), 0);
+  await scheduled(env.SPEED_CAMERA_SYNC_CRON);
+  assert.equal(fetch.mock.callCount(), 1);
+  assert.equal(fetch.mock.calls[0].arguments[0], OFFICIAL_CSV_URL);
+  assert.equal(writes[0][1].current.recordCount, 510);
+});
 
 test('Cron build yields deterministic normalized point hash', async () => {
   const one = await createValidatedSnapshotFromCsv(csv, '2026-11-19');
